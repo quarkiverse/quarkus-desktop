@@ -86,8 +86,8 @@ Verified on both architectures by the continuous integration of the showcase (na
 |Yes
 |Yes, with the `quarkus-awt` of the Quarkus pull request
 https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"] (not in a Quarkus release yet), and
-GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified on an Apple silicon Mac, see
-xref:macos-verification.adoc[Verifying macOS support].
+GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified on an Apple silicon Mac and by the continuous
+integration of the showcase.
 |===
 
 Native executables need GraalVM for JDK 25 and Quarkus {quarkus-version} or later (on macOS: GraalVM 25.1 or later, and
@@ -97,8 +97,6 @@ a Quarkus built from the pull request above).
 
 * xref:awt.adoc[Desktop AWT]: how the extensions work, writing a desktop application, and building native executables.
 * xref:swing.adoc[Desktop Swing]: look and feels, text, Synth, and what Swing applications need in native executables.
-* xref:macos-verification.adoc[Verifying macOS support]: how to check the macOS native executables on a Mac, and how to
-report the results.
 
 [[verification]]
 == Verification

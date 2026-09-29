@@ -148,8 +148,7 @@ Native executables for macOS need:
 
 * a `quarkus-awt` with macOS support: the Quarkus pull request
 https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"], which is not in a Quarkus release yet.
-Build Quarkus from it and use its `999-SNAPSHOT` version (the commands are in xref:macos-verification.adoc[Verifying
-macOS support]);
+Build Quarkus from it (`./mvnw -Dquickly` in a checkout of the pull request) and use its `999-SNAPSHOT` version;
 * GraalVM 25.1 or later on Apple silicon (for example GraalVM Community 25 Innovation; GraalVM 25.0.x does not support AWT
 on macOS);
 * the Xcode Command Line Tools.
@@ -207,8 +206,6 @@ the input events of Robot without an error. Robot reads the screen through the c
 may read one or two levels away from the color painted, compare with a tolerance. As in JVM mode, do not call
 `Robot.waitForIdle()` from two threads at the same time: the macOS toolkit waits on a lock of the application that each
 call replaces, and the process may crash.
-
-xref:macos-verification.adoc[Verifying macOS support] describes how to check the macOS support on a Mac.
 
 === HiDPI displays (Windows)
 
