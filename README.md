@@ -26,6 +26,35 @@ languages, accessibility, the JavaBeans API (the bean properties of the AWT clas
 0.3 MB; those of the Swing classes are opt-in, 3 to 4 MB), exact reachability metadata, and the known limitations of
 native executables.
 
+## Installation
+
+Add one of the extensions to your Quarkus application: `quarkus-desktop-swing` for Swing applications (it includes
+`quarkus-desktop-awt`), or `quarkus-desktop-awt` for AWT only. With Maven, add the following dependency to your
+`pom.xml`:
+
+```xml
+<dependency>
+    <groupId>io.quarkiverse.desktop</groupId>
+    <artifactId>quarkus-desktop-swing</artifactId>
+    <version>${quarkus-desktop.version}</version>
+</dependency>
+```
+
+With Gradle, add to your `build.gradle`:
+
+```groovy
+implementation("io.quarkiverse.desktop:quarkus-desktop-swing:${quarkusDesktopVersion}")
+```
+
+or `build.gradle.kts`:
+
+```kotlin
+implementation("io.quarkiverse.desktop:quarkus-desktop-swing:$quarkusDesktopVersion")
+```
+
+Replace the version placeholder with the latest release from
+[Maven Central](https://central.sonatype.com/artifact/io.quarkiverse.desktop/quarkus-desktop-swing).
+
 ## Application model and CDI
 
 Windows are CDI beans: a `@Singleton` window observes `DesktopStartupEvent`, fired on the event dispatch thread once the
