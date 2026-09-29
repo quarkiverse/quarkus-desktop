@@ -1,24 +1,12 @@
 name: Showcase
 
 # The JVM vs native cycles of the Quarkus Desktop showcase (https://github.com/Eng-Fouad/quarkus-desktop-showcase) against
-# this commit, on five platforms (Linux arm64 and x64, Windows x64 and arm64, macOS arm64) : on every push to main, on pull
-# requests labelled "showcase", and manually. The workflow is the one of the showcase repository (its nightly run tests
-# quarkus-desktop main too, with more variants). Not a required check : a showcase regression does not block a merge.
+# this commit, on five platforms (Linux arm64 and x64, Windows x64 and arm64, macOS arm64) : on pull requests labelled
+# "showcase", and manually. The workflow is the one of the showcase repository, whose own runs test quarkus-desktop main
+# on every push to the showcase and every night (with more variants) : not on every push here, where its 12 jobs would
+# queue on the runners that the Quarkiverse organization shares. Not a required check : a showcase regression does not
+# block a merge.
 on:
-  push:
-    branches:
-      - "main"
-    # the documentation cannot change the cycles (the Build workflow still builds it)
-    paths-ignore:
-      - '.gitignore'
-      - 'CODEOWNERS'
-      - 'LICENSE'
-      - '**/*.md'
-      - '**/*.adoc'
-      - '*.txt'
-      - 'docs/**'
-      - '.all-contributorsrc'
-      - '.github/project.yml'
   pull_request:
     types: [ labeled, synchronize, reopened ]
   workflow_dispatch:
