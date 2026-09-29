@@ -53,10 +53,12 @@ library such as SwingX, JFreeChart or RSyntaxTextArea) whose static initializer 
 == Writing a Swing application
 
 Observe `DesktopStartupEvent` to create the user interface on the event dispatch thread, once the application started
-and the look and feel is set (see xref:awt.adoc#user-interface-lifecycle[The user interface lifecycle]):
+and the look and feel is set. No `@QuarkusMain` is needed:
 
 [source,java]
 ----
+import io.quarkiverse.desktop.awt.DesktopStartupEvent;
+
 @Singleton
 public class MainWindow extends JFrame {
 
@@ -80,13 +82,22 @@ public class MainWindow extends JFrame {
 The application stops when its last window closes. Use `DISPOSE_ON_CLOSE` (or `HIDE_ON_CLOSE`), not `EXIT_ON_CLOSE`,
 which calls `System.exit` on the event dispatch thread: in dev mode, it ends dev mode instead of stopping the
 application, and the extension logs a warning when such a frame opens (in an application observing
-`DesktopStartupEvent`).
+`DesktopStartupEvent`), see xref:cdi.adoc#exit[Closing windows and exit].
 
-Swing components can be CDI beans: make them `@Singleton` or `@Dependent` beans (see
-xref:awt.adoc#cdi-beans[CDI beans]), and create them on the event dispatch thread. `WindowBeans.get(instance)` destroys
-a `@Dependent` dialog once it is disposed. The About, Preferences and Quit items of the macOS application menu, and the
-files opened with the application, are CDI events (see xref:awt.adoc#desktop-events[Application menu, Finder and Dock
-events]), and the exceptions of the listeners go to the Quarkus log (category `io.quarkiverse.desktop.awt.edt`).
+xref:cdi.adoc[Application model and CDI] describes the rest of the application model, for Swing and AWT alike:
+
+* Swing components are `@Singleton` or `@Dependent` beans, created on the event dispatch thread (see
+xref:cdi.adoc#components[Components as CDI beans]), and `WindowBeans.get(instance)` destroys a `@Dependent` dialog once
+it is disposed (see xref:cdi.adoc#window-beans[Window beans]).
+* `EdtExecutor` continues on the event dispatch thread after background work, with `CompletableFuture`, Mutiny or
+asynchronous events, instead of `SwingWorker`, and `@RunOnEdt` runs the methods of presenters there (see
+xref:cdi.adoc#event-dispatch-thread[The event dispatch thread]).
+* The About, Preferences and Quit items of the macOS application menu, and the files opened with the application, are
+CDI events (see xref:cdi.adoc#desktop-events[Application menu, Finder and Dock events]), and the exceptions of the
+listeners go to the Quarkus log (category `io.quarkiverse.desktop.awt.edt`).
+* A `@QuarkusMain` starts the user interface with `DesktopLifecycle.start()` in the manual mode (see
+xref:cdi.adoc#manual-mode[Manual mode]), and user interface tests enable the startup event (see
+xref:cdi.adoc#testing[Testing]).
 
 [[look-and-feel]]
 == Look and feel
@@ -269,7 +280,8 @@ In dev mode (and in tests running several applications in the same JVM), the AWT
 application. The Desktop AWT extension makes it dispatch the events with the class loader of the running application,
 so that the classes that Swing loads by name on the event dispatch thread (look and feels, UI delegates, editor kits)
 are the ones of the running application after a live reload. Global Swing state stays from one run to the next (the
-look and feel, `UIManager.put` values): set it when the application starts.
+look and feel, `UIManager.put` values): set it when the application starts. See xref:cdi.adoc#dev-mode[Dev mode] for
+the restarts and what they dispose.
 
 == Limitations
 

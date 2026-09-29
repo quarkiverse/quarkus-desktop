@@ -97,6 +97,9 @@ a Quarkus built from the pull request above).
 
 * xref:awt.adoc[Desktop AWT]: how the extensions work, writing a desktop application, and building native executables.
 * xref:swing.adoc[Desktop Swing]: look and feels, text, Synth, and what Swing applications need in native executables.
+* xref:cdi.adoc[Application model and CDI]: windows as CDI beans, the startup and the exit of the user interface, the
+event dispatch thread (`EdtExecutor`, `Edt`, `@RunOnEdt`), the application menu, Finder and Dock events of macOS, dev
+mode and tests.
 
 [[verification]]
 == Verification
@@ -115,12 +118,26 @@ macOS on a Mac.
 == Configuration
 
 The properties are fixed when the native executable is built and only apply to native executables (JVM mode uses the
-`java` launcher and the JDK as they are), except `quarkus.desktop.swing.look-and-feel`, a run time property that also
-applies in JVM mode.
+`java` launcher and the JDK as they are), except the run time properties of the application model
+(`quarkus.desktop.awt.startup-event.*`, `quarkus.desktop.awt.exit-on-last-window-closed`) and
+`quarkus.desktop.swing.look-and-feel`, which also apply in JVM mode.
 
 [cols="2,1,4"]
 |===
 |Property |Default |Description
+
+|`quarkus.desktop.awt.startup-event.enabled`
+|`true`, `false` in tests
+|Whether `DesktopStartupEvent` is fired, see xref:cdi.adoc#testing[Testing].
+
+|`quarkus.desktop.awt.startup-event.mode`
+|`auto`
+|`manual`: the application fires `DesktopStartupEvent` with `DesktopLifecycle.start()`, see
+xref:cdi.adoc#manual-mode[Manual mode].
+
+|`quarkus.desktop.awt.exit-on-last-window-closed`
+|`true`
+|The application stops when its last visible window closes, see xref:cdi.adoc#exit[Closing windows and exit].
 
 |`quarkus.desktop.awt.java-beans.jdk-classes`
 |`true`
