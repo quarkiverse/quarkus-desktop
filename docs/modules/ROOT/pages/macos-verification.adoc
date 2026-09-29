@@ -37,7 +37,7 @@ cd quarkus-pr-56979
 git fetch https://github.com/quarkusio/quarkus pull/56979/head:pr-56979 && git checkout pr-56979
 git log -1 --format=%h                       # 93fd8e95720, or a later commit of the pull request
 ./mvnw -Dquickly                             # installs Quarkus 999-SNAPSHOT (tens of minutes)
-cd ~/dev && git clone https://github.com/Eng-Fouad/quarkus-desktop quarkus-desktop
+cd ~/dev && git clone https://github.com/quarkiverse/quarkus-desktop quarkus-desktop
 cd quarkus-desktop
 ./mvnw -B install -DskipTests
 ./mvnw -B verify -pl awt/deployment,swing/deployment        # the macOS lists exist in this JDK (macEntriesExist)
