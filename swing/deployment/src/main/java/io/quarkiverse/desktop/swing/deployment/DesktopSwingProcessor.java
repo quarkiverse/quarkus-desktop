@@ -29,6 +29,7 @@ import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
+import io.quarkus.deployment.builditem.ServiceStartBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessFieldBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessMethodBuildItem;
@@ -360,13 +361,16 @@ class DesktopSwingProcessor {
     // ---------------------------------------------------------------------------------------------- look and feel
 
     /**
-     * Sets the configured look and feel when the application starts, before it runs, and after the AWT run time
-     * environment of native executables is ready (setting a look and feel initializes the fonts).
+     * Sets the configured look and feel when the application starts, before the {@code StartupEvent} observers (a
+     * {@code ServiceStartBuildItem}) and so before the application runs, and after the AWT run time environment of native
+     * executables is ready (setting a look and feel initializes the fonts).
      */
     @BuildStep
     @Record(ExecutionTime.RUNTIME_INIT)
-    void lookAndFeel(DesktopSwingRecorder recorder, List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
+    ServiceStartBuildItem lookAndFeel(DesktopSwingRecorder recorder,
+            List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
         recorder.setLookAndFeel();
+        return new ServiceStartBuildItem(FEATURE);
     }
 
     /**

@@ -1,5 +1,6 @@
 package io.quarkiverse.desktop.awt.runtime;
 
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
@@ -13,9 +14,10 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 /**
- * The windows disposed when an application stops in dev mode, while the event dispatch thread is blocked, as it is in
- * {@code System.exit} after a {@code JFrame.EXIT_ON_CLOSE} (it waits for the shutdown hooks, which stop the
- * application). Needs a display.
+ * The windows disposed when an application stops in dev and test modes, while the event dispatch thread is blocked, as
+ * it is in {@code System.exit} after a {@code JFrame.EXIT_ON_CLOSE} (it waits for the shutdown hooks, which stop the
+ * application) : the shutdown does not wait for ever, the windows are disposed once the event dispatch thread is free.
+ * Needs a display.
  */
 class DisposeWindowsTest {
 
@@ -44,13 +46,14 @@ class DisposeWindowsTest {
         shutdown.setDaemon(true);
         shutdown.start();
         try {
-            shutdown.join(3_000);
-            // Window.dispose() waits for the event dispatch thread (EventQueue.invokeAndWait) : a deadlock
-            assertTrue(shutdown.isAlive(), "the windows are disposed while the event dispatch thread is blocked");
+            shutdown.join((DesktopAwtRecorder.DISPOSE_TIMEOUT_SECONDS + 5) * 1000);
+            assertFalse(shutdown.isAlive(), "the shutdown waits for the blocked event dispatch thread");
         } finally {
             release.countDown();
         }
-        shutdown.join(10_000);
-        EventQueue.invokeAndWait(() -> assertTrue(!frame.get().isDisplayable()));
+        EventQueue.invokeAndWait(() -> {
+            // the dispose task queued before this one ran
+            assertFalse(frame.get().isDisplayable());
+        });
     }
 }

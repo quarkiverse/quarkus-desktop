@@ -32,12 +32,12 @@ import io.quarkiverse.desktop.awt.runtime.graal.DesktopAwtFeature;
 import io.quarkiverse.desktop.awt.runtime.graal.OverrideChecksFeature;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 import io.quarkiverse.desktop.awt.runtime.macos.ParkMainThreadEnabled;
+import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
-import io.quarkus.deployment.IsDevelopment;
 import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
@@ -47,6 +47,7 @@ import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.LaunchModeBuildItem;
 import io.quarkus.deployment.builditem.NativeImageEnableAllCharsetsBuildItem;
 import io.quarkus.deployment.builditem.NativeImageFeatureBuildItem;
 import io.quarkus.deployment.builditem.QuarkusApplicationClassBuildItem;
@@ -954,13 +955,21 @@ class DesktopAwtProcessor {
     }
 
     /**
-     * The AWT toolkit, its threads and windows outlive a restart of the application in dev mode : dispose the windows
-     * when the application stops.
+     * The AWT toolkit, its threads and windows outlive the application in dev mode (live reload) and in tests (several
+     * applications in the same JVM) : dispose the windows when the application stops, after the {@code ShutdownEvent}
+     * observers (a {@code ServiceStartBuildItem} registers the task before the one firing {@code ShutdownEvent}, and
+     * shutdown tasks run in reverse order) and before the CDI container stops (the task is registered after the container
+     * is initialized). Not for the test application of continuous testing, which would dispose the windows of the dev
+     * mode application.
      */
-    @BuildStep(onlyIf = IsDevelopment.class)
+    @BuildStep(onlyIfNot = IsNormal.class)
     @Record(ExecutionTime.RUNTIME_INIT)
-    void disposeWindowsOnRestart(DesktopAwtRecorder recorder, ShutdownContextBuildItem shutdownContext) {
-        recorder.disposeWindowsOnShutdown(shutdownContext);
+    ServiceStartBuildItem disposeWindowsOnShutdown(DesktopAwtRecorder recorder, ShutdownContextBuildItem shutdownContext,
+            LaunchModeBuildItem launchMode, BeanContainerBuildItem beanContainer) {
+        if (!launchMode.isAuxiliaryApplication()) {
+            recorder.disposeWindowsOnShutdown(shutdownContext);
+        }
+        return new ServiceStartBuildItem(FEATURE);
     }
 
     /**

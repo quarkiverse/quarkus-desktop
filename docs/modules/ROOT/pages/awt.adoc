@@ -87,9 +87,11 @@ bean that extends `java.awt.Component`.
 [[dev-mode]]
 === Dev mode
 
-In dev mode, the application restarts in the same JVM: the AWT toolkit and its threads stay, and the windows of the
-previous run are disposed when the application stops. Global AWT and Swing state also stays (for instance the look and
-feel set with `UIManager.setLookAndFeel`).
+In dev mode, the application restarts in the same JVM: the AWT toolkit and its threads stay, and the windows and tray
+icons of the previous run are disposed when the application stops (in tests too, where several applications run in the
+same JVM). They are disposed on the event dispatch thread, after the `ShutdownEvent` observers and before the CDI
+container stops; the shutdown waits for the event dispatch thread 5 seconds at most. Global AWT and Swing state also
+stays (for instance the look and feel set with `UIManager.setLookAndFeel`).
 
 The event dispatch thread stays too, and AWT gives it the class loader of the application that started AWT first. In
 dev mode and in tests (several applications in the same JVM), the extension makes it dispatch the events with the class
