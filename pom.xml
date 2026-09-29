@@ -10,7 +10,7 @@
 
     <groupId>io.quarkiverse.desktop</groupId>
     <artifactId>quarkus-desktop-parent</artifactId>
-    <version>999-SNAPSHOT</version>
+    <version>0.1.0</version>
     <packaging>pom</packaging>
     <name>Quarkus Desktop - Parent</name>
     <description>Quarkus extensions for AWT and Swing desktop (GUI) applications, in JVM mode and as GraalVM native executables</description>
@@ -24,7 +24,7 @@
         <connection>scm:git:git@github.com:quarkiverse/quarkus-desktop.git</connection>
         <developerConnection>scm:git:git@github.com:quarkiverse/quarkus-desktop.git</developerConnection>
         <url>https://github.com/quarkiverse/quarkus-desktop</url>
-        <tag>HEAD</tag>
+        <tag>0.1.0</tag>
     </scm>
 
     <properties>
