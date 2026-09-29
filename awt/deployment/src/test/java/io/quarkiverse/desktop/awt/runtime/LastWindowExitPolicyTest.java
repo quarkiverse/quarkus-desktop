@@ -1,11 +1,17 @@
 package io.quarkiverse.desktop.awt.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
+import java.awt.AWTEvent;
 import java.awt.EventQueue;
 import java.awt.Frame;
 import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
+import java.awt.event.AWTEventListenerProxy;
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -61,6 +67,49 @@ class LastWindowExitPolicyTest {
                 }
             });
         }
+    }
+
+    @Test
+    void exitsWhenLastVisibleWindowIsHidden() throws Exception {
+        assumeFalse(GraphicsEnvironment.isHeadless(), "needs a display");
+        AtomicInteger exits = new AtomicInteger();
+        AtomicReference<Frame> opened = new AtomicReference<>();
+        AtomicReference<Frame> frame = new AtomicReference<>();
+        LastWindowExitPolicy policy = null;
+        try {
+            // a window opened before the policy is installed (a splash screen)
+            opened.set(show("opened before"));
+            policy = LastWindowExitPolicy.install(exits::incrementAndGet);
+            // the component events of the windows only, not of every component of the toolkit
+            assertTrue(isListening(policy, AWTEvent.WINDOW_EVENT_MASK));
+            assertFalse(isListening(policy, AWTEvent.COMPONENT_EVENT_MASK));
+
+            frame.set(show("main"));
+            EventQueue.invokeAndWait(() -> opened.get().setVisible(false));
+            flush();
+            assertEquals(0, exits.get());
+            // the last visible window hidden (HIDE_ON_CLOSE) : the application stops, it would run for ever without window
+            EventQueue.invokeAndWait(() -> frame.get().setVisible(false));
+            flush();
+            assertEquals(1, exits.get());
+        } finally {
+            if (policy != null) {
+                policy.remove();
+            }
+            EventQueue.invokeAndWait(() -> {
+                for (Frame f : new Frame[] { opened.get(), frame.get() }) {
+                    if (f != null) {
+                        f.dispose();
+                    }
+                }
+            });
+        }
+    }
+
+    private static boolean isListening(LastWindowExitPolicy policy, long mask) {
+        return Arrays.stream(Toolkit.getDefaultToolkit().getAWTEventListeners(mask))
+                .anyMatch(listener -> listener == policy
+                        || listener instanceof AWTEventListenerProxy proxy && proxy.getListener() == policy);
     }
 
     private static Frame show(String title) throws Exception {

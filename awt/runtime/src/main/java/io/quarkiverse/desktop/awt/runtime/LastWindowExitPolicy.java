@@ -5,7 +5,9 @@ import java.awt.EventQueue;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.event.AWTEventListener;
+import java.awt.event.ComponentAdapter;
 import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.awt.event.WindowEvent;
 
 import org.jboss.logging.Logger;
@@ -17,6 +19,10 @@ import org.jboss.logging.Logger;
  * Hidden windows count as closed : a {@code JFrame} hides on close by default ({@code HIDE_ON_CLOSE}), and a
  * {@code java.awt.Frame} does nothing. The windows are counted again in a later event, so that a window disposed and
  * another one shown by the same event handler does not stop the application.
+ * <p>
+ * It listens to the window events of the toolkit, and to the component events of the open windows only : a component
+ * listener of the toolkit would make every component post an event each time it moves or is resized (the cell
+ * renderers of tables and lists, for each painted cell).
  */
 final class LastWindowExitPolicy implements AWTEventListener {
 
@@ -30,6 +36,15 @@ final class LastWindowExitPolicy implements AWTEventListener {
 
     private final Runnable exit;
 
+    private final ComponentListener hidden = new ComponentAdapter() {
+        @Override
+        public void componentHidden(ComponentEvent e) {
+            if (armed && !removed) {
+                EventQueue.invokeLater(LastWindowExitPolicy.this::exitWithoutVisibleWindow);
+            }
+        }
+    };
+
     private LastWindowExitPolicy(Runnable exit) {
         this.exit = exit;
     }
@@ -41,7 +56,13 @@ final class LastWindowExitPolicy implements AWTEventListener {
      */
     static LastWindowExitPolicy install(Runnable exit) {
         LastWindowExitPolicy policy = new LastWindowExitPolicy(exit);
-        Toolkit.getDefaultToolkit().addAWTEventListener(policy, AWTEvent.WINDOW_EVENT_MASK | AWTEvent.COMPONENT_EVENT_MASK);
+        Toolkit.getDefaultToolkit().addAWTEventListener(policy, AWTEvent.WINDOW_EVENT_MASK);
+        // the windows opened before (a splash screen)
+        for (Window window : Window.getWindows()) {
+            if (window.isDisplayable()) {
+                policy.listen(window);
+            }
+        }
         return policy;
     }
 
@@ -51,19 +72,31 @@ final class LastWindowExitPolicy implements AWTEventListener {
     void remove() {
         removed = true;
         Toolkit.getDefaultToolkit().removeAWTEventListener(this);
+        for (Window window : Window.getWindows()) {
+            window.removeComponentListener(hidden);
+        }
     }
 
     @Override
     public void eventDispatched(AWTEvent event) {
-        if (removed || !(event.getSource() instanceof Window)) {
+        if (removed || !(event.getSource() instanceof Window window)) {
             return;
         }
         int id = event.getID();
         if (id == WindowEvent.WINDOW_OPENED) {
             armed = true;
-        } else if (armed && (id == WindowEvent.WINDOW_CLOSED || id == ComponentEvent.COMPONENT_HIDDEN)) {
-            EventQueue.invokeLater(this::exitWithoutVisibleWindow);
+            listen(window);
+        } else if (id == WindowEvent.WINDOW_CLOSED) {
+            window.removeComponentListener(hidden);
+            if (armed) {
+                EventQueue.invokeLater(this::exitWithoutVisibleWindow);
+            }
         }
+    }
+
+    private void listen(Window window) {
+        window.removeComponentListener(hidden);
+        window.addComponentListener(hidden);
     }
 
     private void exitWithoutVisibleWindow() {
