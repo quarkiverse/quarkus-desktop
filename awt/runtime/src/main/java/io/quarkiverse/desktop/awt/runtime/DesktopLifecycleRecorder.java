@@ -8,7 +8,6 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.awt.runtime.DesktopAwtRuntimeConfig.Mode;
 import io.quarkus.arc.Arc;
 import io.quarkus.runtime.LaunchMode;
-import io.quarkus.runtime.Quarkus;
 import io.quarkus.runtime.RuntimeValue;
 import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
@@ -35,24 +34,28 @@ public class DesktopLifecycleRecorder {
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
      * @param quarkusFx whether Quarkus FX is present (JavaFX then decides when the application stops, and handles the
      *        events of the application menu)
+     * @param auxiliary whether it is the test application of continuous testing, which runs next to the dev mode
+     *        application : the handlers of {@code java.awt.Desktop} are those of the dev mode application
      * @param desktopEvents the class names of the {@code java.awt.Desktop} events that the application observes
      */
     public void startUserInterface(ShutdownContext shutdown, LaunchMode launchMode, boolean lifecycleObserversDisabled,
-            boolean quarkusFx, List<String> desktopEvents) {
+            boolean quarkusFx, boolean auxiliary, List<String> desktopEvents) {
         DesktopAwtRuntimeConfig config = this.config.getValue();
+        DesktopUi ui = Arc.container().instance(DesktopUi.class).get();
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
         if (!enabled || launchMode == LaunchMode.TEST && lifecycleObserversDisabled) {
             LOGGER.debug("DesktopStartupEvent is disabled");
+            ui.disable();
             return;
         }
+        boolean auto = config.startupEvent().mode() == Mode.AUTO;
         if (GraphicsEnvironment.isHeadless()) {
-            if (launchMode == LaunchMode.NORMAL) {
-                LOGGER.error("The application observes DesktopStartupEvent, but the JVM is headless (no display, or"
-                        + " java.awt.headless=true) : the application stops");
-                Quarkus.asyncExit(1);
+            if (auto) {
+                DesktopUi.headlessError(launchMode);
             } else {
-                LOGGER.warn("The application observes DesktopStartupEvent, but the JVM is headless (no display, or"
-                        + " java.awt.headless=true) : the event is not fired");
+                // the application may not start its user interface (a batch mode) : DesktopLifecycle.start() fails
+                LOGGER.debug("The JVM is headless : DesktopLifecycle.start() stops the application");
+                ui.headless(launchMode);
             }
             return;
         }
@@ -61,11 +64,10 @@ public class DesktopLifecycleRecorder {
             // after the other shutdown tasks, whose exceptions on the event dispatch thread are logged too
             shutdown.addLastShutdownTask(uncaughtExceptions::remove);
         }
-        DesktopUi ui = Arc.container().instance(DesktopUi.class).get();
-        ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx, !quarkusFx,
-                desktopEvents);
+        ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx,
+                !quarkusFx && !auxiliary, desktopEvents);
         shutdown.addShutdownTask(ui::stop);
-        if (config.startupEvent().mode() == Mode.AUTO) {
+        if (auto) {
             ui.start();
         }
     }

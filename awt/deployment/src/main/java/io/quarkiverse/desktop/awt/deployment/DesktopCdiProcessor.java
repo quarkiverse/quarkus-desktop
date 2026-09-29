@@ -31,8 +31,10 @@ import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ArcConfig;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
 import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
+import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
+import io.quarkus.arc.deployment.staticmethods.InterceptedStaticMethodBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
 import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
@@ -141,12 +143,25 @@ class DesktopCdiProcessor {
      * other applications never start the AWT toolkit, and their native executables do not reach its code).
      */
     @BuildStep
-    void userInterface(BeanDiscoveryFinishedBuildItem beanDiscovery, BuildProducer<DesktopUiBuildItem> userInterface) {
+    void userInterface(BeanDiscoveryFinishedBuildItem beanDiscovery, BuildProducer<DesktopUiBuildItem> userInterface,
+            BuildProducer<UnremovableBeanBuildItem> unremovableBeans) {
+        boolean ui = false;
         for (ObserverInfo observer : beanDiscovery.getObservers()) {
-            if (!observer.isAsync() && observer.getObservedType().name().equals(DESKTOP_STARTUP_EVENT)) {
-                userInterface.produce(new DesktopUiBuildItem());
-                return;
+            if (observer.getObservedType().name().equals(DESKTOP_STARTUP_EVENT)) {
+                if (observer.isAsync()) {
+                    LOGGER.warnf("%s observes DesktopStartupEvent asynchronously : it is never notified, and the"
+                            + " application has no user interface unless it observes it with @Observes (the event is"
+                            + " fired synchronously on the event dispatch thread)", describe(observer));
+                } else {
+                    ui = true;
+                }
             }
+        }
+        if (ui) {
+            userInterface.produce(new DesktopUiBuildItem());
+            // looked up by the recorder
+            unremovableBeans.produce(UnremovableBeanBuildItem.beanTypes(DesktopUi.class));
+            return;
         }
         List<String> desktopEvents = desktopEvents(beanDiscovery.getObservers());
         if (!desktopEvents.isEmpty()) {
@@ -206,6 +221,6 @@ class DesktopCdiProcessor {
                 arcConfig.test().disableApplicationLifecycleObservers(),
                 DesktopAwtProcessor.isPresent(DesktopAwtProcessor.QUARKUS_FX_APPLICATION,
                         Thread.currentThread().getContextClassLoader()),
-                desktopEvents(beanDiscovery.getObservers()));
+                launchMode.isAuxiliaryApplication(), desktopEvents(beanDiscovery.getObservers()));
     }
 }

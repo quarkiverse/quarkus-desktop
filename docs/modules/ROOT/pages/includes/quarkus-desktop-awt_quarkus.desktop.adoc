@@ -354,7 +354,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-When the event is fired : `auto` once the application started (after the `StartupEvent` observers, before a `@QuarkusMain` runs), `manual` when the application calls `DesktopLifecycle.start()`.
+When the event is fired : `auto` during the startup of the application (queued on the event dispatch thread after the `StartupEvent` observers : its observers may run while a `@QuarkusMain` runs), `manual` when the application calls `DesktopLifecycle.start()` (from its `@QuarkusMain` once its work before the user interface is done, or from a `StartupEvent` observer).
 
 
 ifdef::add-copy-button-to-env-var[]

@@ -47,6 +47,7 @@ public class AwtItTest {
             assertTrue(output.contains("headless=false"), output);
             assertTrue(output.contains("RESULT frame OK"), output);
             assertTrue(output.contains("RESULT desktop OK"), output);
+            assertTrue(output.contains("RESULT startup-event OK"), output);
             // Same scale as the JVM running the tests (DPI aware on Windows, like the java launcher)
             double scale = GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice()
                     .getDefaultConfiguration().getDefaultTransform().getScaleX();

@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.awt.runtime;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.awt.Desktop.Action;
@@ -14,6 +15,7 @@ import java.awt.desktop.OpenURIEvent;
 import java.awt.desktop.PreferencesEvent;
 import java.awt.desktop.PrintFilesEvent;
 import java.awt.desktop.QuitResponse;
+import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -86,64 +88,93 @@ class DesktopHandlersTest {
         }
     }
 
+    /**
+     * The constants of the enum are in the image heap of native executables, where {@code java.awt.Desktop.Action},
+     * initialized at run time, cannot be.
+     */
+    @Test
+    void handlersDoNotHoldDesktopActions() {
+        for (Field field : Handler.class.getDeclaredFields()) {
+            assertNotEquals(Action.class, field.getType(), field.toString());
+        }
+        for (Handler handler : Handler.values()) {
+            assertEquals(handler.actionName, handler.action().name());
+        }
+    }
+
     @Test
     void quitStopsApplication() {
+        // production : the reply stays pending until the process exits (a logout goes on)
         Quit quit = new Quit(request -> {
-        });
+        }, true);
         quit.handlers.quit(null, quit.response);
         assertEquals(1, quit.fired.size());
         assertInstanceOf(QuitRequest.class, quit.fired.get(0));
-        assertEquals(1, quit.response.cancelled.get());
+        assertEquals(0, quit.response.cancelled.get());
         assertEquals(0, quit.response.performed.get());
         assertEquals(1, quit.exits.get());
+        // dev and test modes : the JVM outlives the application, the quit is cancelled
+        Quit dev = new Quit(request -> {
+        }, false);
+        dev.handlers.quit(null, dev.response);
+        assertEquals(1, dev.response.cancelled.get());
+        assertEquals(0, dev.response.performed.get());
+        assertEquals(1, dev.exits.get());
     }
 
     @Test
     void quitCancelled() {
-        Quit quit = new Quit(QuitRequest::cancel);
-        quit.handlers.quit(null, quit.response);
-        assertTrue(((QuitRequest) quit.fired.get(0)).isCancelled());
-        assertEquals(1, quit.response.cancelled.get());
-        assertEquals(0, quit.response.performed.get());
-        assertEquals(0, quit.exits.get());
+        for (boolean exitsJvm : new boolean[] { true, false }) {
+            Quit quit = new Quit(QuitRequest::cancel, exitsJvm);
+            quit.handlers.quit(null, quit.response);
+            assertTrue(((QuitRequest) quit.fired.get(0)).isCancelled());
+            assertEquals(1, quit.response.cancelled.get());
+            assertEquals(0, quit.response.performed.get());
+            assertEquals(0, quit.exits.get());
+        }
     }
 
     @Test
     void quitObserverFails() {
-        // an exception is not a veto
+        // a failure is a veto (an observer guarding unsaved changes), and macOS always gets a reply, errors included
         Quit quit = new Quit(request -> {
             throw new IllegalStateException("observer failure");
-        });
+        }, true);
         quit.handlers.quit(null, quit.response);
         assertEquals(1, quit.response.cancelled.get());
-        assertEquals(1, quit.exits.get());
-        // unless the observer cancelled the request first
-        Quit cancelled = new Quit(request -> {
-            request.cancel();
-            throw new IllegalStateException("observer failure");
-        });
-        cancelled.handlers.quit(null, cancelled.response);
-        assertEquals(1, cancelled.response.cancelled.get());
-        assertEquals(0, cancelled.exits.get());
+        assertEquals(0, quit.exits.get());
+        Quit error = new Quit(request -> {
+            throw new NoClassDefFoundError("ConfirmationDialog");
+        }, true);
+        error.handlers.quit(null, error.response);
+        assertEquals(1, error.response.cancelled.get());
+        assertEquals(0, error.exits.get());
     }
 
     @Test
     void quitWhileStopping() {
         Quit quit = new Quit(request -> {
-        });
+        }, true);
         quit.stopped.set(true);
         quit.handlers.quit(null, quit.response);
         assertEquals(List.of(), quit.fired);
-        assertEquals(1, quit.response.cancelled.get());
+        // production : the process is exiting
+        assertEquals(0, quit.response.cancelled.get());
         assertEquals(0, quit.response.performed.get());
         assertEquals(0, quit.exits.get());
+        Quit dev = new Quit(request -> {
+        }, false);
+        dev.stopped.set(true);
+        dev.handlers.quit(null, dev.response);
+        assertEquals(1, dev.response.cancelled.get());
+        assertEquals(0, dev.exits.get());
     }
 
     @Test
     void removeWithoutHandlers() {
         // nothing installed : java.awt.Desktop is not called (headless)
         new Quit(request -> {
-        }).handlers.remove();
+        }, false).handlers.remove();
     }
 
     private static final class Quit {
@@ -154,11 +185,11 @@ class DesktopHandlersTest {
         final Response response = new Response();
         final DesktopHandlers handlers;
 
-        Quit(Consumer<QuitRequest> observer) {
+        Quit(Consumer<QuitRequest> observer, boolean exitsJvm) {
             handlers = new DesktopHandlers(event -> {
                 fired.add(event);
                 observer.accept((QuitRequest) event);
-            }, stopped::get, exits::incrementAndGet);
+            }, stopped::get, exits::incrementAndGet, exitsJvm);
         }
     }
 

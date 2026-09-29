@@ -27,8 +27,9 @@ public interface DesktopLifecycle {
 
     /**
      * Fires {@link DesktopStartupEvent} on the event dispatch thread ({@code EventQueue.invokeLater}) and returns. Only
-     * the first call fires it. Does nothing when the event is disabled (tests, a headless JVM) or when the application
-     * does not observe it.
+     * the first call fires it. Called before the application started (from a {@code StartupEvent} observer), it fires the
+     * event once the application started. Does nothing when the event is disabled (tests) or when the application does
+     * not observe it. In a headless JVM, logs an error and, in production, stops the application with exit code 1.
      */
     void start();
 }

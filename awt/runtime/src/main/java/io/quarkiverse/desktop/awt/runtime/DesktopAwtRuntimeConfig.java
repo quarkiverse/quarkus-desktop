@@ -43,9 +43,10 @@ public interface DesktopAwtRuntimeConfig {
         Optional<Boolean> enabled();
 
         /**
-         * When the event is fired : {@code auto} once the application started (after the {@code StartupEvent}
-         * observers, before a {@code @QuarkusMain} runs), {@code manual} when the application calls
-         * {@code DesktopLifecycle.start()}.
+         * When the event is fired : {@code auto} during the startup of the application (queued on the event dispatch
+         * thread after the {@code StartupEvent} observers : its observers may run while a {@code @QuarkusMain} runs),
+         * {@code manual} when the application calls {@code DesktopLifecycle.start()} (from its {@code @QuarkusMain} once
+         * its work before the user interface is done, or from a {@code StartupEvent} observer).
          */
         @WithDefault("auto")
         Mode mode();
@@ -56,7 +57,7 @@ public interface DesktopAwtRuntimeConfig {
      */
     enum Mode {
         /**
-         * Once the application started.
+         * During the startup of the application, after the {@code StartupEvent} observers.
          */
         AUTO,
         /**

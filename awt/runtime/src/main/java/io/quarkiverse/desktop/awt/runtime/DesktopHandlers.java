@@ -41,23 +41,30 @@ public final class DesktopHandlers {
 
     /**
      * A handler of {@code java.awt.Desktop}, and the event it fires.
+     * <p>
+     * The action is a name, resolved at run time ({@link #action()}) : the constants of this enum are in the image heap
+     * of native executables, where {@code java.awt.Desktop.Action}, initialized at run time, cannot be.
      */
     enum Handler {
-        ABOUT(AboutEvent.class, Action.APP_ABOUT),
-        PREFERENCES(PreferencesEvent.class, Action.APP_PREFERENCES),
-        OPEN_FILES(OpenFilesEvent.class, Action.APP_OPEN_FILE),
-        OPEN_URI(OpenURIEvent.class, Action.APP_OPEN_URI),
-        PRINT_FILES(PrintFilesEvent.class, Action.APP_PRINT_FILE),
-        APP_REOPENED(AppReopenedEvent.class, Action.APP_EVENT_REOPENED),
-        QUIT(QuitRequest.class, Action.APP_QUIT_HANDLER);
+        ABOUT(AboutEvent.class, "APP_ABOUT"),
+        PREFERENCES(PreferencesEvent.class, "APP_PREFERENCES"),
+        OPEN_FILES(OpenFilesEvent.class, "APP_OPEN_FILE"),
+        OPEN_URI(OpenURIEvent.class, "APP_OPEN_URI"),
+        PRINT_FILES(PrintFilesEvent.class, "APP_PRINT_FILE"),
+        APP_REOPENED(AppReopenedEvent.class, "APP_EVENT_REOPENED"),
+        QUIT(QuitRequest.class, "APP_QUIT_HANDLER");
 
         final Class<?> event;
 
-        final Action action;
+        final String actionName;
 
-        Handler(Class<?> event, Action action) {
+        Handler(Class<?> event, String actionName) {
             this.event = event;
-            this.action = action;
+            this.actionName = actionName;
+        }
+
+        Action action() {
+            return Action.valueOf(actionName);
         }
     }
 
@@ -67,6 +74,8 @@ public final class DesktopHandlers {
 
     private final Runnable exit;
 
+    private final boolean exitsJvm;
+
     private final Set<Handler> installed = EnumSet.noneOf(Handler.class);
 
     private final AppReopenedListener reopened;
@@ -75,11 +84,13 @@ public final class DesktopHandlers {
      * @param events fires a CDI event, synchronously
      * @param stopped whether the application stopped
      * @param exit stops the application
+     * @param exitsJvm whether the JVM exits once the application stopped (in production, not in dev and test modes)
      */
-    DesktopHandlers(Consumer<Object> events, BooleanSupplier stopped, Runnable exit) {
+    DesktopHandlers(Consumer<Object> events, BooleanSupplier stopped, Runnable exit, boolean exitsJvm) {
         this.events = events;
         this.stopped = stopped;
         this.exit = exit;
+        this.exitsJvm = exitsJvm;
         this.reopened = this::fire;
     }
 
@@ -109,10 +120,10 @@ public final class DesktopHandlers {
         }
         for (Handler handler : Handler.values()) {
             if (handler == Handler.QUIT && os == OS.MAC || observedEvents.contains(handler.event.getName())) {
-                if (supported.test(handler.action)) {
+                if (supported.test(handler.action())) {
                     handlers.add(handler);
                 } else {
-                    LOGGER.debugf("The platform does not support %s : %s is never fired", handler.action,
+                    LOGGER.debugf("The platform does not support %s : %s is never fired", handler.actionName,
                             handler.event.getSimpleName());
                 }
             }
@@ -137,7 +148,7 @@ public final class DesktopHandlers {
         Set<Handler> handlers;
         try {
             handlers = handlers(observedEvents, OS.current(), DesktopHandlers::isSupported);
-        } catch (RuntimeException e) {
+        } catch (RuntimeException | LinkageError e) {
             LOGGER.warn("Unable to install the handlers of java.awt.Desktop", e);
             return;
         }
@@ -157,8 +168,8 @@ public final class DesktopHandlers {
                     case QUIT -> desktop.setQuitHandler(this::quit);
                 }
                 installed.add(handler);
-            } catch (RuntimeException e) {
-                LOGGER.warnf(e, "Unable to install the %s handler of java.awt.Desktop", handler.action);
+            } catch (RuntimeException | LinkageError e) {
+                LOGGER.warnf(e, "Unable to install the %s handler of java.awt.Desktop", handler.actionName);
             }
         }
         LOGGER.debugf("Installed the java.awt.Desktop handlers %s", installed);
@@ -184,7 +195,7 @@ public final class DesktopHandlers {
                     case QUIT -> desktop.setQuitHandler(null);
                 }
             } catch (RuntimeException e) {
-                LOGGER.debugf(e, "Unable to remove the %s handler of java.awt.Desktop", handler.action);
+                LOGGER.debugf(e, "Unable to remove the %s handler of java.awt.Desktop", handler.actionName);
             }
         }
         installed.clear();
@@ -198,28 +209,40 @@ public final class DesktopHandlers {
 
     /**
      * Fires {@link QuitRequest} (on the event dispatch thread), then stops the application unless an observer cancelled
-     * it. The quit of macOS is always cancelled ({@code QuitResponse.cancelQuit()}, as the JDK does for
-     * {@code QuitStrategy.CLOSE_ALL_WINDOWS}) : Quarkus stops the application, and {@code performQuit()} would call
-     * {@code System.exit} on the event dispatch thread.
+     * it, or failed (an observer guarding unsaved changes must not lose them).
+     * <p>
+     * A cancelled quit is replied to macOS at once ({@code QuitResponse.cancelQuit()}). Otherwise, in production, the
+     * reply stays pending while Quarkus stops the application, as with the default quit handler of the JDK (which calls
+     * {@code System.exit} without replying) : macOS waits for the process to exit, and a logout or a shutdown goes on.
+     * The quit is never performed ({@code QuitResponse.performQuit()} calls {@code System.exit} on the event dispatch
+     * thread). In dev and test modes, the JVM outlives the application : the quit is cancelled, and the application
+     * stops.
      */
     void quit(QuitEvent event, QuitResponse response) {
         if (stopped.getAsBoolean()) {
             // the application is stopping already
-            response.cancelQuit();
+            if (!exitsJvm) {
+                response.cancelQuit();
+            }
             return;
         }
         QuitRequest request = new QuitRequest(event);
+        boolean quit = false;
         try {
             events.accept(request);
-        } catch (RuntimeException e) {
-            LOGGER.error("A QuitRequest observer failed", e);
+            quit = !request.isCancelled();
+        } catch (Throwable e) {
+            LOGGER.error("A QuitRequest observer failed : the application does not quit", e);
+        } finally {
+            if (!quit || !exitsJvm) {
+                response.cancelQuit();
+            }
         }
-        response.cancelQuit();
-        if (request.isCancelled()) {
-            LOGGER.debug("The quit request is cancelled");
-        } else {
+        if (quit) {
             LOGGER.debug("Quit requested : the application stops");
             exit.run();
+        } else {
+            LOGGER.debug("The quit request is cancelled");
         }
     }
 }

@@ -1,10 +1,12 @@
 package io.quarkiverse.desktop.awt;
 
 /**
- * Fired on the event dispatch thread once the application started, to create its user interface.
+ * Fired on the event dispatch thread during the startup of the application, to create its user interface.
  * <p>
  * The observers of this event run after the {@code StartupEvent} observers and after the look and feel of
- * {@code quarkus.desktop.swing.look-and-feel} is set. An application that observes it is a user interface
+ * {@code quarkus.desktop.swing.look-and-feel} is set. The event is queued ({@code EventQueue.invokeLater}) : its
+ * observers may run while the rest of the startup, and a {@code @QuarkusMain}, run on the main thread. An application that
+ * observes it is a user interface
  * application : its last window closing stops it ({@code quarkus.desktop.awt.exit-on-last-window-closed}). The event is
  * fired automatically ({@code quarkus.desktop.awt.startup-event.mode=auto}), or when the application calls
  * {@link DesktopLifecycle#start()} ({@code manual}). It is not fired in tests unless
