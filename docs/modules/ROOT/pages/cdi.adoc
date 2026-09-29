@@ -1,0 +1,986 @@
+= Application model and CDI
+
+include::./includes/attributes.adoc[]
+:diataxis-type: reference
+:categories: miscellaneous
+
+A Quarkus Desktop application is a Quarkus application whose windows are CDI beans. The extension starts the user
+interface once the application started, stops the application when its last window closes, and gives the ways to reach
+the event dispatch thread from any thread (`CompletableFuture`, Mutiny, CDI events, an interceptor), without
+`SwingUtilities.invokeLater` boilerplate nor `SwingWorker`.
+
+The API is in the `io.quarkiverse.desktop.awt` package of `quarkus-desktop-awt`, for AWT and Swing applications
+(`quarkus-desktop-swing` includes it):
+
+[cols="1,3"]
+|===
+|API |What for
+
+|`DesktopStartupEvent`
+|Observed to create the user interface, on the event dispatch thread (see <<startup>>)
+
+|`DesktopLifecycle`
+|Starts the user interface from the application, in the manual mode (see <<manual-mode>>)
+
+|`EdtExecutor`
+|The `Executor` of the event dispatch thread, for `CompletableFuture`, Mutiny and asynchronous CDI events (see
+<<background-work>>)
+
+|`Edt`
+|Static helpers: `isEdt()`, `run(Runnable)` and `call(Callable, Duration)` (see <<edt>>)
+
+|`@RunOnEdt`
+|Runs the methods of a bean (a presenter) on the event dispatch thread, whatever thread calls them (see <<run-on-edt>>)
+
+|`WindowBeans`
+|Destroys a `@Dependent` window bean when its window closes (see <<window-beans>>)
+
+|`QuitRequest`, and the events of `java.awt.desktop`
+|The application menu, the Finder and the Dock of macOS as CDI events (see <<desktop-events>>)
+|===
+
+[[first-application]]
+== A first application
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.DesktopStartupEvent;
+
+@ApplicationScoped // <1>
+public class Library {
+
+    public String[] titles() {
+        return new String[] { "Dune", "Emma", "Ulysses" };
+    }
+}
+
+@Singleton // <2>
+public class MainWindow extends JFrame {
+
+    @Inject
+    Library library; // <3>
+
+    @ConfigProperty(name = "app.title", defaultValue = "Library")
+    String title;
+
+    void open(@Observes DesktopStartupEvent event) { // <4>
+        setTitle(title);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE); // <5>
+        add(new JScrollPane(new JList<>(library.titles())));
+        pack();
+        setLocationRelativeTo(null);
+        setVisible(true);
+    }
+}
+----
+<1> The services of the application are ordinary beans, of any scope.
+<2> A component (a `java.awt.Component`: a window, a panel...) is a `@Singleton` or `@Dependent` bean, never an
+`@ApplicationScoped` one (see <<components>>). The bean is created when the event is notified, on the event dispatch
+thread: its constructor and field initializers run there.
+<3> Components get beans and configuration injected, as any bean.
+<4> Called once, on the event dispatch thread, after the application started.
+<5> The application stops when its last window closes (see <<exit>>). Never `EXIT_ON_CLOSE`.
+
+No `@QuarkusMain` is needed: without one, Quarkus runs until the application stops. `./mvnw quarkus:dev` runs the
+application in dev mode (see <<dev-mode>>), `java -jar target/quarkus-app/quarkus-run.jar` runs it in production, and
+`./mvnw package -Dnative` builds a native executable (see <<native-executables>>).
+
+[[startup]]
+== Starting the user interface
+
+An application that observes `DesktopStartupEvent` with `@Observes` has a user interface: the build finds the
+observers. The other applications (a server that only renders images, for instance) have none of what this page
+describes: in production, the extension does not start the AWT toolkit for them, nor install anything (dev mode and
+tests start the toolkit of every application, see xref:awt.adoc#dev-mode[Dev mode]).
+
+The event is fired once, on the event dispatch thread, queued with `EventQueue.invokeLater` during the startup, after
+the `StartupEvent` observers and after the look and feel of `quarkus.desktop.swing.look-and-feel` is set:
+
+* Its observers run on the event dispatch thread while the main thread goes on: the rest of the startup (the HTTP
+server, for instance) and the `run` method of a `@QuarkusMain` may run at the same time. Do the work that must happen
+before the user interface in a `StartupEvent` observer, or use the manual mode (see <<manual-mode>>).
+* The startup of Quarkus never waits for the event dispatch thread, except to set the look and feel.
+* `@Priority` orders several observers. Keep them short, they delay the first window: load the data on another thread
+(see <<background-work>>).
+* When an observer throws (an exception or an error, such as the `LinkageError` of a native executable missing some
+metadata), the error is logged and, in production, the application stops with exit code 1, instead of running without
+a window.
+* In a headless JVM (no display, or `-Djava.awt.headless=true`), the event is not fired: in production, the application
+logs an error and stops with exit code 1; in dev mode and tests, it logs a warning.
+* The build logs a warning for an `@ObservesAsync` observer of `DesktopStartupEvent`, which is never notified.
+* In tests (`@QuarkusTest`), the event is not fired unless it is enabled (see <<testing>>).
+
+[[manual-mode]]
+=== Manual mode
+
+With the manual mode, the application fires the event itself, with `DesktopLifecycle.start()`, when its work before the
+user interface is done: the arguments, a single instance lock, a login, or a batch mode without user interface.
+
+[source,properties]
+----
+quarkus.desktop.awt.startup-event.mode=manual
+----
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.DesktopLifecycle;
+
+@QuarkusMain
+public class Main implements QuarkusApplication {
+
+    @Inject
+    DesktopLifecycle lifecycle;
+
+    @Inject
+    Exporter exporter;
+
+    @Override
+    public int run(String... args) throws Exception {
+        if (args.length == 2 && args[0].equals("--export")) { // <1>
+            exporter.export(Path.of(args[1]));
+            return 0;
+        }
+        lifecycle.start(); // <2>
+        Quarkus.waitForExit(); // <3>
+        return 0;
+    }
+}
+----
+<1> A batch mode, which may run on a server without display: the user interface is never started. A headless JVM is
+only reported (an error, and exit code 1 in production) when the application calls `start()`.
+<2> Queues `DesktopStartupEvent` on the event dispatch thread and returns at once. Only the first call fires it.
+<3> Waits until the application stops: when its last window closes, or when it calls `Quarkus.asyncExit()`.
+
+An application without `@QuarkusMain` calls `DesktopLifecycle.start()` from a `StartupEvent` observer: the event is
+then fired once the application started.
+
+[source,java]
+----
+@ApplicationScoped
+public class Startup {
+
+    @Inject
+    DesktopLifecycle lifecycle;
+
+    @ConfigProperty(name = "app.user-interface", defaultValue = "true")
+    boolean userInterface;
+
+    void start(@Observes StartupEvent event) {
+        if (userInterface) { // false on a server: no window, and the AWT toolkit is not started
+            lifecycle.start(); // DesktopStartupEvent is fired once the application started
+        }
+    }
+}
+----
+
+In the default `auto` mode, the event is queued before the `run` method of a `@QuarkusMain` is called (the work of
+`run` is not ordered before the user interface), and `DesktopLifecycle.start()` does nothing.
+
+[[exit]]
+== Closing windows and exit
+
+The application stops (`Quarkus.asyncExit()`) when its last visible window is closed or hidden, once a first window
+opened, as JavaFX does: `ShutdownEvent` observers and `@PreDestroy` methods run, and the process exits. The windows are
+counted in a later event, so an event handler may dispose a window and show another one. The close operation of a
+window decides what closing it does:
+
+[cols="1,3"]
+|===
+|Close operation |With Quarkus Desktop
+
+|`DISPOSE_ON_CLOSE`
+|The window is disposed. The right choice for most windows: the application stops when the last one closes, and
+`WindowBeans` destroys a `@Dependent` window bean (see <<window-beans>>).
+
+|`HIDE_ON_CLOSE` (the default of `JFrame` and `JDialog`)
+|The window is hidden, and keeps its resources: a hidden window counts as closed. For a window shown again later, with
+`setVisible(true)`.
+
+|`DO_NOTHING_ON_CLOSE` (and `java.awt.Frame`, which does nothing on close)
+|The application decides in a `WINDOW_CLOSING` listener, for instance after asking to save the changes, and disposes
+the window itself.
+
+|`EXIT_ON_CLOSE`
+|Never: it calls `System.exit` on the event dispatch thread, which then waits for Quarkus to stop, while the
+`ShutdownEvent` observers may need the event dispatch thread. In dev mode, it exits the JVM and ends dev mode (the Swing
+extension logs a warning when such a frame opens in dev mode).
+|===
+
+A window that asks before closing:
+
+[source,java]
+----
+@Singleton
+public class EditorWindow extends JFrame {
+
+    @Inject
+    Documents documents;
+
+    void open(@Observes DesktopStartupEvent event) {
+        setDefaultCloseOperation(DO_NOTHING_ON_CLOSE); // <1>
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (documents.hasUnsavedChanges() && JOptionPane.showConfirmDialog(EditorWindow.this,
+                        "Quit without saving?", "Quit", JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+                    return;
+                }
+                documents.saveBounds(getBounds()); // <2>
+                dispose(); // <3>
+            }
+        });
+        pack();
+        setVisible(true);
+    }
+}
+----
+<1> The window stays open unless the listener disposes it.
+<2> Save the window state (bounds, open documents) on `WINDOW_CLOSING`, on the event dispatch thread: `ShutdownEvent`
+observers and `@PreDestroy` methods do not run on the event dispatch thread, and the windows may already be disposed
+then.
+<3> The last window closed: the application stops. On macOS, Cmd-Q does not close the windows, observe `QuitRequest`
+too (see <<desktop-events>>).
+
+An application that stays alive without windows (a tray icon application, or the macOS convention of an application
+without window) disables the exit policy, and calls `Quarkus.asyncExit()` itself:
+
+[source,properties]
+----
+quarkus.desktop.awt.exit-on-last-window-closed=false
+----
+
+[source,java]
+----
+@Singleton
+public class TrayMenu {
+
+    void install(@Observes DesktopStartupEvent event) throws AWTException {
+        PopupMenu menu = new PopupMenu();
+        MenuItem quit = new MenuItem("Quit");
+        quit.addActionListener(e -> Quarkus.asyncExit()); // <1>
+        menu.add(quit);
+        TrayIcon icon = new TrayIcon(Toolkit.getDefaultToolkit().getImage(getClass().getResource("/tray.png")),
+                "Library", menu);
+        icon.setImageAutoSize(true);
+        SystemTray.getSystemTray().add(icon); // <2>
+    }
+}
+----
+<1> Stops the application: `ShutdownEvent` observers and `@PreDestroy` methods run.
+<2> Check `SystemTray.isSupported()` first on Linux, where some desktops have no system tray. In dev mode and tests, the
+tray icons are removed when the application stops.
+
+The exit policy is also for a splash screen: show the main window before closing the splash screen, or the application
+stops in between (or disable the policy). It is never installed in tests, nor with Quarkus FX (see <<quarkus-fx>>).
+
+[[event-dispatch-thread]]
+== The event dispatch thread
+
+AWT and Swing components are created and used on the event dispatch thread. The `DesktopStartupEvent` observers, the
+listeners of the components, the events of `java.awt.desktop` and `@RunOnEdt` methods run there; everything else
+(`StartupEvent` observers, REST resources, `@Scheduled` methods, messaging, `ShutdownEvent` observers) runs on other
+threads. The extension gives three ways to get to the event dispatch thread:
+
+* `EdtExecutor`, the executor of the event dispatch thread: continue there after work done on another thread;
+* `Edt`, static helpers, including the only call that waits for the event dispatch thread;
+* `@RunOnEdt`, an interceptor binding: the methods of a bean always run there, whatever thread calls them.
+
+Never block the event dispatch thread (a database query, an HTTP call, a file read): the user interface freezes.
+
+[[background-work]]
+=== Background work
+
+Run the work on a Quarkus executor and continue on the event dispatch thread with `EdtExecutor`, an `Executor` bean
+that always queues the task (`EventQueue.invokeLater`), in order, even when called on the event dispatch thread:
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.EdtExecutor;
+
+@Singleton
+public class BooksWindow extends JFrame {
+
+    @Inject
+    BookRepository repository;
+
+    @Inject
+    ManagedExecutor workers; // <1>
+
+    @Inject
+    EdtExecutor edt; // <2>
+
+    private final DefaultListModel<String> books = new DefaultListModel<>();
+
+    private final JLabel status = new JLabel();
+
+    void open(@Observes DesktopStartupEvent event) {
+        add(new JScrollPane(new JList<>(books)));
+        add(status, BorderLayout.SOUTH);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        pack();
+        setVisible(true);
+        refresh();
+    }
+
+    void refresh() { // on the event dispatch thread
+        status.setText("Loading...");
+        CompletableFuture.supplyAsync(repository::titles, workers) // <3>
+                .whenCompleteAsync((titles, error) -> { // <4>
+                    if (error != null) {
+                        status.setText("Loading failed: " + error.getMessage());
+                    } else {
+                        show(titles);
+                    }
+                }, edt);
+    }
+
+    void search(String text) { // on the event dispatch thread
+        repository.search(text) // a Uni<List<String>>
+                .emitOn(edt) // <5>
+                .subscribe().with(this::show, error -> status.setText(error.getMessage()));
+    }
+
+    void reload(@ObservesAsync BooksChanged event) { // <6>
+        refresh();
+    }
+
+    private void show(List<String> titles) {
+        books.clear();
+        books.addAll(titles);
+        status.setText(titles.size() + " books");
+    }
+}
+----
+<1> The `ManagedExecutor` of `quarkus-smallrye-context-propagation` propagates the contexts (CDI request context,
+transactions) to the worker threads. Without it, `@Inject ExecutorService` gets the worker pool of Quarkus.
+<2> The only bean type of `EdtExecutor` is `EdtExecutor`: `@Inject Executor` still gets the worker pool of Quarkus. In
+static code, `EventQueue::invokeLater` is the same executor.
+<3> Loads the data on a worker thread.
+<4> Continues on the event dispatch thread, with the result or the error.
+<5> Mutiny: the items and the failure are emitted on the event dispatch thread. Use `runSubscriptionOn(workers)` for a
+`Uni` that blocks when subscribed.
+<6> Asynchronous events fired with the `EdtExecutor` are notified on the event dispatch thread, see below.
+
+An asynchronous CDI event fired with `NotificationOptions.ofExecutor(edt)` notifies its `@ObservesAsync` observers on
+the event dispatch thread, from any thread:
+
+[source,java]
+----
+@ApplicationScoped
+public class BookService {
+
+    @Inject
+    BookRepository repository;
+
+    @Inject
+    Event<BooksChanged> booksChanged;
+
+    @Inject
+    EdtExecutor edt;
+
+    public void save(String title) { // on any thread
+        repository.save(title);
+        booksChanged.fireAsync(new BooksChanged(), NotificationOptions.ofExecutor(edt)); // <1>
+    }
+}
+----
+<1> Every `@ObservesAsync BooksChanged` observer runs on the event dispatch thread. A synchronous event (`fire`) runs
+its observers on the thread that fires it.
+
+[[edt]]
+=== Edt
+
+`Edt` has static helpers:
+
+* `Edt.isEdt()`: whether the current thread is the event dispatch thread.
+* `Edt.run(task)`: runs the task now when called on the event dispatch thread, later (`EventQueue.invokeLater`)
+otherwise.
+* `Edt.call(callable, timeout)`: the only call that waits for the event dispatch thread, for background threads and
+tests. Called on the event dispatch thread, it calls the task now. It throws a `TimeoutException` instead of waiting for
+ever, and the exception of the task.
+
+[source,java]
+----
+Dimension size = Edt.call(panel::getPreferredSize, Duration.ofSeconds(5));
+Edt.run(() -> status.setText("Saved"));
+----
+
+When `Edt.call` times out, or the waiting thread is interrupted, a task that did not start yet is skipped; a task
+already running goes on, and its result is dropped. Never call it while holding a lock that the event dispatch thread
+may need: the AWT tree lock, a lock of the application, or ArC creating a bean (a constructor, a `@PostConstruct`
+method, a producer, see <<components>>). Nor from a shutdown hook or a `ShutdownEvent` observer, where the event
+dispatch thread may be blocked. When the name `Edt` clashes with a class of the application, use the qualified name
+`io.quarkiverse.desktop.awt.Edt`.
+
+[[run-on-edt]]
+=== @RunOnEdt
+
+`@RunOnEdt` runs the methods of a bean on the event dispatch thread, whatever thread calls them (a `@Scheduled` method,
+a REST resource, a Kafka consumer, an asynchronous observer). Put it on presenters (beans that are not components), or
+on methods:
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.RunOnEdt;
+
+public interface StatusView {
+
+    void showStatus(String text);
+
+    boolean confirm(String question);
+}
+
+@Singleton
+public class StatusBar extends JLabel implements StatusView { // <1>
+
+    @Override
+    public void showStatus(String text) {
+        setText(text);
+    }
+
+    @Override
+    public boolean confirm(String question) {
+        return JOptionPane.showConfirmDialog(this, question, "Confirm",
+                JOptionPane.YES_NO_OPTION) == JOptionPane.YES_OPTION;
+    }
+}
+
+@ApplicationScoped
+public class StatusPresenter {
+
+    @Inject
+    Instance<StatusView> view; // <2>
+
+    @RunOnEdt
+    public void show(String text) { // <3>
+        view.get().showStatus(text);
+    }
+
+    @RunOnEdt
+    public CompletionStage<Boolean> confirm(String question) { // <4>
+        return CompletableFuture.completedFuture(view.get().confirm(question));
+    }
+}
+
+@ApplicationScoped
+public class ServerMonitor {
+
+    @Inject
+    StatusPresenter presenter;
+
+    @Inject
+    ServerClient server;
+
+    @Scheduled(every = "10s")
+    void poll() { // on a worker thread
+        presenter.show(server.status());
+    }
+}
+----
+<1> The view: a component bean, added to the main window, that implements an interface the presenter uses (which
+makes the presenter testable, see <<testing>>).
+<2> Get the component beans on the event dispatch thread, in the method (`Instance<T>` or `Provider<T>`): a component
+bean injected directly is created with the presenter, on the thread that first uses it. The build logs a warning for it.
+<3> A `void` method runs now when called on the event dispatch thread, later (`EventQueue.invokeLater`) otherwise: the
+call returns at once, and an exception goes to the uncaught exception handler (see <<uncaught-exceptions>>).
+<4> A method returning a `CompletionStage` (or a `CompletableFuture`) returns a stage completed with its result, or its
+exception, once it ran on the event dispatch thread.
+
+The build fails for a `@RunOnEdt` method returning another type (there is no blocking mode: use `Edt.call`), and for a
+bean that is not `@ApplicationScoped`, `@Singleton` or `@Dependent` (a `@RequestScoped` instance belongs to the request
+of the caller, which may be over when the method runs). `@RunOnEdt` on a class applies to its business methods; on a
+component class it is a build error, annotate the methods (see <<components>>).
+
+The interceptor of `@RunOnEdt` is the outermost one (priority `PLATFORM_BEFORE - 100`), so the other interceptors of the
+method run on the event dispatch thread, around the method:
+
+[cols="1,2"]
+|===
+|Interceptor |Where it runs with `@RunOnEdt`
+
+|`@RunOnEdt`
+|On the calling thread: it queues the call
+
+|`@ActivateRequestContext`, `@Transactional`, fault tolerance (`@Retry`, `@CircuitBreaker`...), `@CacheResult`,
+application interceptors
+|On the event dispatch thread, around the method: a transaction or a retry then blocks the event dispatch thread. Call
+such methods from a worker thread, and `@RunOnEdt` only the user interface update
+
+|Fault tolerance `@Timeout`
+|On the event dispatch thread: when the timeout expires, it interrupts the event dispatch thread (AWT then replaces it).
+The build logs a warning
+
+|Fault tolerance `@Asynchronous`, `@AsynchronousNonBlocking`
+|The method runs on another thread, not on the event dispatch thread. The build logs a warning
+
+|Tracing (`@WithSpan`)
+|On the event dispatch thread: the span of a queued call has no parent (the context of the calling thread is not
+propagated)
+|===
+
+The event dispatch thread has no active request context: use `@ActivateRequestContext` on a method that needs one.
+
+`@RunOnEdt` works on static methods too, with the same return types (the build fails for a private static method,
+which ArC does not intercept). A queued call is skipped when the application stopped before it ran (dev mode restarts,
+tests); a call on a `@Dependent` bean already destroyed still runs.
+
+[[uncaught-exceptions]]
+=== Uncaught exceptions
+
+An exception that escapes a listener, or a `void` `@RunOnEdt` method, is logged at the `ERROR` level in the
+`io.quarkiverse.desktop.awt.edt` category, with the name of the thread, instead of being printed on the standard
+error: it goes to the Quarkus log handlers (console, file, JSON). The event dispatch thread keeps running after it.
+
+The extension installs this default uncaught exception handler (`Thread.setDefaultUncaughtExceptionHandler`) when an
+application with a user interface starts, only when the JVM has none, so it covers the other threads too; an
+application that installs its own handler replaces it. In dev mode and in tests, the previous handler is restored when
+the application stops.
+
+[source,properties]
+----
+# keep the log (and the uncaught exceptions) of a desktop application in a file
+quarkus.log.file.enabled=true
+# or do not log them
+quarkus.log.category."io.quarkiverse.desktop.awt.edt".level=OFF
+----
+
+[[components]]
+== Components as CDI beans
+
+AWT and Swing components can be CDI beans, with injection, configuration, `@PostConstruct` and `@PreDestroy`, when:
+
+* They are `@Singleton` (a main window, a status bar) or `@Dependent` (a dialog or a document window opened several
+times, a panel of a window) beans, never normal scoped ones (`@ApplicationScoped`, `@RequestScoped`...): the client
+proxy of a normal scoped bean is a subclass of the component, so creating the proxy creates another component, outside
+the event dispatch thread, and the proxy of a Swing component cannot even be loaded (it overrides the final methods of
+`JComponent`).
+* They are created on the event dispatch thread: in a `DesktopStartupEvent` observer (a component bean that observes it
+is created on the event dispatch thread), a `@RunOnEdt` method, a listener, or through `Instance<T>` or `Provider<T>`
+resolved on the event dispatch thread. A component bean injected directly into another bean is created with that bean,
+on the thread that first uses it: inject components directly only into other components created on the event
+dispatch thread.
+* Their constructor, `@PostConstruct` method or producer never waits for the event dispatch thread
+(`SwingUtilities.invokeAndWait`, `Edt.call`): ArC holds a lock while it creates a bean, and an observer of that bean
+notified on the event dispatch thread at the same time waits for that lock, a deadlock.
+
+The logic goes to presenters and services: beans that are not components, of any scope (`@ApplicationScoped` is fine
+there), which use the components on the event dispatch thread (`@RunOnEdt`, `EdtExecutor`) and are easy to test and
+mock (see <<testing>>).
+
+The build checks these rules. Errors for what cannot work, warnings for what may not:
+
+[cols="3,1,3"]
+|===
+|Found |Result |Instead
+
+|A normal scoped component bean (a class or a producer)
+|Build error
+|`@Singleton` or `@Dependent`
+
+|An interceptor binding on a component class (`@RunOnEdt`, `@Transactional`..., declared, inherited or from a
+stereotype): it would intercept the hundreds of methods that the class inherits from AWT and Swing
+|Build error
+|Annotate methods, or move the logic to a presenter
+
+|A `@RunOnEdt` method that returns neither `void` nor a `CompletionStage`, or that is private and static
+|Build error
+|Return `void` or a `CompletionStage` (or call `Edt.call`), make a static method package private
+
+|`@RunOnEdt` on a bean that is not `@ApplicationScoped`, `@Singleton` or `@Dependent`
+|Build error
+|One of these scopes
+
+|A component bean injected directly into a `@RunOnEdt` bean, into a `@QuarkusMain` class or into a bean observing
+`StartupEvent` (they create it on another thread)
+|Build warning
+|`Instance<T>` or `Provider<T>`, resolved on the event dispatch thread
+
+|A `@Dependent` component bean that observes `DesktopStartupEvent`: CDI creates an instance for the notification and
+destroys it (its `@PreDestroy` methods run) right after it, while the window stays open
+|Build warning
+|`@Singleton`, or observe the event in another bean and open the window with `Instance<T>` (see <<window-beans>>)
+
+|`@ObservesAsync DesktopStartupEvent`, `@Timeout` or `@Asynchronous` on a `@RunOnEdt` method, an event of
+`java.awt.desktop` that is not fired (see <<desktop-events>>)
+|Build warning
+|See the message
+
+|A component bean that exists already when `DesktopStartupEvent` is fired (dev mode and tests)
+|Warning at run time
+|Create it on the event dispatch thread
+|===
+
+[[window-beans]]
+=== Window beans
+
+Windows that the application opens several times (dialogs, document windows) are `@Dependent` beans got from an
+`Instance<T>`. `WindowBeans.get(instance)` gets one on the event dispatch thread, and destroys the bean once its window
+is closed: its `@PreDestroy` methods run (stop its timers, remove its global listeners) and its own dependent beans are
+destroyed. With `Instance.get()` alone, the `Instance` keeps every dialog it created until it is destroyed itself.
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.WindowBeans;
+
+@Dependent
+public class InvoiceDialog extends JDialog {
+
+    @Inject
+    InvoiceService service;
+
+    private final Timer refresh = new Timer(5_000, e -> reload());
+
+    private Invoice invoice;
+
+    InvoiceDialog() {
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE); // <1>
+    }
+
+    void edit(Invoice invoice) {
+        this.invoice = invoice;
+        setTitle("Invoice " + invoice.number());
+        refresh.start();
+    }
+
+    private void reload() {
+        invoice = service.reload(invoice);
+    }
+
+    @PreDestroy
+    void close() { // <2>
+        refresh.stop();
+    }
+}
+
+@Singleton // not @ApplicationScoped
+public class InvoicesWindow extends JFrame {
+
+    @Inject
+    InvoiceService service;
+
+    @Inject
+    Instance<InvoiceDialog> dialogs;
+
+    void open(@Observes DesktopStartupEvent event) {
+        JList<Invoice> invoices = new JList<>(service.findAll());
+        JButton edit = new JButton("Edit");
+        edit.addActionListener(e -> {
+            InvoiceDialog dialog = WindowBeans.get(dialogs); // <3>
+            dialog.edit(invoices.getSelectedValue());
+            dialog.pack();
+            dialog.setVisible(true);
+        });
+        add(new JScrollPane(invoices));
+        add(edit, BorderLayout.SOUTH);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        pack();
+        setVisible(true);
+    }
+}
+----
+<1> The bean is destroyed when its window is disposed (`WINDOW_CLOSED`), not when it is hidden: a `JDialog` hides on
+close by default (`HIDE_ON_CLOSE`). A window that is never shown nor packed is never closed: when the code that shows
+it may fail first, destroy the bean yourself (`dialogs.destroy(dialog)`).
+<2> Called on the event dispatch thread when the window closes. When the application stops in dev mode and tests, the
+windows are disposed before the container stops, and their beans are destroyed on the event dispatch thread too (unless
+the event dispatch thread is blocked for more than 5 seconds). The container destroys the remaining beans on the
+shutdown thread, and the windows closed afterwards do not destroy them again.
+<3> `WindowBeans.get` throws an `IllegalStateException` outside the event dispatch thread. A `@Singleton` window is
+returned as is, and never destroyed.
+
+[[desktop-events]]
+== Application menu, Finder and Dock events (macOS)
+
+The application handlers of `java.awt.Desktop` are CDI events: observe the event types of the JDK (package
+`java.awt.desktop`) in any bean, and `QuitRequest` for the quit requests. The observers run on the event dispatch
+thread.
+
+[source,java]
+----
+import java.awt.desktop.AboutEvent;
+import java.awt.desktop.AppReopenedEvent;
+import java.awt.desktop.OpenFilesEvent;
+import java.awt.desktop.OpenURIEvent;
+import java.awt.desktop.PreferencesEvent;
+
+import io.quarkiverse.desktop.awt.QuitRequest;
+import io.quarkiverse.desktop.awt.WindowBeans;
+
+@Singleton
+public class ApplicationMenu {
+
+    @Inject
+    Instance<AboutDialog> about;
+
+    @Inject
+    Instance<PreferencesDialog> preferences;
+
+    @Inject
+    Instance<MainWindow> main;
+
+    @Inject
+    Documents documents;
+
+    void about(@Observes AboutEvent event) { // <1>
+        WindowBeans.get(about).setVisible(true);
+    }
+
+    void preferences(@Observes PreferencesEvent event) {
+        WindowBeans.get(preferences).setVisible(true);
+    }
+
+    void open(@Observes OpenFilesEvent event) { // <2>
+        event.getFiles().forEach(documents::open);
+    }
+
+    void open(@Observes OpenURIEvent event) { // <3>
+        documents.open(event.getURI());
+    }
+
+    void reopen(@Observes AppReopenedEvent event) { // <4>
+        main.get().setVisible(true);
+        main.get().toFront();
+    }
+
+    void quit(@Observes QuitRequest request) { // <5>
+        if (documents.hasUnsavedChanges() && JOptionPane.showConfirmDialog(main.get(), "Quit without saving?", "Quit",
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            request.cancel();
+        }
+    }
+}
+----
+<1> The About and Preferences items of the application menu. Observing `AboutEvent` replaces the default About window
+of the JDK; without an observer of `PreferencesEvent`, the Preferences item is disabled.
+<2> The files opened with the application (from the Finder, or dropped on its Dock icon), including the file that
+started it: the JDK keeps them until the handler is installed, and the extension installs it just before firing
+`DesktopStartupEvent`, so they are fired once the main window is created. `PrintFilesEvent` is the same for printing.
+<3> A URL of a scheme of the application (`myapp://...`).
+<4> The Dock icon clicked while the application runs (for instance with no window visible, see
+`quarkus.desktop.awt.exit-on-last-window-closed`).
+<5> Quit in the application menu, Cmd-Q, Quit in the Dock, a logout or a shutdown.
+
+How it works:
+
+* *Quit*: on macOS, the extension always installs a quit handler (even without an observer of `QuitRequest`). It
+fires `QuitRequest`, then the application stops with `Quarkus.asyncExit(0)` unless an observer called
+`request.cancel()`: `ShutdownEvent` observers and `@PreDestroy` methods run, as when the last window closes. Without it,
+the JDK would call `System.exit` on the AppKit thread. An observer that throws cancels the quit (the error is logged):
+an observer guarding unsaved changes never loses them.
+* *Logout and shutdown*: a cancelled quit is replied to macOS at once ("do not terminate"), which also cancels a logout
+or a shutdown of the Mac: cancel only when the user asked to. Otherwise, in production, the reply stays pending while
+Quarkus stops the application, as with the default handler of the JDK: macOS waits for the process to exit, and the
+logout or the shutdown goes on. In dev mode and tests, where the JVM outlives the application, the extension replies
+"do not terminate" and the application stops.
+* *Only what is observed*: the handlers are installed for the events that the application observes (found at build
+time), when the application has a user interface (see <<startup>>). So they are not installed in tests unless the
+startup event is enabled. The build logs a warning for an observer of a `java.awt.desktop` event without an observer of
+`DesktopStartupEvent`, and for the events that are not fired (`@ObservesAsync` observers, `QuitEvent`: observe
+`QuitRequest`, and the events of the other listeners, see below).
+* *Platforms*: macOS supports all these events. Windows and Linux support none of them: the observers are never called
+there, and the extension does not even call `java.awt.Desktop` on Linux (it loads GTK). On Windows and Linux there are
+no quit requests: closing the last window stops the application, ask for confirmation on `WINDOW_CLOSING` (see
+<<exit>>).
+* *Other events*: `AppForegroundEvent`, `AppHiddenEvent`, `ScreenSleepEvent`, `SystemSleepEvent` and
+`UserSessionEvent` are not fired (one event type is used for two notifications, for instance moved to the foreground
+and to the background): register a listener with `Desktop.getDesktop().addAppEventListener(...)` in a
+`DesktopStartupEvent` observer, and remove it in a `@PreDestroy` method for dev mode. An application may also set its
+own handlers there (`Desktop.getDesktop().setQuitHandler(...)`): they replace those of the extension for the rest of
+the run (`java.awt.Desktop` has no getter to restore them). Setting a handler to `null` restores the one of the JDK, not
+the one of the extension: prefer observing the CDI events, and check a flag in the observer to react only while a view
+is shown.
+* *Dev mode and tests*: the handlers are removed when the application stops, which restores those of the JDK.
+* *Native executables*: the events work the same. The files and URLs opened with the application need the
+information property list of an application bundle declaring the document types (`CFBundleDocumentTypes`) and the URL
+schemes (`CFBundleURLTypes`): `quarkus.desktop.awt.macos.info-plist` does not declare them, write the `Info.plist` of the
+bundle.
+
+[[dev-mode]]
+== Dev mode
+
+`./mvnw quarkus:dev` runs the application in dev mode: a restart runs it again in the same JVM, and
+`DesktopStartupEvent` is fired again, to the new beans, which open the windows again.
+
+*What a restart disposes*: when the application stops (in dev mode, and in tests, where several applications run in
+the same JVM), the extension disposes the windows and removes the tray icons of the application, on the event dispatch
+thread, after the `ShutdownEvent` observers and before the CDI container stops (the shutdown waits for the event
+dispatch thread 5 seconds at most). The `@Dependent` window beans of `WindowBeans` are destroyed with their windows.
+The exit policy, the handlers of `java.awt.Desktop` and the uncaught exception handler of the extension are removed,
+and `@RunOnEdt` calls still queued are skipped.
+
+*What stays*: the AWT toolkit and its threads (the event dispatch thread gets the class loader of the running
+application, see xref:awt.adoc#dev-mode[Dev mode]), the Dock icon on macOS, and the global AWT and Swing state: the
+look and feel set with `UIManager.setLookAndFeel` (`quarkus.desktop.swing.look-and-feel` is set again at each start),
+`UIManager.put` values, the listeners added to `Toolkit` or `KeyboardFocusManager`, running `javax.swing.Timer` and
+threads. Stop and remove what the application started outside its windows in `@PreDestroy` methods, or they keep the
+code of the previous run alive.
+
+*Restarts*: dev mode looks for changes of the sources when the application gets an HTTP request, and `[s]` in the
+console forces a restart (the windows are closed and opened again). A desktop application has no HTTP requests unless it
+uses an HTTP extension. With one (for instance `quarkus-vertx-http`, which also brings the Dev UI), the instrumentation
+of dev mode swaps the changes of method bodies without a restart, the windows staying open with their state: change the
+code, then open any page of the application (for instance `http://localhost:8080/q/dev-ui`).
+
+[source,properties]
+----
+# method body changes are swapped in the running application, without a restart ([i] toggles it in the console)
+quarkus.live-reload.instrumentation=true
+----
+
+*Exit*: when the last window closes, or on Cmd-Q on macOS, the application stops (`Quarkus.asyncExit()`) and dev mode
+keeps running: press `[space]` in the console to start the application again. Never use `JFrame.EXIT_ON_CLOSE`, which
+exits the JVM and ends dev mode.
+
+*Continuous testing*: the tests of continuous testing run in another application of the same JVM. When they enable the
+user interface (see <<testing>>), the windows opened while they run are disposed once they ran, and the handlers of
+`java.awt.Desktop` stay those of the dev mode application. The exit policy of the dev mode application counts the
+windows of the tests while they are shown.
+
+[[testing]]
+== Testing
+
+In tests (`@QuarkusTest`), `DesktopStartupEvent` is not fired: the application starts without its windows, the exit
+policy and the handlers of `java.awt.Desktop`, and its beans (services, presenters) are tested as in any Quarkus
+application. `quarkus.arc.test.disable-application-lifecycle-observers=true` disables it even when it is enabled.
+
+User interface tests enable the event (for all the tests, or in a test profile), and need a display:
+
+[source,properties]
+----
+%test.quarkus.desktop.awt.startup-event.enabled=true
+----
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.Edt;
+
+@QuarkusTest
+@DisabledIf("java.awt.GraphicsEnvironment#isHeadless") // <1>
+class MainWindowTest {
+
+    @Inject
+    Instance<MainWindow> window; // <2>
+
+    @Test
+    void opens() throws Exception {
+        assertTrue(Edt.call(() -> window.get().isShowing(), Duration.ofSeconds(5))); // <3>
+        assertEquals("Library", Edt.call(() -> window.get().getTitle(), Duration.ofSeconds(5)));
+    }
+}
+----
+<1> Skipped without display: in a headless JVM, the event is not fired (the application logs a warning). On Linux, run
+the tests on a virtual display (`xvfb-run ./mvnw verify`).
+<2> The window is created by its `DesktopStartupEvent` observer, on the event dispatch thread: get it there, never
+inject the component bean into the test (it would be created on the test thread if the test ran first).
+<3> `Edt.call` runs after the startup event, queued before it, and reads the components on the event dispatch thread.
+
+In tests, the application does not stop when its windows close, and its windows are disposed when it stops (between
+test profiles, for instance). In the manual mode, `@QuarkusTest` does not run the `@QuarkusMain`: call
+`DesktopLifecycle.start()` in the test (only the first call fires the event), or launch the main with
+`@QuarkusMainTest`.
+
+*Presenters*: `QuarkusMock` and `@InjectMock` only replace normal scoped beans, not the `@Singleton` components. Make
+the presenters depend on view interfaces rather than on the component classes, and test them with
+`@QuarkusComponentTest` (`quarkus-junit-component`), which mocks the views, without display:
+
+[source,java]
+----
+@QuarkusComponentTest
+class StatusPresenterTest {
+
+    @Inject
+    StatusPresenter presenter;
+
+    @InjectMock
+    StatusView view; // <1>
+
+    @Test
+    void show() {
+        presenter.show("Ready"); // <2>
+        Mockito.verify(view).showStatus("Ready");
+    }
+
+    @Test
+    void confirm() throws Exception {
+        Mockito.when(view.confirm("Delete?")).thenReturn(false);
+        assertFalse(presenter.confirm("Delete?").toCompletableFuture().get());
+    }
+}
+----
+<1> The mock of the view that the presenter gets from its `Instance<StatusView>`.
+<2> A component test runs the beans without the Quarkus extensions: the interceptor of `@RunOnEdt` is not there, and
+the method runs on the test thread.
+
+[[native-executables]]
+== Native executables
+
+The CDI integration needs nothing in native executables: there is nothing to register. The beans, observers,
+interceptors (`@RunOnEdt`) and events are generated at build time by ArC, and the extension takes care of its own
+classes. The window classes of the
+application may need metadata for other reasons, as in any AWT or Swing application (the JavaBeans API, classes loaded
+by name, see xref:awt.adoc#limitations[Limitations]).
+
+When a `DesktopStartupEvent` observer fails in a native executable (a `LinkageError` or a
+`MissingReflectionRegistrationError` of missing metadata), the error is logged and the application stops with exit code
+1, instead of running without a window.
+
+[[quarkus-fx]]
+== Quarkus FX
+
+With https://github.com/quarkiverse/quarkus-fx[Quarkus FX] in the application (AWT or Swing in a JavaFX application,
+`SwingNode`, `JFXPanel`), JavaFX owns the application:
+
+* The exit policy is disabled: JavaFX decides when the application stops. This is also the case for a Swing
+application that embeds JavaFX with `JFXPanel` (with its own `@QuarkusMain`, see the Quarkus FX documentation): call
+`Quarkus.asyncExit()` when its main window closes.
+* No handler of `java.awt.Desktop` is installed: on macOS, AWT runs embedded in the JavaFX application and they are not
+called, use the JavaFX APIs.
+* The other features do not depend on Quarkus FX: `EdtExecutor`, `Edt` and `@RunOnEdt` for the event dispatch thread,
+next to `@RunOnFxThread` for the JavaFX application thread.
+* In the `auto` mode, `DesktopStartupEvent` starts the AWT toolkit during the startup of Quarkus, before JavaFX starts.
+On macOS, prefer the `manual` mode, and start the user interface once JavaFX started:
+
+[source,java]
+----
+import io.quarkiverse.desktop.awt.DesktopLifecycle;
+import io.quarkiverse.fx.FxPostStartupEvent;
+
+@ApplicationScoped
+public class DesktopStart {
+
+    @Inject
+    DesktopLifecycle lifecycle;
+
+    void start(@Observes FxPostStartupEvent event) { // on the JavaFX application thread, once JavaFX started
+        lifecycle.start(); // DesktopStartupEvent is fired on the event dispatch thread
+    }
+}
+----
+
+This combination is not verified yet on macOS.
+
+[[configuration]]
+== Configuration
+
+These run time properties also apply in JVM mode:
+
+[cols="2,1,4"]
+|===
+|Property |Default |Description
+
+|`quarkus.desktop.awt.startup-event.enabled`
+|`true`, `false` in tests
+|Whether `DesktopStartupEvent` is fired (see <<testing>>).
+
+|`quarkus.desktop.awt.startup-event.mode`
+|`auto`
+|`auto`: fired during the startup; `manual`: fired when the application calls `DesktopLifecycle.start()` (see
+<<manual-mode>>).
+
+|`quarkus.desktop.awt.exit-on-last-window-closed`
+|`true`
+|Whether the application stops when its last visible window is closed or hidden (see <<exit>>). Never in tests, nor with
+Quarkus FX.
+|===
+
+See xref:config-reference.adoc[the configuration reference] for the details.

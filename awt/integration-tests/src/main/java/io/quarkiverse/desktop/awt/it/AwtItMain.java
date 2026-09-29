@@ -88,6 +88,9 @@ import javax.print.attribute.standard.MediaSizeName;
 import javax.sound.sampled.AudioFileFormat;
 import javax.sound.sampled.AudioSystem;
 
+import jakarta.inject.Inject;
+
+import io.quarkiverse.desktop.awt.DesktopLifecycle;
 import io.quarkus.runtime.ImageMode;
 import io.quarkus.runtime.QuarkusApplication;
 import io.quarkus.runtime.annotations.QuarkusMain;
@@ -110,6 +113,12 @@ import io.quarkus.runtime.annotations.QuarkusMain;
 public class AwtItMain implements QuarkusApplication {
 
     private static final long TIMEOUT_SECONDS = 20;
+
+    @Inject
+    DesktopLifecycle lifecycle;
+
+    @Inject
+    UserInterface userInterface;
 
     private final java.util.List<String> failures = new ArrayList<>();
     private int ok;
@@ -165,12 +174,25 @@ public class AwtItMain implements QuarkusApplication {
         if (headless) {
             skip("desktop", "headless");
             skip("frame", "headless");
+            // DesktopLifecycle.start() would stop the application with exit code 1
+            skip("startup-event", "headless");
             return;
         }
         check("desktop", () -> "desktop=" + Desktop.isDesktopSupported() + " browse="
                 + (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE))
                 + " taskbar=" + Taskbar.isTaskbarSupported() + " tray=" + SystemTray.isSupported());
         check("frame", () -> frame(directory));
+        check("startup-event", this::startupEvent);
+    }
+
+    /**
+     * {@code DesktopStartupEvent} fired on the event dispatch thread ({@code DesktopLifecycle.start()}, manual mode).
+     */
+    private String startupEvent() throws InterruptedException {
+        lifecycle.start();
+        require(userInterface.started.await(TIMEOUT_SECONDS, TimeUnit.SECONDS), "DesktopStartupEvent is not fired");
+        require(userInterface.eventDispatchThread, "DesktopStartupEvent observed on " + userInterface.thread);
+        return "thread=" + userInterface.thread.replace(' ', '_');
     }
 
     private static String environment(boolean headless) {

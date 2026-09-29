@@ -1,16 +1,26 @@
 package io.quarkiverse.desktop.swing.runtime;
 
+import java.awt.AWTEvent;
 import java.awt.EventQueue;
+import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
+import java.awt.event.AWTEventListener;
+import java.awt.event.WindowEvent;
 import java.lang.reflect.InvocationTargetException;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
+import javax.swing.JFrame;
 import javax.swing.LookAndFeel;
 import javax.swing.UIManager;
+import javax.swing.WindowConstants;
 
 import org.jboss.logging.Logger;
 
 import io.quarkus.runtime.RuntimeValue;
+import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
 
 /**
@@ -60,6 +70,29 @@ public class DesktopSwingRecorder {
         } catch (InvocationTargetException e) {
             LOGGER.warnf(e.getCause(), "Unable to set the look and feel %s", lookAndFeel.get());
         }
+    }
+
+    /**
+     * Warns about the frames that close with {@code EXIT_ON_CLOSE}, in dev mode : closing one calls {@code System.exit} on
+     * the event dispatch thread, which ends dev mode instead of stopping the application.
+     */
+    public void warnExitOnClose(ShutdownContext shutdownContext) {
+        if (GraphicsEnvironment.isHeadless()) {
+            return;
+        }
+        Set<String> warned = ConcurrentHashMap.newKeySet();
+        AWTEventListener listener = event -> {
+            if (event.getID() == WindowEvent.WINDOW_OPENED && event.getSource() instanceof JFrame frame
+                    && frame.getDefaultCloseOperation() == WindowConstants.EXIT_ON_CLOSE
+                    && warned.add(frame.getClass().getName())) {
+                LOGGER.warnf("%s closes with EXIT_ON_CLOSE : closing it exits the JVM, which ends dev mode. Use"
+                        + " DISPOSE_ON_CLOSE : the application stops when its last window closes"
+                        + " (quarkus.desktop.awt.exit-on-last-window-closed), or when it calls Quarkus.asyncExit().",
+                        frame.getClass().getName());
+            }
+        };
+        Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.WINDOW_EVENT_MASK);
+        shutdownContext.addShutdownTask(() -> Toolkit.getDefaultToolkit().removeAWTEventListener(listener));
     }
 
     static boolean isJdkClass(String className) {

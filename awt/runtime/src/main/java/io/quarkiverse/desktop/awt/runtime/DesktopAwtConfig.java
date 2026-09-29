@@ -10,10 +10,11 @@ import io.smallrye.config.ConfigMapping;
 import io.smallrye.config.WithDefault;
 
 /**
- * Desktop AWT configuration.
+ * Desktop AWT build time configuration.
  * <p>
- * Every property applies to native executables only and is fixed when the native executable is built : JVM mode
- * applications use the JDK launcher and runtime, which already behave as a desktop application expects.
+ * Every property of this configuration applies to native executables only and is fixed when the native executable is
+ * built : JVM mode applications use the JDK launcher and runtime, which already behave as a desktop application expects.
+ * The run time properties ({@link DesktopAwtRuntimeConfig}) apply to both.
  */
 @ConfigMapping(prefix = "quarkus.desktop.awt")
 @ConfigRoot(phase = ConfigPhase.BUILD_TIME)

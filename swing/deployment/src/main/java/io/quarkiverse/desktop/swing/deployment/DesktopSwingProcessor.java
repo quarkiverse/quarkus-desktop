@@ -13,6 +13,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.awt.deployment.AwtJavaBeansClassesBuildItem;
 import io.quarkiverse.desktop.awt.deployment.DesktopAwtRuntimeInitBuildItem;
 import io.quarkiverse.desktop.awt.deployment.DesktopTargetPlatformBuildItem;
+import io.quarkiverse.desktop.awt.deployment.DesktopUiBuildItem;
 import io.quarkiverse.desktop.awt.deployment.MemberEntry;
 import io.quarkiverse.desktop.awt.deployment.ReachabilityLookups;
 import io.quarkiverse.desktop.awt.deployment.ReachabilityLookupsBuildItem;
@@ -22,6 +23,7 @@ import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig.IncludedLookAndFeel;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingRecorder;
 import io.quarkus.deployment.ApplicationArchive;
+import io.quarkus.deployment.IsDevelopment;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
@@ -29,6 +31,8 @@ import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
+import io.quarkus.deployment.builditem.ServiceStartBuildItem;
+import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessFieldBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessMethodBuildItem;
@@ -360,13 +364,31 @@ class DesktopSwingProcessor {
     // ---------------------------------------------------------------------------------------------- look and feel
 
     /**
-     * Sets the configured look and feel when the application starts, before it runs, and after the AWT run time
-     * environment of native executables is ready (setting a look and feel initializes the fonts).
+     * Sets the configured look and feel when the application starts, before the {@code StartupEvent} observers (a
+     * {@code ServiceStartBuildItem}) and so before the application runs, and after the AWT run time environment of native
+     * executables is ready (setting a look and feel initializes the fonts).
      */
     @BuildStep
     @Record(ExecutionTime.RUNTIME_INIT)
-    void lookAndFeel(DesktopSwingRecorder recorder, List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
+    ServiceStartBuildItem lookAndFeel(DesktopSwingRecorder recorder,
+            List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
         recorder.setLookAndFeel();
+        return new ServiceStartBuildItem(FEATURE);
+    }
+
+    // ------------------------------------------------------------------------------------------------------ dev mode
+
+    /**
+     * Warns about the frames closing with {@code EXIT_ON_CLOSE} in dev mode, which end dev mode. Only for an application
+     * with a user interface (observing {@code DesktopStartupEvent}) : the listener starts the AWT toolkit.
+     */
+    @BuildStep(onlyIf = IsDevelopment.class)
+    @Record(ExecutionTime.RUNTIME_INIT)
+    void warnExitOnClose(Optional<DesktopUiBuildItem> userInterface, DesktopSwingRecorder recorder,
+            ShutdownContextBuildItem shutdownContext) {
+        if (userInterface.isPresent()) {
+            recorder.warnExitOnClose(shutdownContext);
+        }
     }
 
     /**

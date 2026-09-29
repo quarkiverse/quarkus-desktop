@@ -2,18 +2,29 @@ package io.quarkiverse.desktop.awt.runtime;
 
 import java.awt.AWTEvent;
 import java.awt.EventQueue;
+import java.awt.SystemTray;
 import java.awt.Toolkit;
+import java.awt.TrayIcon;
 import java.awt.Window;
+import java.awt.event.AWTEventListener;
+import java.awt.event.WindowEvent;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.EmptyStackException;
+import java.util.List;
+import java.util.Set;
+import java.util.WeakHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 
 import org.jboss.logging.Logger;
 
+import io.quarkus.runtime.ApplicationLifecycleManager;
 import io.quarkus.runtime.ShutdownContext;
 import io.quarkus.runtime.annotations.Recorder;
 
@@ -155,23 +166,111 @@ public class DesktopAwtRecorder {
     }
 
     /**
-     * Disposes the windows of the application when it stops, in dev mode : the AWT toolkit, its threads and its windows
-     * outlive a restart of the application in the same JVM.
+     * How long the shutdown of an application in dev and test modes waits for the event dispatch thread to dispose the
+     * windows.
      */
-    public void disposeWindowsOnShutdown(ShutdownContext shutdownContext) {
-        shutdownContext.addShutdownTask(DesktopAwtRecorder::disposeWindows);
-    }
+    static final long DISPOSE_TIMEOUT_SECONDS = 5;
 
-    static void disposeWindows() {
-        // Do not start the AWT toolkit to dispose windows that cannot exist
-        if (!isToolkitStarted()) {
+    /**
+     * Disposes the windows of the application when it stops, in dev and test modes : the AWT toolkit, its threads and its
+     * windows outlive a restart of the application in the same JVM. Removes the tray icons too, whose listeners would
+     * call a stopped application.
+     * <p>
+     * The test application of continuous testing runs next to the dev mode application : it only disposes the windows
+     * opened while it ran.
+     *
+     * @param auxiliary whether it is the test application of continuous testing
+     */
+    public void disposeWindowsOnShutdown(ShutdownContext shutdownContext, boolean auxiliary) {
+        if (!auxiliary) {
+            shutdownContext.addShutdownTask(() -> disposeWindows(null));
             return;
         }
-        for (Window window : Window.getWindows()) {
+        Set<Window> opened = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
+        AWTEventListener listener = event -> {
+            if (event.getID() == WindowEvent.WINDOW_OPENED && event.getSource() instanceof Window window) {
+                opened.add(window);
+            }
+        };
+        try {
+            Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.WINDOW_EVENT_MASK);
+        } catch (RuntimeException | Error e) {
+            LOGGER.debugf(e, "Unable to follow the windows of the test application");
+            return;
+        }
+        shutdownContext.addShutdownTask(() -> {
+            Toolkit.getDefaultToolkit().removeAWTEventListener(listener);
+            Set<Window> windows;
+            synchronized (opened) {
+                windows = Set.copyOf(opened);
+            }
+            if (!windows.isEmpty()) {
+                disposeWindows(windows);
+            }
+        });
+    }
+
+    /**
+     * Disposes the windows on the event dispatch thread, waiting for it at most {@link #DISPOSE_TIMEOUT_SECONDS}, then for
+     * the {@code WINDOW_CLOSED} events that the dispose posted : their listeners (the {@code @Dependent} window beans
+     * destroyed by {@code WindowBeans}) run before the CDI container stops.
+     * <p>
+     * {@code Window.dispose()} called on another thread waits for the event dispatch thread
+     * ({@code EventQueue.invokeAndWait}) : it would wait for ever when the event dispatch thread is blocked, for instance
+     * in {@code System.exit} after a {@code JFrame.EXIT_ON_CLOSE} (it waits for the shutdown hooks, which stop the
+     * application).
+     *
+     * @param windows the windows to dispose, with the tray icons ; all of them when {@code null}
+     */
+    static void disposeWindows(Set<Window> windows) {
+        // Do not start the AWT toolkit to dispose windows that cannot exist ; the JVM exits anyway
+        if (!isToolkitStarted() || ApplicationLifecycleManager.isVmShuttingDown()) {
+            return;
+        }
+        if (EventQueue.isDispatchThread()) {
+            disposeWindowsAndTrayIcons(windows);
+            return;
+        }
+        CountDownLatch disposed = new CountDownLatch(1);
+        EventQueue.invokeLater(() -> {
+            try {
+                disposeWindowsAndTrayIcons(windows);
+            } finally {
+                // after the WINDOW_CLOSED events posted by Window.dispose()
+                EventQueue.invokeLater(disposed::countDown);
+            }
+        });
+        try {
+            if (!disposed.await(DISPOSE_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                LOGGER.warnf("The windows of the application are not disposed yet : the event dispatch thread is busy"
+                        + " (blocked for %d s). They are disposed once it is free.", DISPOSE_TIMEOUT_SECONDS);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private static void disposeWindowsAndTrayIcons(Set<Window> windows) {
+        for (Window window : windows != null ? windows : List.of(Window.getWindows())) {
             if (window.isDisplayable()) {
                 LOGGER.debugf("Disposing %s", window);
                 window.dispose();
             }
+        }
+        if (windows != null) {
+            // the tray icons of the dev mode application
+            return;
+        }
+        try {
+            if (SystemTray.isSupported()) {
+                SystemTray tray = SystemTray.getSystemTray();
+                for (TrayIcon icon : tray.getTrayIcons()) {
+                    LOGGER.debugf("Removing the tray icon %s", icon);
+                    tray.remove(icon);
+                }
+            }
+        } catch (RuntimeException | Error e) {
+            LOGGER.debugf(e, "Unable to remove the tray icons");
         }
     }
 
@@ -198,7 +297,9 @@ public class DesktopAwtRecorder {
             LOGGER.debugf(e, "Unable to install the application event queue");
             return;
         }
-        shutdownContext.addShutdownTask(queue::remove);
+        // the last task : the ShutdownEvent observers and the dispose of the windows run with the class loader of the
+        // application
+        shutdownContext.addLastShutdownTask(queue::remove);
     }
 
     /**

@@ -26,6 +26,131 @@ languages, accessibility, the JavaBeans API (the bean properties of the AWT clas
 0.3 MB; those of the Swing classes are opt-in, 3 to 4 MB), exact reachability metadata, and the known limitations of
 native executables.
 
+## Application model and CDI
+
+Windows are CDI beans: a `@Singleton` window observes `DesktopStartupEvent`, fired on the event dispatch thread once the
+application started (after the look and feel is set), and gets `@Inject` and `@ConfigProperty` like any bean. No
+`@QuarkusMain` is needed, and closing the last window exits the application through Quarkus (`ShutdownEvent` and
+`@PreDestroy` run).
+
+```java
+@ApplicationScoped
+public class Library {
+
+    public List<String> titles() {
+        return List.of("Dune", "Emma", "Ulysses");
+    }
+}
+
+@Singleton // components: @Singleton or @Dependent, never a normal scope
+public class MainWindow extends JFrame {
+
+    @Inject
+    Library library;
+
+    @ConfigProperty(name = "app.title", defaultValue = "Library")
+    String title;
+
+    void open(@Observes DesktopStartupEvent event) { // on the event dispatch thread
+        setTitle(title);
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE); // the last window closed exits the application
+        add(new JScrollPane(new JList<>(library.titles().toArray(String[]::new))));
+        pack();
+        setVisible(true);
+    }
+}
+```
+
+Background work runs on a Quarkus executor and comes back to the event dispatch thread with `EdtExecutor` (also with
+Mutiny `emitOn(edt)` and asynchronous CDI events); `@RunOnEdt` runs a method on the event dispatch thread whatever
+thread calls it:
+
+```java
+@Singleton
+public class BooksWindow extends JFrame {
+
+    @Inject
+    BookRepository repository;
+
+    @Inject
+    ManagedExecutor workers;
+
+    @Inject
+    EdtExecutor edt;
+
+    private final DefaultListModel<String> books = new DefaultListModel<>();
+
+    void open(@Observes DesktopStartupEvent event) {
+        add(new JScrollPane(new JList<>(books)));
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+        pack();
+        setVisible(true);
+        CompletableFuture.supplyAsync(repository::titles, workers) // off the event dispatch thread
+                .thenAcceptAsync(books::addAll, edt); // back on it
+    }
+}
+
+@ApplicationScoped
+public class StatusPresenter {
+
+    @Inject
+    Instance<StatusBar> statusBar; // a @Singleton component, resolved on the event dispatch thread
+
+    @RunOnEdt
+    public void show(String text) { // callable from any thread
+        statusBar.get().setText(text);
+    }
+}
+
+@ApplicationScoped
+public class Clock {
+
+    @Inject
+    StatusPresenter status;
+
+    @Scheduled(every = "10s") // a scheduler thread
+    void tick() {
+        status.show("Checked at " + LocalTime.now().withNano(0));
+    }
+}
+```
+
+On macOS, the application menu, Finder and Dock events of `java.awt.Desktop` are CDI events, and Cmd-Q is a
+`QuitRequest` that an observer can cancel:
+
+```java
+@Singleton
+public class ApplicationMenu {
+
+    @Inject
+    Instance<AboutDialog> about;
+
+    @Inject
+    Documents documents;
+
+    void about(@Observes AboutEvent event) { // the About item of the application menu
+        WindowBeans.get(about).setVisible(true); // a @Dependent dialog, destroyed when it closes
+    }
+
+    void open(@Observes OpenFilesEvent event) { // files opened from the Finder or dropped on the Dock icon
+        event.getFiles().forEach(documents::open);
+    }
+
+    void quit(@Observes QuitRequest request) { // Cmd-Q
+        if (documents.hasUnsavedChanges()) {
+            request.cancel();
+        }
+    }
+}
+```
+
+The build fails for the component beans that cannot work (a normal-scoped `JFrame` or `JPanel` bean: its client proxy
+overrides final methods of Swing) and warns about the risky ones. The page
+[Application model and CDI](https://docs.quarkiverse.io/quarkus-desktop/dev/cdi.html)
+([docs/modules/ROOT/pages/cdi.adoc](docs/modules/ROOT/pages/cdi.adoc)) covers the rest: a `@QuarkusMain` that starts
+the user interface itself (`quarkus.desktop.awt.startup-event.mode=manual`), `Edt.call`, windows that ask before
+closing, tray applications (`quarkus.desktop.awt.exit-on-last-window-closed=false`), dev mode, tests and Quarkus FX.
+
 ## Platforms
 
 | Platform | JVM mode | Native executable |
@@ -33,7 +158,7 @@ native executables.
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with the quarkus-awt of the Quarkus pull request [Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979) and GraalVM 25.1 or later (verified on an Apple silicon Mac, see below) |
+| macOS on Apple silicon | yes | yes, with the quarkus-awt of the Quarkus pull request [Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979) and GraalVM 25.1 or later (verified on an Apple silicon Mac and by the continuous integration of the showcase) |
 
 ## Showcase
 

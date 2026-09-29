@@ -1,4 +1,5 @@
 * xref:index.adoc[Getting started]
 * xref:awt.adoc[Desktop AWT]
 * xref:swing.adoc[Desktop Swing]
+* xref:cdi.adoc[Application model and CDI]
 * xref:config-reference.adoc[Configuration Reference]
