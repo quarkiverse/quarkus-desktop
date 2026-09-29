@@ -53,6 +53,11 @@ public class DesktopLifecycleRecorder {
             }
             return;
         }
+        UncaughtExceptionLogger uncaughtExceptions = UncaughtExceptionLogger.install();
+        if (uncaughtExceptions != null && launchMode != LaunchMode.NORMAL) {
+            // after the other shutdown tasks, whose exceptions on the event dispatch thread are logged too
+            shutdown.addLastShutdownTask(uncaughtExceptions::remove);
+        }
         DesktopUi ui = Arc.container().instance(DesktopUi.class).get();
         ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx);
         shutdown.addShutdownTask(ui::stop);

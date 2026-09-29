@@ -122,6 +122,20 @@ decides.
 * *Shutdown*: `ShutdownEvent` observers and `@PreDestroy` methods do not run on the event dispatch thread. Save the
 window state (bounds, open documents) on `WINDOW_CLOSING`, on the event dispatch thread. Do not use `EXIT_ON_CLOSE`: it
 calls `System.exit` on the event dispatch thread, which then waits for Quarkus to stop.
+* *Uncaught exceptions*: an exception that escapes a listener is logged at the `ERROR` level in the
+`io.quarkiverse.desktop.awt.edt` category, with the name of the thread, instead of being printed on the standard
+error: it goes to the Quarkus log handlers (console, file, JSON). The event dispatch thread keeps running after it. The
+extension installs this default uncaught exception handler (`Thread.setDefaultUncaughtExceptionHandler`) when the user
+interface starts, only when the JVM has none, so it covers the other threads too; an application that installs its own
+handler replaces it. In dev mode and in tests, the previous handler is restored when the application stops.
++
+[source,properties]
+----
+# keep the log (and the uncaught exceptions) of a desktop application in a file
+quarkus.log.file.enabled=true
+# or do not log them
+quarkus.log.category."io.quarkiverse.desktop.awt.edt".level=OFF
+----
 * *Headless*: in a headless JVM (no display, or `-Djava.awt.headless=true`), the event is not fired; in production, the
 application logs an error and stops with exit code 1.
 * *Tests*: the event is not fired in tests (`@QuarkusTest`), which would open the windows of the application, nor is the
