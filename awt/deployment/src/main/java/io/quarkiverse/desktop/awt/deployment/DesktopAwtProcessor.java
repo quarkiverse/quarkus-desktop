@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.awt.deployment;
 import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.lang.reflect.Modifier;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +26,7 @@ import jakarta.enterprise.inject.spi.DeploymentException;
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.IndexView;
+import org.jboss.jandex.MethodInfo;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.awt.deployment.DesktopTargetPlatformBuildItem.Platform;
@@ -40,6 +42,7 @@ import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildIt
 import io.quarkus.arc.processor.BeanInfo;
 import io.quarkus.arc.processor.BuildExtension;
 import io.quarkus.arc.processor.BuiltinScope;
+import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
@@ -182,6 +185,15 @@ class DesktopAwtProcessor {
      * The {@code QuarkusApplication} of the Quarkus FX launcher, which runs JavaFX on the first thread itself.
      */
     static final String QUARKUS_FX_APPLICATION = "io.quarkiverse.fx.QuarkusFxApplication";
+
+    /**
+     * The interceptor binding that dev mode adds to the beans for the monitoring of ArC.
+     */
+    private static final DotName MONITORED = DotName.createSimple("io.quarkus.arc.runtime.dev.console.Monitored");
+
+    private static final DotName QUARKUS_APPLICATION = DotName.createSimple("io.quarkus.runtime.QuarkusApplication");
+
+    private static final DotName STARTUP_EVENT = DotName.createSimple("io.quarkus.runtime.StartupEvent");
 
     private static final DotName COMPONENT = DotName.createSimple("java.awt.Component");
 
@@ -946,10 +958,13 @@ class DesktopAwtProcessor {
      * it creates another component, outside the event dispatch thread, and the proxy of a Swing component cannot even be
      * loaded (it overrides the final methods of {@code javax.swing.JComponent}, which ArC cannot make non final).</li>
      * <li>Error : an interceptor binding on a component class (or inherited, or from a stereotype) : it intercepts the
-     * hundreds of methods that the class inherits from AWT and Swing.</li>
+     * hundreds of methods that the class inherits from AWT and Swing. The binding that dev mode adds for the monitoring of
+     * ArC ({@code quarkus.arc.dev-mode.monitoring-enabled}) is ignored.</li>
      * <li>Warning : a {@code @Dependent} component bean observing {@code DesktopStartupEvent} : a new instance is
      * created for the notification, and destroyed (its {@code @PreDestroy} methods run) right after it, while its window
      * stays open.</li>
+     * <li>Warning : a component bean injected into a {@code @QuarkusMain} class or a {@code StartupEvent} observer : it is
+     * created on their thread, outside the event dispatch thread.</li>
      * </ul>
      */
     @BuildStep
@@ -960,6 +975,9 @@ class DesktopAwtProcessor {
         for (BeanInfo bean : validationPhase.getContext().beans()) {
             if (bean.isInterceptor() || bean.isDecorator()) {
                 continue;
+            }
+            if (bean.getTypes().stream().anyMatch(type -> type.name().equals(QUARKUS_APPLICATION))) {
+                warnInjectedComponents(bean, "the @QuarkusMain class", index);
             }
             DotName type = bean.getImplClazz() != null ? bean.getImplClazz().name() : bean.getProviderType().name();
             if (!isComponent(type, index)) {
@@ -972,23 +990,41 @@ class DesktopAwtProcessor {
                         + " event dispatch thread (and the proxy of a Swing component cannot be loaded). Use @Singleton or"
                         + " @Dependent for AWT and Swing component beans."));
             }
-            if (bean.isClassBean() && bean.getInterceptedMethodsBindings().keySet().stream()
-                    .anyMatch(method -> isJdkClass(method.declaringClass().name()))) {
-                errors.add(new DeploymentException("The component bean " + bean.getBeanClass() + " has a class"
-                        + " interceptor binding : it intercepts the methods that the class inherits from AWT and Swing. Put"
-                        + " the interceptor bindings (@RunOnEdt...) on methods, or on a presenter bean that is not a"
-                        + " component."));
+            if (bean.isClassBean()) {
+                Set<String> classBindings = new TreeSet<>();
+                bean.getInterceptedMethodsBindings().forEach((method, bindings) -> {
+                    if (isJdkClass(method.declaringClass().name())) {
+                        bindings.stream().filter(binding -> !binding.name().equals(MONITORED))
+                                .forEach(binding -> classBindings.add("@" + binding.name().withoutPackagePrefix()));
+                    }
+                });
+                if (!classBindings.isEmpty()) {
+                    errors.add(new DeploymentException("The component bean " + bean.getBeanClass() + " has a class"
+                            + " interceptor binding " + classBindings + " : it intercepts the methods that the class"
+                            + " inherits from AWT and Swing. Put the interceptor bindings (@RunOnEdt...) on methods, or on"
+                            + " a presenter bean that is not a component."));
+                }
             }
         }
         for (ObserverInfo observer : validationPhase.getContext().get(BuildExtension.Key.OBSERVERS)) {
             BeanInfo bean = observer.getDeclaringBean();
-            if (bean != null && bean.isClassBean() && BuiltinScope.DEPENDENT.is(bean.getScope())
-                    && observer.getObservedType().name().equals(DesktopCdiProcessor.DESKTOP_STARTUP_EVENT)
+            MethodInfo method = observer.getObserverMethod();
+            if (bean == null || method == null || Modifier.isStatic(method.flags())) {
+                // a static observer creates no instance
+                continue;
+            }
+            DotName observed = observer.getObservedType().name();
+            if (bean.isClassBean() && BuiltinScope.DEPENDENT.is(bean.getScope())
+                    && observed.equals(DesktopCdiProcessor.DESKTOP_STARTUP_EVENT)
                     && isComponent(bean.getBeanClass(), index)) {
                 LOGGER.warnf("The component bean %s is @Dependent and observes DesktopStartupEvent : a new instance is"
                         + " created for the event and destroyed right after it (its @PreDestroy methods run) while its"
                         + " window stays open. Use @Singleton, or observe the event in another bean and open the window"
                         + " with Instance<%s>.", bean.getBeanClass(), bean.getBeanClass().withoutPackagePrefix());
+            }
+            if (observed.equals(STARTUP_EVENT)) {
+                warnInjectedComponents(bean, "the StartupEvent observer " + method.declaringClass().name() + "."
+                        + method.name() + "()", index);
             }
         }
         if (!errors.isEmpty()) {
@@ -996,13 +1032,40 @@ class DesktopAwtProcessor {
         }
     }
 
-    private static String describe(BeanInfo bean) {
-        return bean.isClassBean() ? bean.getBeanClass().toString()
-                : bean.getProviderType() + " (produced by " + bean.getTarget().map(Object::toString).orElse("?") + " of "
-                        + bean.getDeclaringBean().getBeanClass() + ")";
+    /**
+     * Warns about the component beans injected directly into a bean that the main thread creates : they are created on
+     * the main thread, and in the default auto mode, the {@code DesktopStartupEvent} observers run at the same time on the
+     * event dispatch thread (a bean waiting for the event dispatch thread while ArC creates it deadlocks with them).
+     */
+    private static void warnInjectedComponents(BeanInfo bean, String what, IndexView index) {
+        for (InjectionPointInfo injectionPoint : bean.getAllInjectionPoints()) {
+            BeanInfo injected = injectionPoint.getResolvedBean();
+            if (injectionPoint.isProgrammaticLookup() || injected == null) {
+                continue;
+            }
+            DotName type = injected.getImplClazz() != null ? injected.getImplClazz().name()
+                    : injected.getProviderType().name();
+            if (isComponent(type, index)) {
+                LOGGER.warnf("The component bean %s is injected into %s (%s) : it is created there, outside the event"
+                        + " dispatch thread. Inject Instance<%s>, and get it on the event dispatch thread (a"
+                        + " DesktopStartupEvent observer, a @RunOnEdt method).", type, what,
+                        injectionPoint.getTargetInfo(), type.withoutPackagePrefix());
+            }
+        }
     }
 
-    private static boolean isJdkClass(DotName name) {
+    private static String describe(BeanInfo bean) {
+        if (bean.isClassBean()) {
+            return bean.getBeanClass().toString();
+        }
+        if (bean.isSynthetic() || bean.getDeclaringBean() == null) {
+            return "synthetic bean " + bean.getProviderType();
+        }
+        return bean.getProviderType() + " (produced by " + bean.getTarget().map(Object::toString).orElse("?") + " of "
+                + bean.getDeclaringBean().getBeanClass() + ")";
+    }
+
+    static boolean isJdkClass(DotName name) {
         String className = name.toString();
         return className.startsWith("java.") || className.startsWith("javax.");
     }

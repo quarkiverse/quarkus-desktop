@@ -1,5 +1,6 @@
 package io.quarkiverse.desktop.awt.deployment;
 
+import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -14,6 +15,7 @@ import jakarta.enterprise.inject.spi.DeploymentException;
 import jakarta.inject.Singleton;
 
 import org.jboss.jandex.AnnotationInstance;
+import org.jboss.jandex.AnnotationTarget;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.IndexView;
 import org.jboss.jandex.MethodInfo;
@@ -64,14 +66,21 @@ class DesktopCdiProcessor {
             DotName.createSimple("java.util.concurrent.CompletionStage"),
             DotName.createSimple("java.util.concurrent.CompletableFuture"));
 
+    private static final DotName TIMEOUT = DotName.createSimple("org.eclipse.microprofile.faulttolerance.Timeout");
+
+    private static final List<DotName> FAULT_TOLERANCE_THREADS = List.of(TIMEOUT,
+            DotName.createSimple("org.eclipse.microprofile.faulttolerance.Asynchronous"),
+            DotName.createSimple("io.smallrye.faulttolerance.api.AsynchronousNonBlocking"));
+
     private static final String DESKTOP_EVENTS_PACKAGE = "java.awt.desktop.";
 
     private static final String QUIT_EVENT = "java.awt.desktop.QuitEvent";
 
     @BuildStep
     AdditionalBeanBuildItem beans() {
-        // looked up by the recorder
-        return AdditionalBeanBuildItem.builder().addBeanClasses(DesktopUi.class).setUnremovable().build();
+        // removable : unused without a user interface (unless DesktopLifecycle is injected), so that the native
+        // executables of the other applications do not reach its code
+        return AdditionalBeanBuildItem.builder().addBeanClasses(DesktopUi.class).build();
     }
 
     @BuildStep
@@ -83,27 +92,39 @@ class DesktopCdiProcessor {
     /**
      * Checks the beans with {@code @RunOnEdt} methods : errors for what cannot work (other return types than
      * {@code void} and {@code CompletionStage}, other scopes than {@code @ApplicationScoped},
-     * {@code @Singleton} and {@code @Dependent}), warnings for what may not (a component bean injected directly).
+     * {@code @Singleton} and {@code @Dependent}, private static methods, which ArC does not intercept), warnings for what
+     * may not (a component bean injected directly, a fault tolerance timeout or asynchronous method).
      */
     @BuildStep
     void validateRunOnEdt(ValidationPhaseBuildItem validationPhase, BeanArchiveIndexBuildItem beanArchiveIndex,
+            List<InterceptedStaticMethodBuildItem> interceptedStaticMethods,
             BuildProducer<ValidationErrorBuildItem> validationErrors) {
         IndexView index = beanArchiveIndex.getIndex();
         List<Throwable> errors = new ArrayList<>();
         for (BeanInfo bean : validationPhase.getContext().beans().classBeans()) {
+            // a class binding on a component bean is reported by validateComponentBeans
+            boolean component = DesktopAwtProcessor.isComponent(bean.getBeanClass(), index);
             boolean runOnEdt = false;
+            List<String> invalid = new ArrayList<>();
             for (Map.Entry<MethodInfo, Set<AnnotationInstance>> entry : bean.getInterceptedMethodsBindings().entrySet()) {
-                if (entry.getValue().stream().noneMatch(binding -> binding.name().equals(RUN_ON_EDT))) {
+                MethodInfo method = entry.getKey();
+                if (!hasRunOnEdt(entry.getValue())
+                        || component && DesktopAwtProcessor.isJdkClass(method.declaringClass().name())) {
                     continue;
                 }
                 runOnEdt = true;
-                MethodInfo method = entry.getKey();
-                Type returnType = method.returnType();
-                if (returnType.kind() != Type.Kind.VOID && !RUN_ON_EDT_RETURN_TYPES.contains(returnType.name())) {
-                    errors.add(new DeploymentException("@RunOnEdt method " + describe(method) + " returns " + returnType
-                            + " : a @RunOnEdt method returns void (it runs later when called on another thread) or a"
-                            + " CompletionStage (completed once it ran on the event dispatch thread)"));
+                if (!hasValidReturnType(method)) {
+                    invalid.add(describe(method) + " returns " + method.returnType());
                 }
+                warnFaultTolerance(method);
+            }
+            if (!invalid.isEmpty()) {
+                errors.add(new DeploymentException((invalid.size() == 1 ? "@RunOnEdt method " + invalid.get(0)
+                        : "The bean " + bean.getBeanClass() + " has @RunOnEdt methods (@RunOnEdt on a class applies to"
+                                + " its business methods) that return neither void nor a CompletionStage : "
+                                + summary(invalid))
+                        + " : a @RunOnEdt method returns void (it runs later when called on another thread) or a"
+                        + " CompletionStage (completed once it ran on the event dispatch thread)"));
             }
             if (!runOnEdt) {
                 continue;
@@ -129,8 +150,60 @@ class DesktopCdiProcessor {
                 }
             }
         }
+        for (InterceptedStaticMethodBuildItem staticMethod : interceptedStaticMethods) {
+            MethodInfo method = staticMethod.getMethod();
+            if (hasRunOnEdt(staticMethod.getBindings())) {
+                if (!hasValidReturnType(method)) {
+                    errors.add(new DeploymentException("@RunOnEdt method " + describe(method) + " returns "
+                            + method.returnType() + " : a @RunOnEdt method returns void (it runs later when called on"
+                            + " another thread) or a CompletionStage (completed once it ran on the event dispatch"
+                            + " thread)"));
+                }
+                warnFaultTolerance(method);
+            }
+        }
+        for (AnnotationInstance annotation : index.getAnnotations(RUN_ON_EDT)) {
+            if (annotation.target() != null && annotation.target().kind() == AnnotationTarget.Kind.METHOD) {
+                MethodInfo method = annotation.target().asMethod();
+                if (Modifier.isStatic(method.flags()) && Modifier.isPrivate(method.flags())) {
+                    errors.add(new DeploymentException("@RunOnEdt method " + describe(method) + " is private and static :"
+                            + " ArC does not intercept it, it would run on the calling thread. Make it package private."));
+                }
+            }
+        }
         if (!errors.isEmpty()) {
             validationErrors.produce(new ValidationErrorBuildItem(errors));
+        }
+    }
+
+    private static boolean hasRunOnEdt(Collection<AnnotationInstance> bindings) {
+        return bindings.stream().anyMatch(binding -> binding.name().equals(RUN_ON_EDT));
+    }
+
+    private static boolean hasValidReturnType(MethodInfo method) {
+        Type returnType = method.returnType();
+        return returnType.kind() == Type.Kind.VOID || RUN_ON_EDT_RETURN_TYPES.contains(returnType.name());
+    }
+
+    private static String summary(List<String> items) {
+        int shown = 5;
+        return items.size() <= shown ? String.join(", ", items)
+                : String.join(", ", items.subList(0, shown)) + " and " + (items.size() - shown) + " more";
+    }
+
+    /**
+     * Warns about the fault tolerance annotations that break {@code @RunOnEdt} : the interceptors run on the event
+     * dispatch thread, a {@code @Timeout} interrupts it, and an asynchronous method runs on another thread.
+     */
+    private static void warnFaultTolerance(MethodInfo method) {
+        for (DotName annotation : FAULT_TOLERANCE_THREADS) {
+            if (method.hasDeclaredAnnotation(annotation) || method.declaringClass().hasDeclaredAnnotation(annotation)) {
+                LOGGER.warnf("@RunOnEdt method %s is @%s : the fault tolerance interceptor runs on the event dispatch"
+                        + " thread, %s. Call it from a worker thread, and use @RunOnEdt for the user interface update"
+                        + " only.", describe(method), annotation.withoutPackagePrefix(),
+                        annotation.equals(TIMEOUT) ? "and interrupts it when the timeout expires"
+                                : "and runs the method on another thread");
+            }
         }
     }
 

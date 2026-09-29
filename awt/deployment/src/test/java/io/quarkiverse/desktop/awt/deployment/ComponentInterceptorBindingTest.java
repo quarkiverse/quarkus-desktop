@@ -40,8 +40,11 @@ class ComponentInterceptorBindingTest {
             .withApplicationRoot(root -> root.addClasses(Board.class, Chart.class))
             .assertException(e -> {
                 String messages = RunOnEdtValidationTest.messages(e);
-                assertTrue(messages.contains(Board.class.getName() + " has a class interceptor binding"), messages);
+                assertTrue(messages.contains(Board.class.getName() + " has a class interceptor binding [@RunOnEdt]"),
+                        messages);
                 assertFalse(messages.contains(Chart.class.getName()), messages);
+                // one error, not one per method inherited from AWT
+                assertFalse(messages.contains("java.awt.Container"), messages);
             });
 
     @Test
