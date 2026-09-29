@@ -13,6 +13,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.awt.deployment.AwtJavaBeansClassesBuildItem;
 import io.quarkiverse.desktop.awt.deployment.DesktopAwtRuntimeInitBuildItem;
 import io.quarkiverse.desktop.awt.deployment.DesktopTargetPlatformBuildItem;
+import io.quarkiverse.desktop.awt.deployment.DesktopUiBuildItem;
 import io.quarkiverse.desktop.awt.deployment.MemberEntry;
 import io.quarkiverse.desktop.awt.deployment.ReachabilityLookups;
 import io.quarkiverse.desktop.awt.deployment.ReachabilityLookupsBuildItem;
@@ -378,12 +379,16 @@ class DesktopSwingProcessor {
     // ------------------------------------------------------------------------------------------------------ dev mode
 
     /**
-     * Warns about the frames closing with {@code EXIT_ON_CLOSE} in dev mode, which end dev mode.
+     * Warns about the frames closing with {@code EXIT_ON_CLOSE} in dev mode, which end dev mode. Only for an application
+     * with a user interface (observing {@code DesktopStartupEvent}) : the listener starts the AWT toolkit.
      */
     @BuildStep(onlyIf = IsDevelopment.class)
     @Record(ExecutionTime.RUNTIME_INIT)
-    void warnExitOnClose(DesktopSwingRecorder recorder, ShutdownContextBuildItem shutdownContext) {
-        recorder.warnExitOnClose(shutdownContext);
+    void warnExitOnClose(Optional<DesktopUiBuildItem> userInterface, DesktopSwingRecorder recorder,
+            ShutdownContextBuildItem shutdownContext) {
+        if (userInterface.isPresent()) {
+            recorder.warnExitOnClose(shutdownContext);
+        }
     }
 
     /**
