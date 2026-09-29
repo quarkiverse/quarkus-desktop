@@ -78,8 +78,8 @@ jobs:
         run: java .github/scripts/ReportFailures.java maven.log
 
   native:
-    # No macOS native job yet : macOS native executables need the quarkus-awt of the Quarkus pull request
-    # https://github.com/quarkusio/quarkus/pull/56979 (not in a Quarkus release yet) and GraalVM 25.1 or later
+    # No macOS native job yet : macOS native executables need Quarkus 4.0 or later (the quarkus-awt with macOS support of
+    # https://github.com/quarkusio/quarkus/pull/56979, not released yet) and GraalVM 25.1 or later
     # exact : the integration tests built with --exact-reachability-metadata, in the default configuration of the
     # extensions (they fail on the first lookup missing from the metadata)
     name: Native${{ matrix.exact && ' (exact)' || '' }} on ${{ matrix.os }}

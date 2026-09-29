@@ -10,9 +10,9 @@
 
 Quarkus extensions to build AWT and Swing desktop (GUI) applications, in JVM mode and as GraalVM native executables
 (Windows x64, Linux x64 and arm64, and macOS on Apple silicon; JVM mode only on Windows arm64). Native executables for
-macOS need the quarkus-awt of the Quarkus pull request
-[Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979) (not in a Quarkus release yet: build
-Quarkus from it) and GraalVM 25.1 or later.
+macOS need Quarkus 4.0 or later, whose quarkus-awt supports macOS
+([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979); not released yet: until then, a Quarkus
+`999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later.
 
 | Extension | Coordinates | Description |
 |---|---|---|
@@ -187,7 +187,7 @@ closing, tray applications (`quarkus.desktop.awt.exit-on-last-window-closed=fals
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with the quarkus-awt of the Quarkus pull request [Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979) and GraalVM 25.1 or later (verified on an Apple silicon Mac and by the continuous integration of the showcase) |
+| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), not released yet) and GraalVM 25.1 or later (verified on an Apple silicon Mac and by the continuous integration of the showcase) |
 
 ## Showcase
 
