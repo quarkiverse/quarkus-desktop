@@ -857,7 +857,7 @@ class DesktopAwtProcessor {
         return option.trim().startsWith("-H:+RunMainInNewThread");
     }
 
-    private static boolean isPresent(String className, ClassLoader classLoader) {
+    static boolean isPresent(String className, ClassLoader classLoader) {
         try {
             Class.forName(className, false, classLoader);
             return true;

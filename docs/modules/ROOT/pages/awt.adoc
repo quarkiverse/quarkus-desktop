@@ -48,35 +48,87 @@ awareness), an optional GUI subsystem, and a copy of the Visual {cpp} runtime ne
 
 == Writing an AWT application
 
-A desktop application usually has its own `main` method: use `@QuarkusMain`, create the user interface on the event
-dispatch thread, and stop Quarkus when the main window closes.
+Observe `DesktopStartupEvent` to create the user interface: the extension fires it on the event dispatch thread once
+the application started, and the application stops when its last window closes. No `@QuarkusMain` is needed.
 
+[source,java]
+----
+import io.quarkiverse.desktop.awt.DesktopStartupEvent;
+
+@Singleton // <1>
+public class MainWindow extends Frame {
+
+    @Inject
+    Greeting greeting; // <2>
+
+    void open(@Observes DesktopStartupEvent event) { // <3>
+        add(new Label(greeting.text()));
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                dispose(); // <4>
+            }
+        });
+        pack();
+        setVisible(true);
+    }
+}
+----
+<1> A component bean is `@Singleton` or `@Dependent`, never `@ApplicationScoped` (see <<cdi-beans>>).
+<2> Any bean can be injected, as well as configuration (`@ConfigProperty`).
+<3> Called on the event dispatch thread, after the `StartupEvent` observers (and after the look and feel of
+`quarkus.desktop.swing.look-and-feel` is set). Use `@Priority` to order several observers.
+<4> Closing the last window stops the application (`Quarkus.asyncExit()`): `ShutdownEvent` observers and `@PreDestroy`
+methods run.
+
+[[user-interface-lifecycle]]
+=== The user interface lifecycle
+
+An application that observes `DesktopStartupEvent` (found at build time) has a user interface. The other applications
+(a server that only renders images, for instance) never start the AWT toolkit through the extension.
+
+* *Startup*: the event is fired once, with `EventQueue.invokeLater`, after the `StartupEvent` observers. The startup
+of Quarkus never waits for the event dispatch thread. Keep the observers short (they delay the first window), and load
+data on another thread (for instance a `ManagedExecutor`). When an observer throws, the
+error is logged and, in production, the application stops with exit code 1.
+* *Manual startup*: with `quarkus.desktop.awt.startup-event.mode=manual`, the application fires the event itself, when
+its work before the user interface is done (arguments, a single instance lock, a login...):
++
 [source,java]
 ----
 @QuarkusMain
 public class Main implements QuarkusApplication {
 
+    @Inject
+    DesktopLifecycle lifecycle;
+
     @Override
-    public int run(String... args) throws Exception {
-        EventQueue.invokeLater(() -> {
-            Frame frame = new Frame("Hello");
-            frame.add(new Label("Hello from Quarkus"));
-            frame.addWindowListener(new WindowAdapter() {
-                @Override
-                public void windowClosing(WindowEvent e) {
-                    frame.dispose();
-                    Quarkus.asyncExit();
-                }
-            });
-            frame.pack();
-            frame.setVisible(true);
-        });
+    public int run(String... args) {
+        // work before the user interface
+        lifecycle.start(); // fires DesktopStartupEvent on the event dispatch thread, once
         Quarkus.waitForExit();
         return 0;
     }
 }
 ----
++
+With the default `auto` mode, the event is fired before a `@QuarkusMain` runs.
+* *Exit*: the application stops (`Quarkus.asyncExit()`) when its last visible window is closed or hidden, once a first
+window opened (as JavaFX does). A `JFrame` hides on close by default (`HIDE_ON_CLOSE`): a hidden window counts as closed.
+Set `quarkus.desktop.awt.exit-on-last-window-closed=false` for an application that stays alive without windows (a
+tray icon application, or the macOS convention), and call `Quarkus.asyncExit()` yourself. Show the main window before
+closing a splash screen, or the application stops in between. The policy is disabled with Quarkus FX, where JavaFX
+decides.
+* *Shutdown*: `ShutdownEvent` observers and `@PreDestroy` methods do not run on the event dispatch thread. Save the
+window state (bounds, open documents) on `WINDOW_CLOSING`, on the event dispatch thread. Do not use `EXIT_ON_CLOSE`: it
+calls `System.exit` on the event dispatch thread, which then waits for Quarkus to stop.
+* *Headless*: in a headless JVM (no display, or `-Djava.awt.headless=true`), the event is not fired; in production, the
+application logs an error and stops with exit code 1.
+* *Tests*: the event is not fired in tests (`@QuarkusTest`), which would open the windows of the application, nor is the
+exit policy installed. Enable it for user interface tests with `%test.quarkus.desktop.awt.startup-event.enabled=true`
+(or a test profile). `quarkus.arc.test.disable-application-lifecycle-observers=true` disables it too.
 
+[[cdi-beans]]
 === CDI beans
 
 AWT and Swing components can be CDI beans, but they must be `@Singleton` or `@Dependent` beans. The client proxy of a

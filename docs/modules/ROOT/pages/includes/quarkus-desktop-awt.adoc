@@ -325,6 +325,69 @@ endif::add-copy-button-to-env-var[]
 |boolean
 |`+++true+++`
 
+a| [[quarkus-desktop-awt_quarkus-desktop-awt-startup-event-enabled]] [.property-path]##link:#quarkus-desktop-awt_quarkus-desktop-awt-startup-event-enabled[`+++quarkus.desktop.awt.startup-event.enabled+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.awt.startup-event.enabled+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the event is fired. By default it is, except in tests (`@QuarkusTest`, where it would open the windows of the application) : set `%test.quarkus.desktop.awt.startup-event.enabled=true` for user interface tests. In tests, `quarkus.arc.test.disable-application-lifecycle-observers=true` disables it too.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_AWT_STARTUP_EVENT_ENABLED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_AWT_STARTUP_EVENT_ENABLED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|
+
+a| [[quarkus-desktop-awt_quarkus-desktop-awt-startup-event-mode]] [.property-path]##link:#quarkus-desktop-awt_quarkus-desktop-awt-startup-event-mode[`+++quarkus.desktop.awt.startup-event.mode+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.awt.startup-event.mode+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+When the event is fired : `auto` once the application started (after the `StartupEvent` observers, before a `@QuarkusMain` runs), `manual` when the application calls `DesktopLifecycle.start()`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_AWT_STARTUP_EVENT_MODE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_AWT_STARTUP_EVENT_MODE+++`
+endif::add-copy-button-to-env-var[]
+--
+a|`auto`, `manual`
+|`+++auto+++`
+
+a| [[quarkus-desktop-awt_quarkus-desktop-awt-exit-on-last-window-closed]] [.property-path]##link:#quarkus-desktop-awt_quarkus-desktop-awt-exit-on-last-window-closed[`+++quarkus.desktop.awt.exit-on-last-window-closed+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.awt.exit-on-last-window-closed+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the application stops (`Quarkus.asyncExit()`) when its last visible window is closed or hidden, once a first window opened. Only for an application observing `DesktopStartupEvent`, never in tests, nor with Quarkus FX. Disable it for an application that stays alive without windows (a tray icon, the macOS convention), or that closes a window before showing the next one (a splash screen closed before the main window shows).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_AWT_EXIT_ON_LAST_WINDOW_CLOSED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_AWT_EXIT_ON_LAST_WINDOW_CLOSED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
 |===
 
 ifndef::no-duration-note[]

@@ -22,6 +22,7 @@ import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig.IncludedLookAndFeel;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingRecorder;
 import io.quarkus.deployment.ApplicationArchive;
+import io.quarkus.deployment.IsDevelopment;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
@@ -30,6 +31,7 @@ import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
+import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessFieldBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessMethodBuildItem;
@@ -371,6 +373,17 @@ class DesktopSwingProcessor {
             List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
         recorder.setLookAndFeel();
         return new ServiceStartBuildItem(FEATURE);
+    }
+
+    // ------------------------------------------------------------------------------------------------------ dev mode
+
+    /**
+     * Warns about the frames closing with {@code EXIT_ON_CLOSE} in dev mode, which end dev mode.
+     */
+    @BuildStep(onlyIf = IsDevelopment.class)
+    @Record(ExecutionTime.RUNTIME_INIT)
+    void warnExitOnClose(DesktopSwingRecorder recorder, ShutdownContextBuildItem shutdownContext) {
+        recorder.warnExitOnClose(shutdownContext);
     }
 
     /**

@@ -52,37 +52,37 @@ library such as SwingX, JFreeChart or RSyntaxTextArea) whose static initializer 
 
 == Writing a Swing application
 
-Create the user interface on the event dispatch thread, and stop Quarkus when the main window closes:
+Observe `DesktopStartupEvent` to create the user interface on the event dispatch thread, once the application started
+and the look and feel is set (see xref:awt.adoc#user-interface-lifecycle[The user interface lifecycle]):
 
 [source,java]
 ----
-@QuarkusMain
-public class Main implements QuarkusApplication {
+@Singleton
+public class MainWindow extends JFrame {
 
-    @Override
-    public int run(String... args) throws Exception {
-        SwingUtilities.invokeLater(() -> {
-            JFrame frame = new JFrame("Hello");
-            frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
-            frame.addWindowListener(new WindowAdapter() {
-                @Override
-                public void windowClosed(WindowEvent e) {
-                    Quarkus.asyncExit();
-                }
-            });
-            frame.add(new JLabel("Hello from Quarkus"));
-            frame.pack();
-            frame.setLocationRelativeTo(null);
-            frame.setVisible(true);
-        });
-        Quarkus.waitForExit();
-        return 0;
+    @Inject
+    Library library;
+
+    @ConfigProperty(name = "app.title")
+    String title;
+
+    void open(@Observes DesktopStartupEvent event) {
+        setTitle(title);
+        setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        add(new JScrollPane(new JList<>(library.titles())));
+        pack();
+        setLocationRelativeTo(null);
+        setVisible(true);
     }
 }
 ----
 
+The application stops when its last window closes. Use `DISPOSE_ON_CLOSE` (or `HIDE_ON_CLOSE`), not `EXIT_ON_CLOSE`,
+which calls `System.exit` on the event dispatch thread: in dev mode, it ends dev mode instead of stopping the
+application, and the extension logs a warning when such a frame opens.
+
 Swing components can be CDI beans: make them `@Singleton` or `@Dependent` beans (see
-xref:awt.adoc#_cdi_beans[CDI beans]), and create them on the event dispatch thread.
+xref:awt.adoc#cdi-beans[CDI beans]), and create them on the event dispatch thread.
 
 [[look-and-feel]]
 == Look and feel
