@@ -260,32 +260,64 @@ or move the logic to a presenter bean.
 The build logs a warning for a `@Dependent` component bean that observes `DesktopStartupEvent`: CDI creates an instance
 for the notification and destroys it (its `@PreDestroy` methods run) right after it, while the window stays open.
 
+Windows that the application opens several times (dialogs, document windows) are `@Dependent` beans got from an
+`Instance<T>`. `WindowBeans.get(instance)` gets one on the event dispatch thread, and destroys the bean once its window
+is closed: its `@PreDestroy` methods run (stop its timers, remove its global listeners) and its own dependent beans are
+destroyed. With `Instance.get()` alone, the `Instance` keeps every dialog it created until it is destroyed itself.
+
 [source,java]
 ----
+import io.quarkiverse.desktop.awt.WindowBeans;
+
+@Dependent
+public class InvoiceDialog extends JDialog {
+
+    @Inject
+    InvoiceService service;
+
+    private final Timer refresh = new Timer(5_000, e -> reload());
+
+    InvoiceDialog() {
+        setDefaultCloseOperation(DISPOSE_ON_CLOSE); // <1>
+    }
+
+    void edit(Invoice invoice) {
+        // ...
+        refresh.start();
+    }
+
+    @PreDestroy
+    void close() { // <2>
+        refresh.stop();
+    }
+}
+
 @Singleton // not @ApplicationScoped
 public class MainWindow extends JFrame {
 
     @Inject
-    Instance<AboutDialog> about; // a @Dependent dialog, created when needed
+    Instance<InvoiceDialog> dialogs;
 
     void open(@Observes DesktopStartupEvent event) {
-        JButton button = new JButton("About");
-        button.addActionListener(e -> {
-            Instance.Handle<AboutDialog> dialog = about.getHandle();
-            dialog.get().addWindowListener(new WindowAdapter() {
-                @Override
-                public void windowClosed(WindowEvent e) {
-                    dialog.destroy(); // destroys the dependent bean with its window
-                }
-            });
-            dialog.get().setVisible(true);
+        JButton edit = new JButton("Edit");
+        edit.addActionListener(e -> {
+            InvoiceDialog dialog = WindowBeans.get(dialogs); // <3>
+            dialog.edit(selectedInvoice());
+            dialog.setVisible(true);
         });
-        add(button);
+        add(edit);
         pack();
         setVisible(true);
     }
 }
 ----
+<1> The bean is destroyed when its window is disposed (`WINDOW_CLOSED`), not when it is hidden: a `JDialog` hides on
+close by default (`HIDE_ON_CLOSE`).
+<2> Called on the event dispatch thread when the window closes. When the application stops, the container destroys the
+remaining beans on the shutdown thread instead, and the windows closed afterwards (dev mode and tests dispose them) do
+not destroy them again.
+<3> `WindowBeans.get` throws an `IllegalStateException` outside the event dispatch thread. A `@Singleton` window is
+returned as is, and never destroyed.
 
 `QuarkusMock` only replaces normal scoped beans: test the presenters (normal scoped, or with `@QuarkusComponentTest`),
 and make them depend on view interfaces rather than on the component classes.
