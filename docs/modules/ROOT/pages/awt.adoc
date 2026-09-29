@@ -89,7 +89,7 @@ An application that observes `DesktopStartupEvent` (found at build time) has a u
 
 * *Startup*: the event is fired once, with `EventQueue.invokeLater`, after the `StartupEvent` observers. The startup
 of Quarkus never waits for the event dispatch thread. Keep the observers short (they delay the first window), and load
-data on another thread (for instance a `ManagedExecutor`). When an observer throws, the
+data on another thread (for instance a `ManagedExecutor`, see <<event-dispatch-thread>>). When an observer throws, the
 error is logged and, in production, the application stops with exit code 1.
 * *Manual startup*: with `quarkus.desktop.awt.startup-event.mode=manual`, the application fires the event itself, when
 its work before the user interface is done (arguments, a single instance lock, a login...):
@@ -127,6 +127,104 @@ application logs an error and stops with exit code 1.
 * *Tests*: the event is not fired in tests (`@QuarkusTest`), which would open the windows of the application, nor is the
 exit policy installed. Enable it for user interface tests with `%test.quarkus.desktop.awt.startup-event.enabled=true`
 (or a test profile). `quarkus.arc.test.disable-application-lifecycle-observers=true` disables it too.
+
+[[event-dispatch-thread]]
+=== The event dispatch thread
+
+AWT and Swing components are created and used on the event dispatch thread. The extension gives three ways to get
+there from CDI beans, `CompletableFuture`, Mutiny or asynchronous events, without `SwingWorker`: run the work on a
+Quarkus managed executor (with context propagation), and continue on the event dispatch thread.
+
+`EdtExecutor` is an `Executor` bean that always queues the task (`EventQueue.invokeLater`), in order, even when called
+on the event dispatch thread. Its only bean type is `EdtExecutor`: `@Inject Executor` still gets the Quarkus worker pool.
+
+[source,java]
+----
+@Inject
+EdtExecutor edt;
+
+@Inject
+ManagedExecutor workers;
+
+void refresh() {
+    CompletableFuture.supplyAsync(repository::load, workers) // on a worker thread
+            .thenAcceptAsync(table::setRows, edt); // on the event dispatch thread
+    repository.loadUni().runSubscriptionOn(workers).emitOn(edt) // Mutiny
+            .subscribe().with(table::setRows, errors::show);
+    event.fireAsync(new BooksChanged(), NotificationOptions.ofExecutor(edt)); // @ObservesAsync on the event dispatch thread
+}
+----
+
+`Edt` has static helpers: `Edt.isEdt()`, `Edt.run(task)` (runs the task now when called on the event dispatch thread,
+later otherwise), and `Edt.call(callable, timeout)`, the only call that waits for the event dispatch thread (for
+background threads and tests; it runs the task now on the event dispatch thread, and throws a `TimeoutException`
+instead of waiting for ever):
+
+[source,java]
+----
+Dimension size = Edt.call(panel::getPreferredSize, Duration.ofSeconds(5));
+----
+
+`@RunOnEdt` runs the methods of a bean on the event dispatch thread, whatever thread calls them (a `@Scheduled` method,
+a REST resource, a Kafka consumer, an asynchronous observer). Put it on presenters (non component beans), or on methods:
+
+[source,java]
+----
+@ApplicationScoped
+public class StatusPresenter {
+
+    @Inject
+    Instance<StatusBar> bar; // <1>
+
+    @RunOnEdt
+    void show(String text) { // <2>
+        bar.get().setText(text);
+    }
+
+    @RunOnEdt
+    CompletionStage<Boolean> confirm(String question) { // <3>
+        return CompletableFuture.completedFuture(JOptionPane.showConfirmDialog(bar.get(), question) == JOptionPane.YES_OPTION);
+    }
+}
+
+@ApplicationScoped
+public class StatusPoller {
+
+    @Inject
+    StatusPresenter presenter;
+
+    @Scheduled(every = "10s")
+    void poll() {
+        presenter.show(service.status());
+    }
+}
+----
+<1> Get the component beans on the event dispatch thread, in the method (`Instance<T>` or `Provider<T>`): a component
+bean injected directly is created with the presenter, on the thread that first uses it. The build logs a warning for it.
+<2> A `void` method runs now when called on the event dispatch thread, later (`EventQueue.invokeLater`) otherwise: the
+call returns at once, and an exception goes to the uncaught exception handler of the event dispatch thread.
+<3> A method returning a `CompletionStage` (or a `CompletableFuture`) returns a stage completed with its result, or its
+exception, once it ran on the event dispatch thread.
+
+The build fails for a `@RunOnEdt` method returning another type (there is no blocking mode: use `Edt.call`), and for a
+bean that is not `@ApplicationScoped`, `@Singleton` or `@Dependent` (a `@RequestScoped` instance belongs to the request
+of the caller, which may be over when the method runs). The interceptor of `@RunOnEdt` is the outermost one (priority
+`PLATFORM_BEFORE - 100`), so the other interceptors of the method run on the event dispatch thread, around the method:
+
+[cols="1,2"]
+|===
+|Interceptor |Where it runs with `@RunOnEdt`
+
+|`@RunOnEdt`
+|On the calling thread: it queues the call
+
+|`@ActivateRequestContext`, `@Transactional`, fault tolerance (`@Retry`, `@Timeout`...), `@CacheResult`, tracing
+(`@WithSpan`), application interceptors
+|On the event dispatch thread, around the method: a transaction, a retry or a timeout then blocks the event dispatch
+thread. Call such methods from a worker thread, and `@RunOnEdt` only the user interface update
+|===
+
+The event dispatch thread has no active request context: use `@ActivateRequestContext` on a method that needs one.
 
 [[cdi-beans]]
 === CDI beans
