@@ -1075,16 +1075,14 @@ class DesktopAwtProcessor {
      * applications in the same JVM) : dispose the windows when the application stops, after the {@code ShutdownEvent}
      * observers (a {@code ServiceStartBuildItem} registers the task before the one firing {@code ShutdownEvent}, and
      * shutdown tasks run in reverse order) and before the CDI container stops (the task is registered after the container
-     * is initialized). Not for the test application of continuous testing, which would dispose the windows of the dev
-     * mode application.
+     * is initialized). The test application of continuous testing only disposes the windows it opened : the other ones
+     * are those of the dev mode application.
      */
     @BuildStep(onlyIfNot = IsNormal.class)
     @Record(ExecutionTime.RUNTIME_INIT)
     ServiceStartBuildItem disposeWindowsOnShutdown(DesktopAwtRecorder recorder, ShutdownContextBuildItem shutdownContext,
             LaunchModeBuildItem launchMode, BeanContainerBuildItem beanContainer) {
-        if (!launchMode.isAuxiliaryApplication()) {
-            recorder.disposeWindowsOnShutdown(shutdownContext);
-        }
+        recorder.disposeWindowsOnShutdown(shutdownContext, launchMode.isAuxiliaryApplication());
         return new ServiceStartBuildItem(FEATURE);
     }
 
