@@ -240,6 +240,107 @@ thread. Call such methods from a worker thread, and `@RunOnEdt` only the user in
 
 The event dispatch thread has no active request context: use `@ActivateRequestContext` on a method that needs one.
 
+[[desktop-events]]
+=== Application menu, Finder and Dock events (macOS)
+
+The application handlers of `java.awt.Desktop` are CDI events: observe the event types of the JDK (package
+`java.awt.desktop`) in any bean, and `QuitRequest` for the quit requests. The observers run on the event dispatch
+thread.
+
+[source,java]
+----
+import java.awt.desktop.AboutEvent;
+import java.awt.desktop.AppReopenedEvent;
+import java.awt.desktop.OpenFilesEvent;
+import java.awt.desktop.OpenURIEvent;
+import java.awt.desktop.PreferencesEvent;
+
+import io.quarkiverse.desktop.awt.QuitRequest;
+import io.quarkiverse.desktop.awt.WindowBeans;
+
+@Singleton
+public class ApplicationMenu {
+
+    @Inject
+    Instance<AboutDialog> about;
+
+    @Inject
+    Instance<PreferencesDialog> preferences;
+
+    @Inject
+    MainWindow main;
+
+    @Inject
+    Documents documents;
+
+    void about(@Observes AboutEvent event) { // <1>
+        WindowBeans.get(about).setVisible(true);
+    }
+
+    void preferences(@Observes PreferencesEvent event) {
+        WindowBeans.get(preferences).setVisible(true);
+    }
+
+    void open(@Observes OpenFilesEvent event) { // <2>
+        event.getFiles().forEach(documents::open);
+    }
+
+    void open(@Observes OpenURIEvent event) { // <3>
+        documents.open(event.getURI());
+    }
+
+    void reopen(@Observes AppReopenedEvent event) { // <4>
+        main.setVisible(true);
+        main.toFront();
+    }
+
+    void quit(@Observes QuitRequest request) { // <5>
+        if (documents.hasUnsavedChanges() && JOptionPane.showConfirmDialog(main, "Quit without saving?", "Quit",
+                JOptionPane.YES_NO_OPTION) != JOptionPane.YES_OPTION) {
+            request.cancel();
+        }
+    }
+}
+----
+<1> The About and Preferences items of the application menu. Observing `AboutEvent` replaces the default About window
+of the JDK; without an observer of `PreferencesEvent`, the Preferences item is disabled.
+<2> The files opened with the application (from the Finder, or dropped on its Dock icon), including the file that
+started it: the JDK keeps them until the handler is installed, and the extension installs it just before firing
+`DesktopStartupEvent`, so they are fired once the main window is created. `PrintFilesEvent` is the same for printing.
+<3> A URL of a scheme of the application (`myapp://...`).
+<4> The Dock icon clicked while the application runs (for instance with no window visible, see
+`quarkus.desktop.awt.exit-on-last-window-closed`).
+<5> Quit in the application menu, Cmd-Q, Quit in the Dock, a logout or a shutdown.
+
+How it works:
+
+* *Quit*: on macOS, the extension always installs a quit handler (even without an observer of `QuitRequest`). It
+fires `QuitRequest`, then the application stops with `Quarkus.asyncExit(0)` unless an observer called
+`request.cancel()`: `ShutdownEvent` observers and `@PreDestroy` methods run, as when the last window closes. Without it,
+the JDK calls `System.exit` on the AppKit thread. The extension always replies "do not terminate" to macOS
+(`QuitResponse.cancelQuit()`), as the JDK does with `QuitStrategy.CLOSE_ALL_WINDOWS`, and lets Quarkus stop the
+application. During a logout or a shutdown, this reply may cancel the logout: the application still stops, and the user
+may have to log out again (as with `CLOSE_ALL_WINDOWS`). An observer that throws does not cancel the quit. On Windows and Linux there are no quit requests: closing the last
+window stops the application, ask for confirmation on `WINDOW_CLOSING`.
+* *Only what is observed*: the handlers are installed for the events that the application observes (found at build
+time), when the application has a user interface (it observes `DesktopStartupEvent`, see
+<<user-interface-lifecycle>>). So they are not installed in tests unless the startup event is enabled. The build logs a
+warning for an observer of a `java.awt.desktop` event without an observer of `DesktopStartupEvent`, and for the events
+that are not fired (`@ObservesAsync` observers, and the events of the other listeners, see below).
+* *Platforms*: macOS supports all these events. Windows supports none of them and Linux neither: the observers are
+never called there, and the extension does not even call `java.awt.Desktop` on Linux (it loads GTK).
+* *Other events*: `AppForegroundEvent`, `AppHiddenEvent`, `ScreenSleepEvent`, `SystemSleepEvent` and
+`UserSessionEvent` are not fired (one event type is used for two notifications, for instance moved to the foreground
+and to the background): register a listener with `Desktop.getDesktop().addAppEventListener(...)` in a
+`DesktopStartupEvent` observer, and remove it in a `@PreDestroy` method in dev mode. An application may also set its own
+handlers there (`Desktop.getDesktop().setQuitHandler(...)`): they replace those of the extension.
+* *Dev mode and tests*: the handlers are removed when the application stops, which restores those of the JDK.
+* *Quarkus FX*: with Quarkus FX, no handler is installed.
+* *Native executables*: the events work the same. The files and URLs opened with the application need the
+information property list of an application bundle declaring the document types (`CFBundleDocumentTypes`) and the URL
+schemes (`CFBundleURLTypes`): `quarkus.desktop.awt.macos.info-plist` does not declare them, write the `Info.plist` of the
+bundle.
+
 [[cdi-beans]]
 === CDI beans
 
@@ -413,6 +514,9 @@ does not exit, once the other non daemon threads end). Code after `Quarkus.run` 
 mode, and on Windows and Linux): keep the default exit handler, and do that work in `QuarkusApplication.run` or when
 the application stops (`@Observes ShutdownEvent`). A native build with `-H:+RunMainInNewThread` cannot show a user
 interface: the build logs a warning.
+
+In an application with a user interface, Cmd-Q and the other quit requests fire `QuitRequest` and stop the application
+through Quarkus (see <<desktop-events>>).
 
 AWT components are drawn by the Swing Aqua look and feel on macOS: AWT applications do not need `quarkus-desktop-swing`
 for it. The name of the application in the menu bar is `quarkus.application.name` (see

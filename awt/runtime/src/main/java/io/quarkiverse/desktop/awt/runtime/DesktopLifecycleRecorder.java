@@ -1,6 +1,7 @@
 package io.quarkiverse.desktop.awt.runtime;
 
 import java.awt.GraphicsEnvironment;
+import java.util.List;
 
 import org.jboss.logging.Logger;
 
@@ -32,10 +33,12 @@ public class DesktopLifecycleRecorder {
      * ({@code DesktopLifecycle.start()}).
      *
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
-     * @param quarkusFx whether Quarkus FX is present (JavaFX then decides when the application stops)
+     * @param quarkusFx whether Quarkus FX is present (JavaFX then decides when the application stops, and handles the
+     *        events of the application menu)
+     * @param desktopEvents the class names of the {@code java.awt.Desktop} events that the application observes
      */
     public void startUserInterface(ShutdownContext shutdown, LaunchMode launchMode, boolean lifecycleObserversDisabled,
-            boolean quarkusFx) {
+            boolean quarkusFx, List<String> desktopEvents) {
         DesktopAwtRuntimeConfig config = this.config.getValue();
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
         if (!enabled || launchMode == LaunchMode.TEST && lifecycleObserversDisabled) {
@@ -59,7 +62,8 @@ public class DesktopLifecycleRecorder {
             shutdown.addLastShutdownTask(uncaughtExceptions::remove);
         }
         DesktopUi ui = Arc.container().instance(DesktopUi.class).get();
-        ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx);
+        ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx, !quarkusFx,
+                desktopEvents);
         shutdown.addShutdownTask(ui::stop);
         if (config.startupEvent().mode() == Mode.AUTO) {
             ui.start();

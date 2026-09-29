@@ -8,7 +8,9 @@ package io.quarkiverse.desktop.awt;
  * application : its last window closing stops it ({@code quarkus.desktop.awt.exit-on-last-window-closed}). The event is
  * fired automatically ({@code quarkus.desktop.awt.startup-event.mode=auto}), or when the application calls
  * {@link DesktopLifecycle#start()} ({@code manual}). It is not fired in tests unless
- * {@code quarkus.desktop.awt.startup-event.enabled} is {@code true}, nor when the JVM is headless.
+ * {@code quarkus.desktop.awt.startup-event.enabled} is {@code true}, nor when the JVM is headless. Such an application
+ * also gets the events of the application menu, the Finder and the Dock of macOS ({@code java.awt.desktop.AboutEvent},
+ * {@code OpenFilesEvent}..., and {@link QuitRequest}) as CDI events.
  *
  * <pre>
  * &#64;Singleton

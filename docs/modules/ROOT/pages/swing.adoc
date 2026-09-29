@@ -82,7 +82,10 @@ which calls `System.exit` on the event dispatch thread: in dev mode, it ends dev
 application, and the extension logs a warning when such a frame opens.
 
 Swing components can be CDI beans: make them `@Singleton` or `@Dependent` beans (see
-xref:awt.adoc#cdi-beans[CDI beans]), and create them on the event dispatch thread.
+xref:awt.adoc#cdi-beans[CDI beans]), and create them on the event dispatch thread. `WindowBeans.get(instance)` destroys
+a `@Dependent` dialog once it is disposed. The About, Preferences and Quit items of the macOS application menu, and the
+files opened with the application, are CDI events (see xref:awt.adoc#desktop-events[Application menu, Finder and Dock
+events]), and the exceptions of the listeners go to the Quarkus log (category `io.quarkiverse.desktop.awt.edt`).
 
 [[look-and-feel]]
 == Look and feel

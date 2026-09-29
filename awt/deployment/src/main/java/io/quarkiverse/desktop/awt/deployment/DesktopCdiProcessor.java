@@ -1,10 +1,12 @@
 package io.quarkiverse.desktop.awt.deployment;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.TreeSet;
 
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.context.Dependent;
@@ -21,6 +23,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.awt.DesktopStartupEvent;
 import io.quarkiverse.desktop.awt.EdtExecutor;
 import io.quarkiverse.desktop.awt.RunOnEdt;
+import io.quarkiverse.desktop.awt.runtime.DesktopHandlers;
 import io.quarkiverse.desktop.awt.runtime.DesktopLifecycleRecorder;
 import io.quarkiverse.desktop.awt.runtime.DesktopUi;
 import io.quarkiverse.desktop.awt.runtime.RunOnEdtInterceptor;
@@ -58,6 +61,10 @@ class DesktopCdiProcessor {
     private static final Set<DotName> RUN_ON_EDT_RETURN_TYPES = Set.of(
             DotName.createSimple("java.util.concurrent.CompletionStage"),
             DotName.createSimple("java.util.concurrent.CompletableFuture"));
+
+    private static final String DESKTOP_EVENTS_PACKAGE = "java.awt.desktop.";
+
+    private static final String QUIT_EVENT = "java.awt.desktop.QuitEvent";
 
     @BuildStep
     AdditionalBeanBuildItem beans() {
@@ -141,23 +148,64 @@ class DesktopCdiProcessor {
                 return;
             }
         }
+        List<String> desktopEvents = desktopEvents(beanDiscovery.getObservers());
+        if (!desktopEvents.isEmpty()) {
+            LOGGER.warnf("The application observes %s, but not DesktopStartupEvent : the events of java.awt.Desktop are only"
+                    + " fired to an application with a user interface (observing DesktopStartupEvent)", desktopEvents);
+        }
+    }
+
+    /**
+     * The {@code java.awt.Desktop} events that the application observes (among those that the extension fires : the
+     * {@code java.awt.desktop} events of the handlers, and {@code QuitRequest}). Warns for the other
+     * {@code java.awt.desktop} events, and for the asynchronous observers.
+     *
+     * @return the class names of the events
+     */
+    static List<String> desktopEvents(Collection<ObserverInfo> observers) {
+        Set<String> fired = DesktopHandlers.eventTypes();
+        Set<String> events = new TreeSet<>();
+        for (ObserverInfo observer : observers) {
+            String type = observer.getObservedType().name().toString();
+            if (fired.contains(type)) {
+                if (observer.isAsync()) {
+                    LOGGER.warnf("%s observes %s asynchronously : it is fired synchronously on the event dispatch thread,"
+                            + " use @Observes", describe(observer), type);
+                } else {
+                    events.add(type);
+                }
+            } else if (type.equals(QUIT_EVENT)) {
+                LOGGER.warnf("%s observes %s, which is not fired : observe io.quarkiverse.desktop.awt.QuitRequest",
+                        describe(observer), type);
+            } else if (type.startsWith(DESKTOP_EVENTS_PACKAGE)) {
+                LOGGER.warnf("%s observes %s, which is not fired : register a listener with"
+                        + " java.awt.Desktop.addAppEventListener", describe(observer), type);
+            }
+        }
+        return new ArrayList<>(events);
+    }
+
+    private static String describe(ObserverInfo observer) {
+        MethodInfo method = observer.getObserverMethod();
+        return method != null ? describe(method) : observer.getBeanClass().toString();
     }
 
     /**
      * Starts the user interface once the application started ({@code ApplicationStartBuildItem} : after the
-     * {@code StartupEvent} observers).
+     * {@code StartupEvent} observers), with the handlers of the observed {@code java.awt.Desktop} events.
      */
     @BuildStep
     @Record(ExecutionTime.RUNTIME_INIT)
     void startUserInterface(Optional<DesktopUiBuildItem> userInterface, ApplicationStartBuildItem applicationStart,
             DesktopLifecycleRecorder recorder, ShutdownContextBuildItem shutdown, LaunchModeBuildItem launchMode,
-            ArcConfig arcConfig) {
+            ArcConfig arcConfig, BeanDiscoveryFinishedBuildItem beanDiscovery) {
         if (userInterface.isEmpty()) {
             return;
         }
         recorder.startUserInterface(shutdown, launchMode.getLaunchMode(),
                 arcConfig.test().disableApplicationLifecycleObservers(),
                 DesktopAwtProcessor.isPresent(DesktopAwtProcessor.QUARKUS_FX_APPLICATION,
-                        Thread.currentThread().getContextClassLoader()));
+                        Thread.currentThread().getContextClassLoader()),
+                desktopEvents(beanDiscovery.getObservers()));
     }
 }
