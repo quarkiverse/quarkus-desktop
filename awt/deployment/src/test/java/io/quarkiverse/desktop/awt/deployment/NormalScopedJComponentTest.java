@@ -1,6 +1,5 @@
 package io.quarkiverse.desktop.awt.deployment;
 
-import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import javax.swing.JPanel;
@@ -14,8 +13,8 @@ import io.quarkus.arc.Unremovable;
 import io.quarkus.test.QuarkusExtensionTest;
 
 /**
- * The client proxy of a normal scoped bean extending a Swing component cannot be loaded : it overrides the final methods
- * of {@code javax.swing.JComponent}, which ArC cannot make non final (JDK classes are not transformed).
+ * A normal scoped bean extending a Swing component fails the build : otherwise the application fails to start, its
+ * client proxy overriding the final methods of {@code javax.swing.JComponent} ({@code IncompatibleClassChangeError}).
  */
 class NormalScopedJComponentTest {
 
@@ -28,17 +27,12 @@ class NormalScopedJComponentTest {
     static final QuarkusExtensionTest TEST = new QuarkusExtensionTest()
             .withApplicationRoot(root -> root.addClasses(StatusPanel.class))
             .assertException(e -> {
-                Throwable cause = e;
-                while (cause.getCause() != null) {
-                    cause = cause.getCause();
-                }
-                assertInstanceOf(IncompatibleClassChangeError.class, cause, cause.toString());
-                assertTrue(cause.getMessage().contains("overrides final method javax.swing.JComponent"),
-                        cause.getMessage());
+                String messages = RunOnEdtValidationTest.messages(e);
+                assertTrue(messages.contains(StatusPanel.class.getName() + " is @ApplicationScoped"), messages);
             });
 
     @Test
-    void proxyFails() {
-        // the application fails to start
+    void error() {
+        // the build fails
     }
 }

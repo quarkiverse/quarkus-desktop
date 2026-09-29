@@ -229,10 +229,52 @@ The event dispatch thread has no active request context: use `@ActivateRequestCo
 [[cdi-beans]]
 === CDI beans
 
-AWT and Swing components can be CDI beans, but they must be `@Singleton` or `@Dependent` beans. The client proxy of a
-normal scoped bean (`@ApplicationScoped`, `@RequestScoped`...) is a subclass of the bean class: for a component, creating
-the proxy creates another component, outside the event dispatch thread. The build logs a warning for a normal scoped
-bean that extends `java.awt.Component`.
+AWT and Swing components can be CDI beans, but they must be `@Singleton` or `@Dependent` beans, created on the event
+dispatch thread: in a `DesktopStartupEvent` observer, a `@RunOnEdt` method, or through `Instance<T>` or `Provider<T>`
+resolved on the event dispatch thread. A component bean injected directly into another bean is created with that bean,
+on the thread that first uses it.
+
+The build fails for:
+
+* A normal scoped component bean (`@ApplicationScoped`, `@RequestScoped`..., a class or a producer): its client proxy
+is a subclass of the component, so creating the proxy creates another component, outside the event dispatch thread,
+and the proxy of a Swing component cannot even be loaded (it overrides the final methods of `JComponent`).
+* An interceptor binding on a component class (`@RunOnEdt`, `@Transactional`..., declared, inherited or from a
+stereotype): it would intercept the hundreds of methods that the class inherits from AWT and Swing. Annotate methods,
+or move the logic to a presenter bean.
+
+The build logs a warning for a `@Dependent` component bean that observes `DesktopStartupEvent`: CDI creates an instance
+for the notification and destroys it (its `@PreDestroy` methods run) right after it, while the window stays open.
+
+[source,java]
+----
+@Singleton // not @ApplicationScoped
+public class MainWindow extends JFrame {
+
+    @Inject
+    Instance<AboutDialog> about; // a @Dependent dialog, created when needed
+
+    void open(@Observes DesktopStartupEvent event) {
+        JButton button = new JButton("About");
+        button.addActionListener(e -> {
+            Instance.Handle<AboutDialog> dialog = about.getHandle();
+            dialog.get().addWindowListener(new WindowAdapter() {
+                @Override
+                public void windowClosed(WindowEvent e) {
+                    dialog.destroy(); // destroys the dependent bean with its window
+                }
+            });
+            dialog.get().setVisible(true);
+        });
+        add(button);
+        pack();
+        setVisible(true);
+    }
+}
+----
+
+`QuarkusMock` only replaces normal scoped beans: test the presenters (normal scoped, or with `@QuarkusComponentTest`),
+and make them depend on view interfaces rather than on the component classes.
 
 [[dev-mode]]
 === Dev mode

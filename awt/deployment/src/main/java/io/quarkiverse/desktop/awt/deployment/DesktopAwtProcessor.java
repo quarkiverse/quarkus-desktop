@@ -20,6 +20,8 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.stream.Stream;
 
+import jakarta.enterprise.inject.spi.DeploymentException;
+
 import org.jboss.jandex.ClassInfo;
 import org.jboss.jandex.DotName;
 import org.jboss.jandex.IndexView;
@@ -33,9 +35,12 @@ import io.quarkiverse.desktop.awt.runtime.graal.OverrideChecksFeature;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 import io.quarkiverse.desktop.awt.runtime.macos.ParkMainThreadEnabled;
 import io.quarkus.arc.deployment.BeanContainerBuildItem;
-import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
+import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
+import io.quarkus.arc.processor.BuildExtension;
+import io.quarkus.arc.processor.BuiltinScope;
+import io.quarkus.arc.processor.ObserverInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.deployment.IsNormal;
@@ -934,24 +939,72 @@ class DesktopAwtProcessor {
     // ----------------------------------------------------------------------------------------------------- CDI, dev mode
 
     /**
-     * A client proxy is a subclass of the bean class : a normal scoped bean extending {@code java.awt.Component} would
-     * create a second component (hidden, and created outside the event dispatch thread) for its proxy.
+     * Checks the component beans (beans extending {@code java.awt.Component}) : errors for what cannot work, warnings for
+     * what may not.
+     * <ul>
+     * <li>Error : a normal scoped component bean (a class bean or a producer). Its client proxy is a subclass : creating
+     * it creates another component, outside the event dispatch thread, and the proxy of a Swing component cannot even be
+     * loaded (it overrides the final methods of {@code javax.swing.JComponent}, which ArC cannot make non final).</li>
+     * <li>Error : an interceptor binding on a component class (or inherited, or from a stereotype) : it intercepts the
+     * hundreds of methods that the class inherits from AWT and Swing.</li>
+     * <li>Warning : a {@code @Dependent} component bean observing {@code DesktopStartupEvent} : a new instance is
+     * created for the notification, and destroyed (its {@code @PreDestroy} methods run) right after it, while its window
+     * stays open.</li>
+     * </ul>
      */
     @BuildStep
-    void warnNormalScopedComponents(BeanDiscoveryFinishedBuildItem beanDiscovery, CombinedIndexBuildItem combinedIndex,
+    void validateComponentBeans(ValidationPhaseBuildItem validationPhase, CombinedIndexBuildItem combinedIndex,
             BuildProducer<ValidationErrorBuildItem> validationErrors) {
-        for (BeanInfo bean : beanDiscovery.getBeans()) {
-            if (!bean.getScope().isNormal()) {
+        IndexView index = combinedIndex.getIndex();
+        List<Throwable> errors = new ArrayList<>();
+        for (BeanInfo bean : validationPhase.getContext().beans()) {
+            if (bean.isInterceptor() || bean.isDecorator()) {
                 continue;
             }
             DotName type = bean.getImplClazz() != null ? bean.getImplClazz().name() : bean.getProviderType().name();
-            if (isComponent(type, combinedIndex.getIndex())) {
-                LOGGER.warnf("The bean %s is %s and extends java.awt.Component : its client proxy extends it too, so"
-                        + " creating the proxy creates another component, outside the event dispatch thread. Use"
-                        + " @Singleton or @Dependent for AWT and Swing component beans.", bean.getBeanClass(),
-                        bean.getScope().getDotName().withoutPackagePrefix());
+            if (!isComponent(type, index)) {
+                continue;
+            }
+            if (bean.getScope().isNormal()) {
+                errors.add(new DeploymentException("The bean " + describe(bean) + " is @"
+                        + bean.getScope().getDotName().withoutPackagePrefix() + " and extends java.awt.Component : its"
+                        + " client proxy extends it too, so creating the proxy creates another component, outside the"
+                        + " event dispatch thread (and the proxy of a Swing component cannot be loaded). Use @Singleton or"
+                        + " @Dependent for AWT and Swing component beans."));
+            }
+            if (bean.isClassBean() && bean.getInterceptedMethodsBindings().keySet().stream()
+                    .anyMatch(method -> isJdkClass(method.declaringClass().name()))) {
+                errors.add(new DeploymentException("The component bean " + bean.getBeanClass() + " has a class"
+                        + " interceptor binding : it intercepts the methods that the class inherits from AWT and Swing. Put"
+                        + " the interceptor bindings (@RunOnEdt...) on methods, or on a presenter bean that is not a"
+                        + " component."));
             }
         }
+        for (ObserverInfo observer : validationPhase.getContext().get(BuildExtension.Key.OBSERVERS)) {
+            BeanInfo bean = observer.getDeclaringBean();
+            if (bean != null && bean.isClassBean() && BuiltinScope.DEPENDENT.is(bean.getScope())
+                    && observer.getObservedType().name().equals(DesktopCdiProcessor.DESKTOP_STARTUP_EVENT)
+                    && isComponent(bean.getBeanClass(), index)) {
+                LOGGER.warnf("The component bean %s is @Dependent and observes DesktopStartupEvent : a new instance is"
+                        + " created for the event and destroyed right after it (its @PreDestroy methods run) while its"
+                        + " window stays open. Use @Singleton, or observe the event in another bean and open the window"
+                        + " with Instance<%s>.", bean.getBeanClass(), bean.getBeanClass().withoutPackagePrefix());
+            }
+        }
+        if (!errors.isEmpty()) {
+            validationErrors.produce(new ValidationErrorBuildItem(errors));
+        }
+    }
+
+    private static String describe(BeanInfo bean) {
+        return bean.isClassBean() ? bean.getBeanClass().toString()
+                : bean.getProviderType() + " (produced by " + bean.getTarget().map(Object::toString).orElse("?") + " of "
+                        + bean.getDeclaringBean().getBeanClass() + ")";
+    }
+
+    private static boolean isJdkClass(DotName name) {
+        String className = name.toString();
+        return className.startsWith("java.") || className.startsWith("javax.");
     }
 
     /**
