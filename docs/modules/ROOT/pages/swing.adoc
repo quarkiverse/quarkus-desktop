@@ -79,7 +79,8 @@ public class MainWindow extends JFrame {
 
 The application stops when its last window closes. Use `DISPOSE_ON_CLOSE` (or `HIDE_ON_CLOSE`), not `EXIT_ON_CLOSE`,
 which calls `System.exit` on the event dispatch thread: in dev mode, it ends dev mode instead of stopping the
-application, and the extension logs a warning when such a frame opens.
+application, and the extension logs a warning when such a frame opens (in an application observing
+`DesktopStartupEvent`).
 
 Swing components can be CDI beans: make them `@Singleton` or `@Dependent` beans (see
 xref:awt.adoc#cdi-beans[CDI beans]), and create them on the event dispatch thread. `WindowBeans.get(instance)` destroys
