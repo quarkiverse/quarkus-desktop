@@ -32,8 +32,8 @@ class QuarkusAwtGuardTest {
     private static final String RUNTIME = "io/quarkus/awt/runtime/";
 
     /**
-     * The classes of the quarkus-awt runtime with macOS support (the Quarkus pull request "Enable quarkus-awt on macOS",
-     * https://github.com/quarkusio/quarkus/pull/56979).
+     * The classes of the quarkus-awt runtime with macOS support (Quarkus 4.0 and later, the pull request "Enable quarkus-awt
+     * on macOS", https://github.com/quarkusio/quarkus/pull/56979).
      */
     static final List<String> MAC_SUPPORT_CLASSES = List.of(
             "JDKSubstitutions.class",

@@ -84,14 +84,14 @@ Verified on both architectures by the continuous integration of the showcase (na
 
 |macOS (Apple silicon)
 |Yes
-|Yes, with the `quarkus-awt` of the Quarkus pull request
-https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"] (not in a Quarkus release yet), and
-GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified on an Apple silicon Mac and by the continuous
+|Yes, with Quarkus 4.0 or later, whose `quarkus-awt` supports macOS
+(https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"]; not released yet: until then, a Quarkus
+`999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified on an Apple silicon Mac and by the continuous
 integration of the showcase.
 |===
 
 Native executables need GraalVM for JDK 25 and Quarkus {quarkus-version} or later (on macOS: GraalVM 25.1 or later, and
-a Quarkus built from the pull request above).
+Quarkus 4.0 or later).
 
 == Guides
 

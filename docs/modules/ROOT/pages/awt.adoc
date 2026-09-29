@@ -153,9 +153,9 @@ use the FreeType library of the system).
 
 Native executables for macOS need:
 
-* a `quarkus-awt` with macOS support: the Quarkus pull request
-https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"], which is not in a Quarkus release yet.
-Build Quarkus from it (`./mvnw -Dquickly` in a checkout of the pull request) and use its `999-SNAPSHOT` version;
+* a `quarkus-awt` with macOS support: Quarkus 4.0 or later (the pull request
+https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"], merged for Quarkus 4.0, which is not
+released yet). Until then, build Quarkus `main` (`./mvnw -Dquickly`) and use its `999-SNAPSHOT` version;
 * GraalVM 25.1 or later on Apple silicon (for example GraalVM Community 25 Innovation; GraalVM 25.0.x does not support AWT
 on macOS);
 * the Xcode Command Line Tools.
