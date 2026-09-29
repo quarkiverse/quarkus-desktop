@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.swing.deployment;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.GraphicsEnvironment;
 import java.util.logging.Level;
 
 import javax.swing.UIManager;
@@ -15,7 +16,7 @@ import io.smallrye.common.os.OS;
 
 /**
  * A look and feel that cannot be set is reported as a warning, and the default one is kept (the default look and feel of
- * the JDK : Aqua on macOS, Metal elsewhere).
+ * the JDK : Aqua on macOS with a display, Metal elsewhere).
  */
 class UnsupportedLookAndFeelTest {
 
@@ -33,7 +34,9 @@ class UnsupportedLookAndFeelTest {
 
     @Test
     void defaultLookAndFeelIsKept() {
-        assertEquals(OS.MAC.isCurrent() ? "com.apple.laf.AquaLookAndFeel" : "javax.swing.plaf.metal.MetalLookAndFeel",
+        assertEquals(
+                OS.MAC.isCurrent() && !GraphicsEnvironment.isHeadless() ? "com.apple.laf.AquaLookAndFeel"
+                        : "javax.swing.plaf.metal.MetalLookAndFeel",
                 UIManager.getLookAndFeel().getClass().getName());
     }
 }
