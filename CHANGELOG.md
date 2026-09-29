@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.1.0 - 2026-09-29
+
 ### Added
 
 - Desktop AWT and Desktop Swing extensions: AWT and Swing applications in JVM mode and as native
