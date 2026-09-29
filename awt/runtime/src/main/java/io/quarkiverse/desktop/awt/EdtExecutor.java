@@ -18,7 +18,8 @@ import jakarta.inject.Singleton;
  * event.fireAsync(new BooksChanged(), NotificationOptions.ofExecutor(edt));
  * </pre>
  *
- * Its only bean type is {@code EdtExecutor} : {@code @Inject Executor} still gets the Quarkus worker pool.
+ * Its only bean type is {@code EdtExecutor} : {@code @Inject Executor} still gets the Quarkus worker pool. In static
+ * code, {@code EventQueue::invokeLater} is the same executor.
  */
 @Singleton
 @Typed(EdtExecutor.class)

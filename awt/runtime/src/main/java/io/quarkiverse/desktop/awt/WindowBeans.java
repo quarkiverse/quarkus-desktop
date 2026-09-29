@@ -51,6 +51,9 @@ public final class WindowBeans {
      * it is disposed ({@code DISPOSE_ON_CLOSE}, {@code Window.dispose()}), not when it is only hidden
      * ({@code HIDE_ON_CLOSE}, {@code setVisible(false)}), and not when the application already stopped. A
      * {@code @Singleton} window is returned as is.
+     * <p>
+     * A window is only closed once it was shown or packed (displayable) : when the code that shows it may fail first,
+     * destroy the bean yourself ({@code Instance.destroy}).
      *
      * @param instance the {@code Instance} of the window bean
      * @return the window, not shown yet

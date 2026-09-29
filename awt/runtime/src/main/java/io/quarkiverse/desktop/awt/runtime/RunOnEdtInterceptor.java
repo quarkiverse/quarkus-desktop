@@ -34,16 +34,18 @@ public class RunOnEdtInterceptor {
             if (CompletionStage.class.isAssignableFrom(context.getMethod().getReturnType())) {
                 try {
                     return context.proceed();
-                } catch (Exception e) {
+                } catch (Throwable e) {
                     return CompletableFuture.failedFuture(e);
                 }
             }
             return context.proceed();
         }
+        // the container of the bean : after a restart in dev mode, a call queued by the previous application is skipped
+        ArcContainer container = Arc.container();
         if (CompletionStage.class.isAssignableFrom(context.getMethod().getReturnType())) {
             CompletableFuture<Object> result = new CompletableFuture<>();
             EventQueue.invokeLater(() -> {
-                if (!isRunning()) {
+                if (!isRunning(container)) {
                     result.completeExceptionally(new IllegalStateException("The application stopped before "
                             + context.getMethod() + " ran on the event dispatch thread"));
                     return;
@@ -68,7 +70,7 @@ public class RunOnEdtInterceptor {
             return result;
         }
         EventQueue.invokeLater(() -> {
-            if (!isRunning()) {
+            if (!isRunning(container)) {
                 LOGGER.debugf("The application stopped before %s ran on the event dispatch thread", context.getMethod());
                 return;
             }
@@ -82,8 +84,7 @@ public class RunOnEdtInterceptor {
         return null;
     }
 
-    private static boolean isRunning() {
-        ArcContainer container = Arc.container();
+    private static boolean isRunning(ArcContainer container) {
         return container != null && container.isRunning();
     }
 

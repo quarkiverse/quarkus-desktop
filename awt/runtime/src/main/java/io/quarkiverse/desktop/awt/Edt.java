@@ -44,12 +44,16 @@ public final class Edt {
      * Calls a task on the event dispatch thread and waits for its result, at most {@code timeout} : for background threads
      * and tests. Called on the event dispatch thread, calls the task now.
      * <p>
-     * Do not call it while holding a lock that the event dispatch thread may need (the AWT tree lock, a lock of the
-     * application), nor from a shutdown hook or a {@code ShutdownEvent} observer, where the event dispatch thread may be
-     * blocked : it then waits until the timeout.
+     * Do not call it while holding a lock that the event dispatch thread may need : the AWT tree lock, a lock of the
+     * application, or the lock of ArC creating a bean (from a constructor, a {@code @PostConstruct} method or a producer,
+     * when an observer of the bean runs on the event dispatch thread at the same time). Nor from a shutdown hook or a
+     * {@code ShutdownEvent} observer, where the event dispatch thread may be blocked. It then waits until the timeout.
      *
      * @return the result of the task
-     * @throws TimeoutException when the task did not complete in time (it may still run later)
+     * @throws TimeoutException when the task did not complete in time : the task is skipped if it did not start yet, a
+     *         task already running keeps running and its result is dropped
+     * @throws InterruptedException when the calling thread is interrupted : the task is skipped if it did not start
+     *         yet
      * @throws Exception the exception of the task
      */
     public static <T> T call(Callable<T> task, Duration timeout) throws Exception {
@@ -60,7 +64,7 @@ public final class Edt {
         CompletableFuture<T> result = new CompletableFuture<>();
         EventQueue.invokeLater(() -> {
             if (result.isDone()) {
-                // timed out
+                // timed out, or the caller was interrupted
                 return;
             }
             try {
@@ -71,9 +75,6 @@ public final class Edt {
         });
         try {
             return result.get(timeout.toNanos(), TimeUnit.NANOSECONDS);
-        } catch (TimeoutException e) {
-            result.cancel(false);
-            throw e;
         } catch (ExecutionException e) {
             Throwable cause = e.getCause();
             if (cause instanceof Exception exception) {
@@ -83,6 +84,9 @@ public final class Edt {
                 throw error;
             }
             throw e;
+        } finally {
+            // timed out, or interrupted : skip the task if it did not start yet
+            result.cancel(false);
         }
     }
 }
