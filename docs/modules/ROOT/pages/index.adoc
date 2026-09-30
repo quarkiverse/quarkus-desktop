@@ -69,25 +69,24 @@ visual styles of Windows, can be a GUI application without console, and comes wi
 page renders the same pixels and gives the same checks as in JVM mode, with the Direct3D, GDI and OpenGL pipelines at
 100 % scale, and at 150 % with GDI (with Direct3D at a fractional scale, a few edge pixels of the Metal gradients vary
 from one run to the next, in JVM mode too: see the
-https://github.com/Eng-Fouad/quarkus-desktop-showcase#compare-jvm-and-native-rendering[showcase README]).
+https://github.com/quarkiverse/quarkus-desktop/blob/main/samples/showcase/README.md#compare-jvm-and-native-rendering[showcase README]).
 
 |Windows arm64
 |Yes
-|No: GraalVM has no native image builder for Windows on arm64. JVM mode is verified by the continuous integration of
-the showcase (two JVM runs compared).
+|No: GraalVM has no native image builder for Windows on arm64. JVM mode is verified with the showcase (two JVM runs
+compared).
 
 |Linux x64 and arm64
 |Yes
 |Yes: a native build on Linux or in a container. The executable uses the X11 libraries of the system (XWayland on
 Wayland), GTK 3 for the GTK look and feel and the native dialogs, CUPS and ALSA (see xref:awt.adoc#linux[Linux]).
-Verified on both architectures by the continuous integration of the showcase (native builds and runs).
+Verified on both architectures with the showcase (native builds and runs).
 
 |macOS (Apple silicon)
 |Yes
 |Yes, with Quarkus 4.0 or later, whose `quarkus-awt` supports macOS
 (https://github.com/quarkusio/quarkus/pull/56979["Enable quarkus-awt on macOS"]; not released yet: until then, a Quarkus
-`999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified on an Apple silicon Mac and by the continuous
-integration of the showcase.
+`999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later (see xref:awt.adoc#macos[macOS]). Verified with the showcase on an Apple silicon Mac.
 |===
 
 Native executables need GraalVM for JDK 25 and Quarkus {quarkus-version} or later (on macOS: GraalVM 25.1 or later, and
@@ -104,7 +103,7 @@ mode and tests.
 [[verification]]
 == Verification
 
-The https://github.com/Eng-Fouad/quarkus-desktop-showcase[Quarkus Desktop showcase] is an application of 75 pages (about
+The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] is an application of 75 pages (about
 3800 checks) that exercise the AWT, Java2D, text, image, Swing, look and feel, data transfer, desktop, printing,
 accessibility, JavaBeans and sound features of the JDK. Its tools run it in JVM mode and as a native executable, render
 every page to an image and compare the two runs pixel by pixel and check by check, also with exact reachability metadata

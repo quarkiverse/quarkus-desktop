@@ -1,0 +1,141 @@
+package io.quarkiverse.desktop.showcase.pages.beans;
+
+import java.beans.DefaultPersistenceDelegate;
+import java.beans.XMLDecoder;
+import java.beans.XMLEncoder;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Consumer;
+
+import io.quarkiverse.desktop.showcase.core.Checks;
+
+/**
+ * {@link XMLEncoder} and {@link XMLDecoder} with the exceptions they report collected (both report recoverable errors to
+ * an exception listener and go on) and a deterministic text : the {@code version} attribute of the root element (the
+ * {@code java.version} of the runtime) is normalized.
+ * <p>
+ * AWT only ({@code java.beans}) : used by the AWT and the Swing persistence pages.
+ */
+public final class XmlSupport {
+
+    private XmlSupport() {
+    }
+
+    /** Encoded XML and the exceptions reported while encoding. */
+    public record Encoded(String xml, List<String> exceptions) {
+
+        public int lines() {
+            return (int) xml.lines().count();
+        }
+
+        public String sha256() {
+            return Checks.sha256(xml);
+        }
+    }
+
+    /** Decoded objects and the exceptions reported while decoding. */
+    public record Decoded(List<Object> objects, List<String> exceptions) {
+    }
+
+    /**
+     * Encodes {@code objects} ({@code configure} may set persistence delegates on the encoder).
+     */
+    public static Encoded encode(Consumer<XMLEncoder> configure, Object... objects) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        List<String> exceptions = new ArrayList<>();
+        try (XMLEncoder encoder = new XMLEncoder(out, "UTF-8", true, 0)) {
+            encoder.setExceptionListener(e -> exceptions.add(Checks.describe(e)));
+            encoder.setPersistenceDelegate(PrintSettings.MediaSpec.class,
+                    new DefaultPersistenceDelegate(new String[] { "id", "width", "height" }));
+            if (configure != null) {
+                configure.accept(encoder);
+            }
+            for (Object object : objects) {
+                encoder.writeObject(object);
+            }
+        } catch (Throwable t) {
+            // e.g. a StackOverflowError when the persistence delegates of java.beans.MetaData cannot be loaded (native
+            // image) : reported with the exceptions, so that the checks fail and the page still builds
+            exceptions.add("thrown: " + Checks.describe(t));
+        }
+        String xml = new String(out.toByteArray(), StandardCharsets.UTF_8)
+                .replaceFirst("<java version=\"[^\"]*\"", "<java version=\"(normalized)\"")
+                .replace("\r\n", "\n");
+        Encoded encoded = new Encoded(xml, List.copyOf(exceptions));
+        dump(encoded);
+        return encoded;
+    }
+
+    private static final AtomicInteger DUMPED = new AtomicInteger();
+
+    /**
+     * Debugging aid : with {@code -Dshowcase.beans.dump-dir=<directory>}, every encoded XML text is written to
+     * {@code <directory>/<sequence>-<sha256 prefix>.xml}, to diff the XML of two runtimes.
+     */
+    private static void dump(Encoded encoded) {
+        String directory = System.getProperty("showcase.beans.dump-dir");
+        if (directory == null) {
+            return;
+        }
+        try {
+            Path dir = Path.of(directory);
+            Files.createDirectories(dir);
+            String exceptions = encoded.exceptions().isEmpty() ? "" : "\n<!-- " + encoded.exceptions() + " -->\n";
+            Files.writeString(dir.resolve(String.format("%02d-%s.xml", DUMPED.incrementAndGet(), encoded.sha256())),
+                    encoded.xml() + exceptions, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+    }
+
+    public static Encoded encode(Object... objects) {
+        return encode(null, objects);
+    }
+
+    /**
+     * Decodes every object of {@code xml}, {@code owner} being the owner of the decoder.
+     */
+    public static Decoded decode(String xml, Object owner) {
+        List<Object> objects = new ArrayList<>();
+        List<String> exceptions = new ArrayList<>();
+        try (XMLDecoder decoder = new XMLDecoder(new ByteArrayInputStream(xml.getBytes(StandardCharsets.UTF_8)), owner,
+                e -> exceptions.add(Checks.describe(e)), XmlSupport.class.getClassLoader())) {
+            while (true) {
+                try {
+                    objects.add(decoder.readObject());
+                } catch (ArrayIndexOutOfBoundsException end) {
+                    break;
+                }
+            }
+        } catch (Throwable t) {
+            exceptions.add("thrown: " + Checks.describe(t));
+        }
+        if (!exceptions.isEmpty()) {
+            dump(new Encoded("<!-- decoding exceptions of " + Checks.sha256(xml) + " -->", exceptions));
+        }
+        return new Decoded(List.copyOf(objects), List.copyOf(exceptions));
+    }
+
+    /**
+     * The first {@code count} lines of {@code xml}, long lines cut.
+     */
+    public static String excerpt(String xml, int count) {
+        List<String> lines = new ArrayList<>();
+        for (String line : xml.lines().limit(count).toList()) {
+            lines.add(line.length() > 150 ? line.substring(0, 147) + "..." : line);
+        }
+        long total = xml.lines().count();
+        if (total > count) {
+            lines.add("... " + (total - count) + " more lines");
+        }
+        return String.join("\n", lines);
+    }
+}

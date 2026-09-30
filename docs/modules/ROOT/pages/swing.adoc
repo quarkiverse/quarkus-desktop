@@ -315,7 +315,7 @@ The integration tests of the extension run a gallery of the components with ever
 mode and as a native executable, on Windows, Linux and macOS), and check that the native executable gets the same look
 and feel defaults (UI delegates, icons, painters, borders, colors, fonts, texts), the same key bindings, the same font
 metrics, the same rendering (pixel by pixel) and the same PostScript output as JVM mode. The
-https://github.com/Eng-Fouad/quarkus-desktop-showcase[Quarkus Desktop showcase] compares JVM mode and native executables
+https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] compares JVM mode and native executables
 page by page, with its Swing components, containers, text, look and feel, data transfer, printing and JavaBeans pages
 (see xref:index.adoc#verification[Verification]).
 

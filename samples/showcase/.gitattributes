@@ -1,0 +1,34 @@
+# Windows scripts need CRLF line endings, Unix scripts LF
+*.cmd text eol=crlf
+mvnw text eol=lf
+*.sh text eol=lf
+docker/linux/xvfb-exec text eol=lf
+# Test assets of the pages are used byte for byte (hashes, sizes, offsets): never convert their line endings
+src/main/resources/showcase/** -text
+# Binary test assets of the pages (never converted, never diffed as text)
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.bmp binary
+*.wbmp binary
+*.tif binary
+*.tiff binary
+*.ico binary
+*.icc binary
+*.icm binary
+*.pf binary
+*.ttf binary
+*.otf binary
+*.ttc binary
+*.pfb binary
+*.wav binary
+*.aiff binary
+*.aif binary
+*.au binary
+*.mid binary
+*.sf2 binary
+*.jar binary
+*.ser binary
+*.rtf -text
+*.xbm -text

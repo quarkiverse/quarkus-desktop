@@ -402,7 +402,7 @@ ImageIO plugins, print services and printing to a PostScript stream, data flavor
 JavaBeans API, the desktop integration and the Java Access Bridge (Windows), on Windows, Linux and macOS (with the
 libraries and frameworks of the macOS executable, its main thread and the Metal pipeline). They also pass when they are
 built with exact reachability metadata (`-Dquarkus.native.additional-build-args=--exact-reachability-metadata`, verified
-on Windows and Linux). The https://github.com/Eng-Fouad/quarkus-desktop-showcase[Quarkus Desktop showcase] compares JVM mode and native
+on Windows and Linux). The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] compares JVM mode and native
 executables page by page (see xref:index.adoc#verification[Verification]).
 
 == Configuration
