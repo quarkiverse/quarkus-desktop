@@ -181,11 +181,11 @@ closing, tray applications (`quarkus.desktop.awt.exit-on-last-window-closed=fals
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), not released yet) and GraalVM 25.1 or later (verified on an Apple silicon Mac and by the continuous integration of the showcase) |
+| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), not released yet) and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
 
 ## Showcase
 
-The [Quarkus Desktop showcase](https://github.com/Eng-Fouad/quarkus-desktop-showcase) exercises the AWT, Java2D and Swing
+The [Quarkus Desktop showcase](samples/showcase) exercises the AWT, Java2D and Swing
 features of the JDK on 75 pages (about 3800 checks), and compares JVM mode and native executables pixel by pixel and
 check by check (also with other Java2D pipelines, at the real display scale, and with exact reachability metadata). It is
 the functional test bench of these extensions: run its cycle after changing a list of classes and resources.

@@ -1,0 +1,70 @@
+{
+  "reflection": [
+    {
+      "type": "java.lang.Integer",
+      "methods": [
+        { "name": "parseInt", "parameterTypes": [ "java.lang.String" ] },
+        { "name": "valueOf", "parameterTypes": [ "java.lang.String" ] }
+      ]
+    },
+    {
+      "type": "java.lang.Math",
+      "methods": [ { "name": "max", "parameterTypes": [ "int", "int" ] } ]
+    },
+    { "type": "java.awt.Component", "fields": [ { "name": "peer" } ] },
+    { "type": "sun.lwawt.LWComponentPeer", "methods": [ { "name": "getDelegate", "parameterTypes": [] } ] },
+    { "type": "sun.util.resources.provider.LocaleDataProvider", "methods": [ { "name": "provider", "parameterTypes": [] } ] },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBean" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBean$JobEvent" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBean$JobListener" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$Margins" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MediaSpec" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.Ticket" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.XmlPersistencePage$NoDefaultConstructor" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBeanBeanInfo" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBeanCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBean$OrientationEditor" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintJobBean$OrientationPersistenceDelegate" },
+    { "type": "com.sun.beans.editors.PrintJobBean$OrientationEditor" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettingsBeanInfo" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettingsCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettingsPersistenceDelegate" },
+    { "type": "java.beans.MetaData$io_quarkiverse_desktop_showcase_pages_beans_PrintSettings_PersistenceDelegate" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MarginsBeanInfo" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MarginsCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MarginsPersistenceDelegate" },
+    { "type": "java.beans.MetaData$io_quarkiverse_desktop_showcase_pages_beans_PrintSettings$Margins_PersistenceDelegate" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MediaSpecBeanInfo" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.PrintSettings$MediaSpecCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.TicketCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.TicketPersistenceDelegate" },
+    { "type": "java.beans.MetaData$io_quarkiverse_desktop_showcase_pages_beans_Ticket_PersistenceDelegate" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.XmlPersistencePage$NoDefaultConstructorBeanInfo" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.XmlPersistencePage$NoDefaultConstructorCustomizer" },
+    { "type": "io.quarkiverse.desktop.showcase.pages.beans.XmlPersistencePage$NoDefaultConstructorPersistenceDelegate" },
+    { "type": "java.beans.MetaData$io_quarkiverse_desktop_showcase_pages_beans_XmlPersistencePage$NoDefaultConstructor_PersistenceDelegate" },
+    { "type": "no.such.Bean" },
+    { "type": "no.such.Type" }
+  ],
+  "foreign": {
+    "downcalls": [
+      { "returnType": "jlong", "parameterTypes": [] },
+      { "returnType": "jlong", "parameterTypes": [ "jlong" ] },
+      { "returnType": "jint", "parameterTypes": [ "jlong", "void*" ] }
+    ]
+  },
+  "resources": [
+    { "glob": "META-INF/services/javax.imageio.spi.ImageReaderSpi" },
+    { "glob": "META-INF/services/javax.imageio.spi.ImageWriterSpi" },
+    { "glob": "META-INF/services/java.net.spi.URLStreamHandlerProvider" },
+    { "bundle": "showcase.text-images.ShowcaseMetadataFormatResources" },
+    { "glob": "application.properties" },
+    { "glob": "application-prod.properties" },
+    { "glob": "META-INF/microprofile-config.properties" },
+    { "glob": "io/quarkiverse/desktop/showcase/pages/beans/*.ser" },
+    { "glob": "no/such/*.ser" },
+    { "glob": "showcase/print-misc/beans/missing.png" },
+    { "glob": "showcase/swing-controls/html/images/missing.png" }
+  ]
+}
