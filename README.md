@@ -1,6 +1,8 @@
 # Quarkus Desktop
 
-[![Version](https://img.shields.io/maven-central/v/io.quarkiverse.desktop/quarkus-desktop-parent?logo=apache-maven&style=flat-square)](https://central.sonatype.com/artifact/io.quarkiverse.desktop/quarkus-desktop-parent) <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->[![All Contributors](https://img.shields.io/badge/all_contributors-1-orange.svg?style=flat-square)](#contributors-)<!-- ALL-CONTRIBUTORS-BADGE:END -->
+[![Version](https://img.shields.io/maven-central/v/io.quarkiverse.desktop/quarkus-desktop-parent?logo=apache-maven&style=flat-square)](https://central.sonatype.com/artifact/io.quarkiverse.desktop/quarkus-desktop-parent) <!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
+[![All Contributors](https://img.shields.io/badge/all_contributors-2-orange.svg?style=flat-square)](#contributors-)
+<!-- ALL-CONTRIBUTORS-BADGE:END -->
 
 Quarkus extensions to build AWT and Swing desktop (GUI) applications, in JVM mode and as GraalVM native executables
 (Windows x64, Linux x64 and arm64, and macOS on Apple silicon; JVM mode only on Windows arm64). Native executables for
@@ -201,6 +203,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
   <tbody>
     <tr>
       <td align="center" valign="top" width="14.28%"><a href="https://fouad.io"><img src="https://avatars.githubusercontent.com/u/1194488?v=4?s=100" width="100px;" alt="Fouad Almalki"/><br /><sub><b>Fouad Almalki</b></sub></a><br /><a href="https://github.com/quarkiverse/quarkus-desktop/commits?author=Eng-Fouad" title="Code">💻</a> <a href="#maintenance-Eng-Fouad" title="Maintenance">🚧</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://poolborges.github.io/"><img src="https://avatars.githubusercontent.com/u/1090723?v=4?s=100" width="100px;" alt="Paulo Borges"/><br /><sub><b>Paulo Borges</b></sub></a><br /><a href="https://github.com/quarkiverse/quarkus-desktop/commits?author=poolborges" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
