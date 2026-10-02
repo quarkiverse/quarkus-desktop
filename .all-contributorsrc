@@ -16,6 +16,15 @@
         "code",
         "maintenance"
       ]
+    },
+    {
+      "login": "poolborges",
+      "name": "Paulo Borges",
+      "avatar_url": "https://avatars.githubusercontent.com/u/1090723?v=4",
+      "profile": "https://poolborges.github.io/",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "contributorsPerLine": 7,
