@@ -153,6 +153,8 @@ public class SwingMainWindow extends AbstractMainWindow {
         content.add(split, BorderLayout.CENTER);
         content.add(statusBar, BorderLayout.SOUTH);
         frame.setContentPane(content);
+        frame.pack();
+        frame.setLocationRelativeTo(null);
         frame.setVisible(true);
     }
 
