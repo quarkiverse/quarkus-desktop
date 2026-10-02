@@ -183,7 +183,7 @@ closing, tray applications (`quarkus.desktop.awt.exit-on-last-window-closed=fals
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), not released yet) and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
+| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
 
 ## Showcase
 
