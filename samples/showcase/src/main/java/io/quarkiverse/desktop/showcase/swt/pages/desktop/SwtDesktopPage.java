@@ -664,10 +664,20 @@ public class SwtDesktopPage implements SwtPage {
         checks.add(Check.info("Display.getSystemTaskBar()", taskBar == null ? "none" : "available"));
         if (taskBar != null) {
             checks.add(SwtChecks.info("TaskBar.getItemCount() (the shells, the application)", taskBar::getItemCount));
-            checks.add(SwtChecks.expect("TaskBar.getItem(main shell) twice", "the same item",
-                    () -> taskBar.getItem(main) == taskBar.getItem(main) ? "the same item" : "two items"));
+            // macOS : the Dock tile (the application item) is the only task item : getItem(shell) returns null, the
+            // requested item is not supported by the platform (TaskBar.getItem)
+            checks.add(SwtChecks.expect("TaskBar.getItem(main shell) twice",
+                    SwtMode.pick("none", "the same item", "the same item"), () -> {
+                        TaskItem first = taskBar.getItem(main);
+                        return first == null ? "none"
+                                : first == taskBar.getItem(main) ? "the same item" : "two items";
+                    }));
+            // the TaskItem Javadoc : the item of the main shell, else the item of the application
             checks.add(SwtChecks.info("TaskItem of the main shell : progress, state, overlay text", () -> {
                 TaskItem item = taskBar.getItem(main);
+                if (item == null) {
+                    item = taskBar.getItem(null);
+                }
                 return item.getProgress() + ", " + item.getProgressState() + ", '" + item.getOverlayText() + "'";
             }));
         }

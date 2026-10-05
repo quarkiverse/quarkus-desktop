@@ -446,7 +446,14 @@ public class SwtInputsPage implements SwtPage {
                 () -> w.multi.getText().equals(MULTI.replace("\n", Text.DELIMITER))));
         checks.add(SwtChecks.expect("Text WRAP : text unchanged, lines wrapped", "true true", () -> {
             String text = w.wrap.getText();
-            return text.equals(WRAP) + " " + (w.wrap.getLineCount() > 1);
+            // getLineCount counts the wrapped lines on Windows (EM_GETLINECOUNT) ; on Cocoa the paragraphs of the
+            // NSTextStorage, 1 for this text without a line break : there the wrap shows in computeSize at the width
+            // of the control
+            boolean wrapped = SwtMode.isMac()
+                    ? w.wrap.getLineCount() == 1 && w.wrap.computeSize(AREA_WIDTH, SWT.DEFAULT).y
+                            > w.wrap.computeSize(SWT.DEFAULT, SWT.DEFAULT).y
+                    : w.wrap.getLineCount() > 1;
+            return text.equals(WRAP) + " " + wrapped;
         }));
         // Spinner
         checks.add(SwtChecks.expect("Spinner selection min max digits increment page",
@@ -488,18 +495,23 @@ public class SwtInputsPage implements SwtPage {
                     return added + ", then " + combo.getItemCount() + " " + combo.indexOf("Cyan") + " "
                             + combo.getText();
                 }));
+        // Cocoa : setText leaves item 2 selected in the list of the NSComboBox (getSelectionIndex stays 2), and
+        // select returns early for the selected index : the text field keeps Teal (Combo.setText, Combo.select)
         checks.add(SwtChecks.expect("Combo DROP_DOWN setText(Teal), then select(2)",
-                "Teal, then Blue 2", () -> {
+                SwtMode.pick("Teal, then Teal 2", "Teal, then Blue 2", "Teal, then Blue 2"), () -> {
                     Combo combo = w.dropDown;
                     combo.setText("Teal");
                     String custom = combo.getText();
                     combo.select(2);
                     return custom + ", then " + combo.getText() + " " + combo.getSelectionIndex();
                 }));
-        checks.add(SwtChecks.expect("Combo setVisibleItemCount(4) / getVisibleItemCount", 4, () -> {
-            w.readOnlyCombo.setVisibleItemCount(4);
-            return w.readOnlyCombo.getVisibleItemCount();
-        }));
+        // a hint, "not supported on platforms that do not have this concept" : the READ_ONLY combo of Cocoa is an
+        // NSPopUpButton whose menu shows every item (setVisibleItemCount ignored, getVisibleItemCount = getItemCount)
+        checks.add(SwtChecks.expect("Combo setVisibleItemCount(4) / getVisibleItemCount",
+                SwtMode.pick(SIZES.length, 4, 4), () -> {
+                    w.readOnlyCombo.setVisibleItemCount(4);
+                    return w.readOnlyCombo.getVisibleItemCount();
+                }));
         checks.add(SwtChecks.expect("Combo READ_ONLY setText(Huge) is ignored", "Medium 1",
                 () -> {
                     w.readOnlyCombo.setText("Huge");
@@ -580,8 +592,12 @@ public class SwtInputsPage implements SwtPage {
         checks.add(SwtChecks.expect("computeSize : a MULTI text with more lines is taller", true,
                 () -> w.multi.computeSize(AREA_WIDTH, SWT.DEFAULT).y
                         > w.single.computeSize(AREA_WIDTH, SWT.DEFAULT).y));
+        // SWT.SIMPLE is a hint : Cocoa creates the NSComboBox of DROP_DOWN and limits the height of an editable combo
+        // to the height of its text (Combo.computeSize, Combo.setBounds) : the heightHint 96 is ignored there, the
+        // SIMPLE combo is exactly as tall as the DROP_DOWN combo
         checks.add(SwtChecks.expect("getSize : SIMPLE combo taller than DROP_DOWN", true,
-                () -> w.simple.getSize().y > w.dropDown.getSize().y));
+                () -> SwtMode.isMac() ? w.simple.getSize().y == w.dropDown.getSize().y
+                        : w.simple.getSize().y > w.dropDown.getSize().y));
         checks.add(SwtChecks.expect("computeSize : calendar larger than date field", "true true", () -> {
             Point calendar = w.calendar.computeSize(SWT.DEFAULT, SWT.DEFAULT);
             Point date = w.mediumDate.computeSize(SWT.DEFAULT, SWT.DEFAULT);

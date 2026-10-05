@@ -745,7 +745,8 @@ public class SwtAdvancedGraphicsPage implements SwtPage {
                 path -> {
                     gc.setClipping(path);
                     bands(gc, w, h);
-                    gc.setClipping((Path) null);
+                    // (Rectangle) null : the documented reset ; setClipping((Path) null) throws on macOS (SWT 3.132)
+                    gc.setClipping((Rectangle) null);
                     ghost(gc, path);
                 })));
         tiles.add(new Tile("text Path clip", (gc, w, h) -> {
@@ -762,7 +763,7 @@ public class SwtAdvancedGraphicsPage implements SwtPage {
                 for (int x = -h; x < w; x += 10) {
                     gc.drawLine(x, h, x + h, 0);
                 }
-                gc.setClipping((Path) null);
+                gc.setClipping((Rectangle) null);
                 gc.setLineWidth(1);
                 gc.setForeground(SwtKit.color(INK));
                 gc.drawPath(path);

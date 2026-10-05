@@ -818,13 +818,27 @@ public class SwtContainersPage implements SwtPage {
 
         checks.add(SwtChecks.info("getBorderWidth() : NONE, BORDER, outer, inner, Group",
                 () -> s.boxes.stream().map(b -> String.valueOf(b.getBorderWidth())).collect(Collectors.joining(" "))));
-        checks.add(SwtChecks.expect("Composite : getSize() - client area = 2 x getBorderWidth()", "true true true true",
+        // macOS : getBorderWidth() is 0 for every control (Control.getBorderWidth), and SWT.BORDER wraps the composite
+        // in an NSScrollView with an NSBezelBorder : the bezel is trim (computeTrim), outside the client area, so only
+        // the SWT.NONE box has size - client area = 2 x getBorderWidth()
+        checks.add(SwtChecks.expect("Composite : getSize() - client area = 2 x getBorderWidth()",
+                SwtMode.pick("true false false false", "true true true true", "true true true true"),
                 () -> s.boxes.subList(0, 4).stream().map(b -> {
                     Point size = b.getSize();
                     Rectangle area = b.getClientArea();
                     int border = b.getBorderWidth();
                     return String.valueOf(size.x - area.width == 2 * border && size.y - area.height == 2 * border);
                 }).collect(Collectors.joining(" "))));
+        // where the border of macOS went : the trim of computeTrim (Scrollable.computeTrim, getClientArea), verified
+        // on macOS only
+        checks.add(SwtChecks.onlyOn(SwtMode.Os.MAC, SwtChecks.expect(
+                "Composite : getSize() - client area = the trim of computeTrim(0, 0, 0, 0)", "true true true true",
+                () -> s.boxes.subList(0, 4).stream().map(b -> {
+                    Point size = b.getSize();
+                    Rectangle area = b.getClientArea();
+                    Rectangle trim = b.computeTrim(0, 0, 0, 0);
+                    return String.valueOf(size.x - area.width == trim.width && size.y - area.height == trim.height);
+                }).collect(Collectors.joining(" ")))));
         checks.add(SwtChecks.info("Group : getClientArea() in its getSize()",
                 () -> SwtChecks.rect(s.boxes.get(4).getClientArea()) + " in "
                         + SwtChecks.size(s.boxes.get(4).getSize())));
