@@ -133,13 +133,14 @@ SWT applications (see xref:swt.adoc#platforms[Platforms] of Desktop SWT):
 |Yes
 |Yes: a native build on Windows, with Visual Studio (see xref:swt.adoc#windows[Windows]). Verified locally with the
 integration tests of the extension on Windows 11, also with exact reachability metadata: the native executable renders
-the same pixels as JVM mode.
+the same pixels as JVM mode, as in the cycles of the SWT variant of the showcase.
 
 |Linux x64 and arm64
 |Yes
 |Yes: a native build on Linux or in a container, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]). Verified the
-same way, with exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb). On arm64, a native executable
-also ran on Wayland (a headless Weston), and one built in a container from macOS ran too.
+same way, with exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb, and Wayland, a headless
+Weston), together with the cycles of the SWT variant of the showcase on x64. On arm64, a native executable built in a
+container from macOS ran too.
 
 |macOS (Apple silicon)
 |With `-XstartOnFirstThread`

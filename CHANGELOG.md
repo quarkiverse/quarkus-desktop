@@ -23,8 +23,8 @@ All notable changes to this project will be documented in this file.
 - SWT shutdown: the user interface stops before the `ShutdownEvent` observers, whatever stops the
   application (its shells are disposed, the tasks already queued run, then the `Display` is
   disposed). The tasks queued for a user interface that never runs, or that stopped, are rejected.
-- Dev mode for SWT applications on Windows and Linux (not verified yet), with the native access of
-  SWT enabled in the dev mode JVM.
+- Dev mode for SWT applications on Windows and Linux, with the native access of SWT enabled in the
+  dev mode JVM.
 - SWT native executables: the JNI metadata computed from the SWT jar of the application, the run
   time initialization of SWT and of the classes whose static initializer uses it, the native
   libraries of SWT embedded in the executable or copied next to it

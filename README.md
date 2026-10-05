@@ -249,8 +249,8 @@ stops, the user interface stops first: the shells are disposed before the `Shutd
 [Desktop SWT](https://docs.quarkiverse.io/quarkus-desktop/dev/swt.html)
 ([docs/modules/ROOT/pages/swt.adoc](docs/modules/ROOT/pages/swt.adoc)) covers the installation (the SWT jar of each
 platform), the user interface thread, the exit and quit requests, the build checks, macOS (`-XstartOnFirstThread`),
-native executables (the native libraries of SWT embedded or next to the executable), SWT versions, dev mode (not
-verified on Windows and Linux yet) and tests.
+native executables (the native libraries of SWT embedded or next to the executable), SWT versions, dev mode and
+tests.
 
 ## Platforms
 
@@ -268,7 +268,7 @@ SWT:
 | Platform | JVM mode | Native executable |
 |---|---|---|
 | Windows x64 | yes | yes (native build on Windows with Visual Studio; no manifest nor Visual C++ runtime needed; verified on Windows 11) |
-| Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb, and Wayland on arm64) |
+| Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb, and Wayland) |
 | macOS on Apple silicon | yes, with `-XstartOnFirstThread` | yes (the event loop runs on the first thread of the process; verified on macOS 27.0) |
 | Windows arm64 | not verified | no (no GraalVM native image builder for Windows on arm64) |
 
