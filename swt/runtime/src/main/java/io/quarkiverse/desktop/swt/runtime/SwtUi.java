@@ -179,6 +179,15 @@ public class SwtUi implements SwtLifecycle {
     }
 
     /**
+     * Whether the user interface is enabled and did not start yet.
+     */
+    boolean isReady() {
+        synchronized (lock) {
+            return state == State.READY;
+        }
+    }
+
+    /**
      * The user interface does not run (tests) : {@link #run()} returns at once, and the tasks are rejected.
      *
      * @param reason the message of the {@code RejectedExecutionException} of the tasks

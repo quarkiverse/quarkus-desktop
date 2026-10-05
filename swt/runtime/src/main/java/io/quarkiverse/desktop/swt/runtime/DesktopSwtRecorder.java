@@ -82,6 +82,10 @@ public class DesktopSwtRecorder {
             return;
         }
         SwtUi ui = Arc.container().instance(SwtUi.class).get();
+        if (!ui.isReady()) {
+            // disabled (the default in tests), or already stopping
+            return;
+        }
         if (System.getProperty("os.name", "").toLowerCase().contains("mac")) {
             LOGGER.warn("The user interface of the tests does not run on macOS, where SWT needs the first thread of the"
                     + " process : @QuarkusTest tests run on another thread (use a @QuarkusMainTest, with"

@@ -1204,9 +1204,9 @@ mode nor in native executables (the extension registers the callbacks of Edge We
 * macOS is not verified on a Mac yet, and dev mode does not run the user interface there (see <<macos>>).
 * Classes that the application or its libraries load by name need their own native image metadata, for instance with
 `@RegisterForReflection`. Please report the features of SWT that fail in a native executable. The native image tracing
-agent gives the missing metadata:
-`java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/<group>/<artifact> -jar target/quarkus-app/quarkus-run.jar`,
-and a native executable built with exact metadata and run with `-XX:MissingRegistrationReportingMode=Warn` lists them
+agent of GraalVM gives the missing metadata:
+`$GRAALVM_HOME/bin/java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/<group>/<artifact> -jar target/quarkus-app/quarkus-run.jar`
+(on macOS, with `-XstartOnFirstThread` after `java`), and a native executable built with exact metadata and run with `-XX:MissingRegistrationReportingMode=Warn` lists them
 (see <<exact-reachability-metadata>>).
 
 [[verification]]

@@ -867,6 +867,11 @@ class DesktopAwtProcessor {
                 // event loop on the first thread itself
                 LOGGER.debug("quarkus.desktop.awt.macos.park-main-thread=false with Quarkus FX : the first thread must call"
                         + " QuarkusFxApplication.run");
+            } else if (capabilities.isPresent(DesktopCapabilities.SWT)) {
+                // the main of another extension (Picocli...) that runs SwtLifecycle.run(), and with it the Cocoa event
+                // loop, on the first thread
+                LOGGER.debug("quarkus.desktop.awt.macos.park-main-thread=false with Desktop SWT : the first thread must"
+                        + " run SwtLifecycle.run()");
             } else {
                 LOGGER.warn("quarkus.desktop.awt.macos.park-main-thread=false : no thread runs the Cocoa event loop, an AWT"
                         + " or Swing user interface hangs at its first window");
