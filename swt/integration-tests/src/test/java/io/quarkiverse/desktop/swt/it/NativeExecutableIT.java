@@ -65,19 +65,50 @@ public class NativeExecutableIT {
     }
 
     /**
-     * The JDK of the native build, in the order of the extension (DesktopSwtProcessor.builderJdkHome) :
-     * quarkus.native.graalvm-home (GRAALVM_HOME by default), then quarkus.native.java-home, then java.home. Failsafe
-     * gives the test the -D properties of the Maven command line.
+     * The JDK of the native build, chosen as the extension chooses it (DesktopSwtProcessor.builderJdkHome) and as Quarkus
+     * chooses its native-image : quarkus.native.graalvm-home (QUARKUS_NATIVE_GRAALVM_HOME, GRAALVM_HOME by default),
+     * then quarkus.native.java-home (QUARKUS_NATIVE_JAVA_HOME, java.home by default), each when it has
+     * bin/native-image, else the native-image of the PATH (links resolved, up to the directory of the release file of
+     * the JDK), else java.home. Failsafe gives the test the -D properties of the Maven command line, not the
+     * application.properties : set the homes there with -D or the environment.
      */
-    private static Path builderJdkHome() {
-        String[] homes = { System.getProperty("quarkus.native.graalvm-home"), System.getenv("GRAALVM_HOME"),
-                System.getProperty("quarkus.native.java-home") };
+    private static Path builderJdkHome() throws IOException {
+        String javaHome = System.getProperty("java.home");
+        String[] homes = { first(System.getProperty("quarkus.native.graalvm-home"),
+                System.getenv("QUARKUS_NATIVE_GRAALVM_HOME"), System.getenv("GRAALVM_HOME")),
+                first(System.getProperty("quarkus.native.java-home"), System.getenv("QUARKUS_NATIVE_JAVA_HOME"),
+                        javaHome) };
         for (String home : homes) {
-            if (home != null && !home.isBlank() && Files.isDirectory(Path.of(home))) {
+            if (home != null && Files.isRegularFile(Path.of(home, "bin", "native-image"))) {
                 return Path.of(home);
             }
         }
-        return Path.of(System.getProperty("java.home"));
+        String path = System.getenv("PATH");
+        for (String directory : path == null ? new String[0] : path.split(java.io.File.pathSeparator)) {
+            Path candidate = directory.isBlank() ? null : Path.of(directory, "native-image");
+            if (candidate != null && Files.isRegularFile(candidate)) {
+                // GraalVM links <home>/bin/native-image to <home>/lib/svm/bin/native-image
+                for (Path home = candidate.toRealPath().getParent(); home != null; home = home.getParent()) {
+                    if (Files.isRegularFile(home.resolve("release"))) {
+                        return home;
+                    }
+                }
+            }
+        }
+        return Path.of(javaHome);
+    }
+
+    /**
+     * The first value that is set, as SmallRye Config resolves a property (system property, environment variable,
+     * default).
+     */
+    private static String first(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return null;
     }
 
     /**

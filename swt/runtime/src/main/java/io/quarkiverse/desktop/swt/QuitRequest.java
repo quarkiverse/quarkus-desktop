@@ -5,7 +5,9 @@ import org.eclipse.swt.widgets.Event;
 /**
  * Fired on the user interface thread when the {@code Display} is asked to close (its {@code SWT.Close} event) : Quit in
  * the application menu of macOS, Cmd-Q, Quit in the Dock, a logout or a shutdown, and {@code Display.close()} on every
- * platform. The application stops ({@code Quarkus.asyncExit()}) unless an observer cancels the request.
+ * platform. The application stops unless an observer cancels the request : on Windows and Linux, once SWT disposes the
+ * {@code Display}, at once for {@code Display.close()}, and when the session ends for a logout or a shutdown (not when
+ * it is only queried : another application may still refuse it) ; on macOS, at once ({@code Quarkus.asyncExit()}).
  * <p>
  * On macOS, the extension always answers "not now" to the system, and stops the application itself : Quarkus disposes
  * the {@code Display} and runs its shutdown, AppKit would end the process at once. A logout, a restart or a shutdown of

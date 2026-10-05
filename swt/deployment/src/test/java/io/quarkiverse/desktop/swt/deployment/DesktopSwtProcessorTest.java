@@ -12,6 +12,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystemException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -21,6 +22,7 @@ import java.util.jar.Attributes;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -253,17 +255,35 @@ class DesktopSwtProcessorTest {
         assertEquals(javaHome, DesktopSwtProcessor.builderJdkHome(Optional.of(" "), javaHome.toFile(), null, false,
                 fallback));
 
-        // the native-image of the PATH, through a link
-        Path links = Files.createDirectories(directory.resolve("links"));
-        Files.createSymbolicLink(links.resolve("native-image"), graalvm.resolve("bin").resolve("native-image"));
-        String path = directory.resolve("empty") + File.pathSeparator + links;
+        // the native-image of the PATH
+        String plainPath = directory.resolve("empty") + File.pathSeparator + graalvm.resolve("bin");
         assertEquals(graalvm.toRealPath(), DesktopSwtProcessor.builderJdkHome(Optional.empty(),
-                jdkWithout.getParent().toFile(), path, false, fallback));
+                jdkWithout.getParent().toFile(), plainPath, false, fallback));
         // native-image.cmd on Windows
-        assertEquals(fallback, DesktopSwtProcessor.builderJdkHome(Optional.of(graalvm.toString()), null, path, true,
-                fallback));
-
+        assertEquals(fallback, DesktopSwtProcessor.builderJdkHome(Optional.of(graalvm.toString()), null, plainPath,
+                true, fallback));
         assertEquals(fallback, DesktopSwtProcessor.builderJdkHome(Optional.empty(), null, null, false, fallback));
+
+        // the native-image of the PATH, through links, as GraalVM installs it on Linux and macOS :
+        // <home>/bin/native-image -> ../lib/svm/bin/native-image, the release file of the JDK in <home>
+        Path svm = directory.resolve("svm-graalvm");
+        Files.createFile(Files.createDirectories(svm.resolve("lib").resolve("svm").resolve("bin")).resolve("native-image"));
+        Files.writeString(svm.resolve("release"), "OS_ARCH=\"aarch64\"\n");
+        Files.createDirectories(svm.resolve("bin"));
+        Path links = Files.createDirectories(directory.resolve("links"));
+        try {
+            Files.createSymbolicLink(svm.resolve("bin").resolve("native-image"),
+                    Path.of("..", "lib", "svm", "bin", "native-image"));
+            Files.createSymbolicLink(links.resolve("native-image"), svm.resolve("bin").resolve("native-image"));
+        } catch (FileSystemException | UnsupportedOperationException e) {
+            // Windows needs the Developer Mode, or an elevated process, to create links
+            Assumptions.abort("Symbolic links cannot be created here : " + e);
+        }
+        for (Path bin : List.of(svm.resolve("bin"), links)) {
+            String path = directory.resolve("empty") + File.pathSeparator + bin;
+            assertEquals(svm.toRealPath(), DesktopSwtProcessor.builderJdkHome(Optional.empty(),
+                    jdkWithout.getParent().toFile(), path, false, fallback), bin.toString());
+        }
     }
 
     private static Path nativeImageHome(Path home) throws IOException {

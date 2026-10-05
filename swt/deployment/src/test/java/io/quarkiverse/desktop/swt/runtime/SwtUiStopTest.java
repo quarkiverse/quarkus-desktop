@@ -8,6 +8,7 @@ import java.lang.annotation.Annotation;
 import java.util.Optional;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
 
@@ -45,6 +46,7 @@ class SwtUiStopTest {
         });
         ui.configure(LaunchMode.TEST, false, false, Optional.empty(), Optional.empty());
         long[] stops = { -1, -1 };
+        String[] between = { "not run" };
         Thread shutdown = new Thread(() -> {
             try {
                 if (await(blocked)) {
@@ -52,6 +54,17 @@ class SwtUiStopTest {
                         long start = System.nanoTime();
                         ui.stop();
                         stops[i] = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - start);
+                        if (i == 0) {
+                            // the ShutdownEvent observers, after a stop that gave up : rejected at once, not queued for
+                            // a user interface thread that may never run them
+                            try {
+                                SwtUi.post(() -> {
+                                });
+                                between[0] = "queued";
+                            } catch (RejectedExecutionException e) {
+                                between[0] = "rejected";
+                            }
+                        }
                     }
                 }
             } finally {
@@ -70,6 +83,7 @@ class SwtUiStopTest {
         assertEquals(0, blocked.getCount(), "SwtStartupEvent not fired");
         assertTrue(stops[0] >= STOP_TIMEOUT_MILLIS, "the first stop waited " + stops[0] + " ms");
         assertTrue(stops[1] >= 0 && stops[1] < STOP_TIMEOUT_MILLIS, "the second stop waited " + stops[1] + " ms");
+        assertEquals("rejected", between[0], "a call between the stops");
         // the user interface thread disposed the Display once released
         assertNull(Display.getCurrent());
     }

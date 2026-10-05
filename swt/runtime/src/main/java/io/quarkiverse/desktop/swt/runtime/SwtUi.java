@@ -1,6 +1,7 @@
 package io.quarkiverse.desktop.swt.runtime;
 
 import java.io.IOException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.net.JarURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -419,7 +420,11 @@ public class SwtUi implements SwtLifecycle {
 
     private static String hint(Throwable e) {
         return hint(e, System.getProperty("os.name", ""), ImageMode.current() == ImageMode.NATIVE_RUN,
-                System.getProperty(MAIN_THREAD_PARKED));
+                System.getProperty(MAIN_THREAD_PARKED), System.getProperty(DesktopSwtRecorder.SWT_LIBRARY_PATH));
+    }
+
+    static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
+        return hint(e, osName, nativeExecutable, mainThreadParked, null);
     }
 
     /**
@@ -430,15 +435,27 @@ public class SwtUi implements SwtLifecycle {
      *        apply
      * @param mainThreadParked the value of {@link #MAIN_THREAD_PARKED} : {@code true} when the Desktop AWT extension
      *        keeps the first thread of the native executable in the Cocoa event loop, {@code null} otherwise
+     * @param libraryPath the value of {@code swt.library.path} : where SWT extracts its native libraries instead of
+     *        {@code ~/.swt/lib}, {@code null} when it is not set
      */
-    static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
+    static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked,
+            String libraryPath) {
         if (e instanceof UnsatisfiedLinkError) {
             String osArch = System.getProperty("os.arch", "");
             String message = e.getMessage() == null ? "" : e.getMessage();
             String jar = "the SWT jar of the application must be the one of this operating system and architecture, "
                     + osName + " " + osArch + ", " + swtJar(osName, osArch);
-            String cache = "delete ~/.swt/lib/" + swtOs(osName) + "/" + swtArch(osArch) + ", where an executable of"
-                    + " another architecture may have left its libraries (SWT never replaces them)";
+            String cache = "delete " + (libraryPath != null && !libraryPath.isBlank()
+                    ? "the SWT libraries of " + libraryPath + " (swt.library.path)"
+                    : "~/.swt/lib/" + swtOs(osName) + "/" + swtArch(osArch))
+                    + ", where an executable of another architecture may have left its libraries (SWT never replaces"
+                    + " them)";
+            String missing = missingSystemLibrary(message);
+            if (missing != null && osName.toLowerCase().contains("linux")) {
+                // a library that the native libraries of SWT link against : GTK 3 is not installed, mostly
+                return " (SWT could not load its native libraries : " + missing + " is missing, on Linux SWT needs GTK 3"
+                        + " and its libraries, libgtk-3-0t64 on Ubuntu 24.04 or gtk3 on Fedora, and a display)";
+            }
             if (message.startsWith(SWT_JAR_ERROR) && message.contains(" has no ")) {
                 // checkSwtJar : the manifest of the SWT jar is gone, not the jar
                 return " (SWT could not load its native libraries : the manifest of the SWT jar is missing, use the"
@@ -480,6 +497,25 @@ public class SwtUi implements SwtLifecycle {
             return " (on Linux, SWT needs GTK 3 and a display : X11, XWayland or Wayland, DISPLAY or WAYLAND_DISPLAY)";
         }
         return "";
+    }
+
+    /**
+     * The system library that a native library of SWT could not load, from the message of the
+     * {@code UnsatisfiedLinkError} of SWT : {@code libgtk-3.so.0} in
+     * {@code .../libswt-pi3-gtk-4971r15.so: libgtk-3.so.0: cannot open shared object file: No such file or directory}.
+     *
+     * @return the name of the library, {@code null} when the message names none, or names a library of SWT
+     */
+    static String missingSystemLibrary(String message) {
+        int end = message.indexOf(": cannot open shared object file");
+        if (end < 0) {
+            return null;
+        }
+        int start = message.lastIndexOf(": ", end - 1);
+        String library = message.substring(start < 0 ? 0 : start + 2, end).trim();
+        int slash = library.lastIndexOf('/');
+        library = library.substring(slash + 1);
+        return library.isEmpty() || library.startsWith("libswt") ? null : library;
     }
 
     /**
@@ -656,8 +692,17 @@ public class SwtUi implements SwtLifecycle {
             if (!created.isDisposed()) {
                 uncaught(created, e);
             }
-        } catch (RuntimeException | Error e) {
-            uncaught(created, e);
+        } catch (Throwable e) {
+            if (created.isDisposed()) {
+                // SWT itself, once the Display is disposed during readAndDispatch() : on Windows, the WM_ENDSESSION of
+                // the end of the session disposes it inside PeekMessage, and Display.filterMessage then throws a
+                // NullPointerException (plain SWT does too). The event loop ends anyway.
+                UI_THREAD_LOGGER.debug("Exception of SWT once the Display is disposed", e);
+            } else {
+                // the exceptions and errors, and the checked exceptions thrown without being declared (Kotlin, Groovy,
+                // Lombok @SneakyThrows...), which SWT lets escape from the listeners and the timers
+                uncaught(created, e);
+            }
         }
     }
 
@@ -668,19 +713,25 @@ public class SwtUi implements SwtLifecycle {
      * interface thread is reported the same way. SWT runs some code without them : on macOS, a timer that fired while
      * the event loop slept runs in {@code readAndDispatch()} ({@code Display.runTimers()}).
      * <p>
+     * A checked exception thrown without being declared (Kotlin, Groovy, Lombok {@code @SneakyThrows}...), which SWT
+     * lets escape from the listeners and the timers, goes to the runtime exception handler wrapped in an
+     * {@code UndeclaredThrowableException}.
+     * <p>
      * A handler that throws does not end the event loop : the exception is logged. A handler rethrowing the exceptions
      * (as the default ones of SWT) is called twice for those of the listeners and of the tasks : by SWT, then here.
      */
     static void uncaught(Display created, Throwable e) {
+        Throwable reported = e instanceof RuntimeException || e instanceof Error ? e
+                : new UndeclaredThrowableException(e, "A checked exception escaped the event loop : " + e);
         try {
-            if (e instanceof Error error) {
+            if (reported instanceof Error error) {
                 created.getErrorHandler().accept(error);
             } else {
-                created.getRuntimeExceptionHandler().accept((RuntimeException) e);
+                created.getRuntimeExceptionHandler().accept((RuntimeException) reported);
             }
-        } catch (RuntimeException | Error failure) {
-            UI_THREAD_LOGGER.error("Uncaught exception in the event loop", e);
-            if (failure != e) {
+        } catch (Throwable failure) {
+            UI_THREAD_LOGGER.error("Uncaught exception in the event loop", reported);
+            if (failure != reported) {
                 UI_THREAD_LOGGER.error("The handler of the uncaught exceptions of the Display failed", failure);
             }
         }
@@ -700,7 +751,7 @@ public class SwtUi implements SwtLifecycle {
                 drain(created);
                 created.dispose();
             }
-        } catch (RuntimeException | Error e) {
+        } catch (Throwable e) {
             UI_THREAD_LOGGER.error("Unable to dispose the Display", e);
         } finally {
             List<Runnable> rejected;
@@ -722,7 +773,7 @@ public class SwtUi implements SwtLifecycle {
                 if (!shell.isDisposed()) {
                     shell.dispose();
                 }
-            } catch (RuntimeException | Error e) {
+            } catch (Throwable e) {
                 UI_THREAD_LOGGER.error("Unable to dispose a shell", e);
             }
         }
@@ -734,7 +785,7 @@ public class SwtUi implements SwtLifecycle {
                 if (!created.readAndDispatch()) {
                     return;
                 }
-            } catch (RuntimeException | Error e) {
+            } catch (Throwable e) {
                 uncaught(created, e);
             }
         }
@@ -761,7 +812,9 @@ public class SwtUi implements SwtLifecycle {
      * AppKit exit the process ({@code NSTerminateNow}) without the shutdown of Quarkus, which disposes the
      * {@code Display} once the event loop ended. A logout, a restart or a shutdown of macOS is then cancelled (the
      * application "canceled logout") while the application stops : the user repeats it. On Windows and Linux, the end
-     * of the session goes on unless an observer cancels it : SWT disposes the {@code Display} at the end of the session.
+     * of the session goes on unless an observer cancels it, and SWT disposes the {@code Display} once the session ends
+     * (another application may still refuse it after this request) : the event loop then stops the application, as for
+     * {@code Display.close()}, which disposes it at once.
      */
     private void quitRequested(org.eclipse.swt.widgets.Event event) {
         boolean mac = "cocoa".equals(SWT.getPlatform());
@@ -783,9 +836,15 @@ public class SwtUi implements SwtLifecycle {
         }
         if (request.isCancelled()) {
             LOGGER.debug("The quit request is cancelled");
-        } else {
+        } else if (mac) {
             LOGGER.debug("Quit requested : the application stops");
             Quarkus.asyncExit();
+        } else {
+            // Windows and Linux : SWT disposes the Display, at once for Display.close(), and at the end of the session
+            // only once it ends (WM_ENDSESSION, the EndSession of the session manager), not when it is queried
+            // (WM_QUERYENDSESSION, QueryEndSession) : another application may still refuse it. The event loop stops
+            // the application when the Display is disposed.
+            LOGGER.debug("Quit requested : the application stops when SWT disposes the Display");
         }
     }
 
@@ -840,25 +899,49 @@ public class SwtUi implements SwtLifecycle {
         Thread thread = uiThread;
         if (thread != null && thread != Thread.currentThread() && !stopWaited) {
             stopWaited = true;
+            boolean gaveUp = false;
             if (isExiting(thread)) {
                 // it waits for the shutdown, the event loop does not run : the Display is not disposed
                 LOGGER.debugf("The user interface thread %s called System.exit() : the application stops without"
                         + " disposing the Display", thread.getName());
+                gaveUp = true;
             } else {
                 try {
                     if (!stopped.await(stopTimeoutMillis, TimeUnit.MILLISECONDS)) {
                         LOGGER.warnf("The user interface thread %s did not stop within %d ms : the application stops"
                                 + " without disposing the Display", thread.getName(), stopTimeoutMillis);
+                        gaveUp = true;
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
+                    gaveUp = true;
                 }
+            }
+            if (gaveUp) {
+                giveUp();
             }
         }
         if (current == this && stopped.getCount() == 0) {
             // the previous application of dev mode is not kept until the next one starts
             current = null;
         }
+    }
+
+    /**
+     * The stop does not wait for the user interface thread any longer (it called {@code System.exit()}, or the stop timed
+     * out) : the calls that come next (the {@code ShutdownEvent} observers) are rejected at once, as once the user
+     * interface stopped, instead of being queued for a thread that may never run them. The user interface thread may
+     * still return to the event loop : it rejects the tasks queued meanwhile, and disposes the {@code Display}.
+     */
+    private void giveUp() {
+        List<Runnable> rejected = List.of();
+        synchronized (lock) {
+            if (state == State.STARTING || state == State.RUNNING) {
+                state = State.STOPPED;
+                rejected = drainPending();
+            }
+        }
+        reject(rejected, "The user interface thread did not stop");
     }
 
     /**

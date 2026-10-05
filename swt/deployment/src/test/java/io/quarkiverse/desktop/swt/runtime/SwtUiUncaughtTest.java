@@ -2,7 +2,11 @@ package io.quarkiverse.desktop.swt.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 
+import java.io.IOException;
+import java.lang.reflect.UndeclaredThrowableException;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
@@ -61,6 +65,31 @@ class SwtUiUncaughtTest {
         display.timerExec(-1, wake);
         assertEquals(List.of(failure), exceptions);
         assertEquals(List.of(), errors);
+    }
+
+    @Test
+    void checkedExceptionThrownWithoutBeingDeclared() {
+        // Kotlin, Groovy, Lombok @SneakyThrows : SWT lets it escape from a timer (and from a listener), and the event
+        // loop goes on with it wrapped
+        IOException failure = new IOException("timer");
+        display.timerExec(10, () -> SwtUiUncaughtTest.<RuntimeException> sneakyThrow(failure));
+        Runnable wake = () -> {
+        };
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (exceptions.isEmpty() && System.nanoTime() < deadline) {
+            display.timerExec(500, wake);
+            assertDoesNotThrow(() -> SwtUi.dispatch(display));
+        }
+        display.timerExec(-1, wake);
+        assertEquals(1, exceptions.size(), exceptions.toString());
+        assertInstanceOf(UndeclaredThrowableException.class, exceptions.get(0));
+        assertSame(failure, exceptions.get(0).getCause());
+        assertEquals(List.of(), errors);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable e) throws T {
+        throw (T) e;
     }
 
     @Test

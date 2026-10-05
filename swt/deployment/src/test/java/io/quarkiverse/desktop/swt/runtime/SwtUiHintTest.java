@@ -90,6 +90,32 @@ class SwtUiHintTest {
                     nativeExecutable, null);
             assertTrue(other.contains("the SWT jar of the application must be the one of"), other);
             assertFalse(other.contains("~/.swt/lib"), other);
+            // a system library missing on Linux (GTK 3 not installed) : GTK 3, not the cache nor the jar
+            String gtk = SwtUi.hint(new UnsatisfiedLinkError("Could not load SWT library. Reasons: \n\tno swt-pi3-gtk-"
+                    + "4971r15 in java.library.path\n\t/home/u/.swt/lib/linux/x86_64/libswt-pi3-gtk-4971r15.so:"
+                    + " libgtk-3.so.0: cannot open shared object file: No such file or directory"), "Linux",
+                    nativeExecutable, null);
+            assertTrue(gtk.contains("libgtk-3.so.0 is missing, on Linux SWT needs GTK 3"), gtk);
+            assertFalse(gtk.contains("~/.swt/lib"), gtk);
+            assertFalse(gtk.contains("org.eclipse.platform:"), gtk);
+            // swt.library.path (the libraries next to a native executable...) : SWT extracts there, not in ~/.swt/lib
+            String path = SwtUi.hint(new UnsatisfiedLinkError("Can't load library: /opt/app/libswt-gtk-4971r15.so"),
+                    "Linux", nativeExecutable, null, "/opt/app");
+            assertTrue(path.contains("delete the SWT libraries of /opt/app (swt.library.path), where"), path);
+            assertFalse(path.contains("~/.swt/lib"), path);
         }
+    }
+
+    @Test
+    void missingSystemLibrary() {
+        assertEquals("libgtk-3.so.0", SwtUi.missingSystemLibrary("/home/u/.swt/lib/linux/x86_64/libswt-pi3-gtk-4971r15"
+                + ".so: libgtk-3.so.0: cannot open shared object file: No such file or directory"));
+        assertEquals("libXtst.so.6", SwtUi.missingSystemLibrary("Could not load SWT library. Reasons: \n\t/tmp/libswt-"
+                + "gtk-4971r15.so: libXtst.so.6: cannot open shared object file: No such file or directory"));
+        // the library of SWT itself is missing : not a system library
+        assertEquals(null, SwtUi.missingSystemLibrary("Could not load SWT library. Reasons: \n\t/tmp/x/libswt-gtk-"
+                + "4971r15.so: cannot open shared object file: No such file or directory"));
+        assertEquals(null, SwtUi.missingSystemLibrary("/tmp/libswt-gtk-4971r15.so: wrong ELF class: ELFCLASS32"));
+        assertEquals(null, SwtUi.missingSystemLibrary(""));
     }
 }

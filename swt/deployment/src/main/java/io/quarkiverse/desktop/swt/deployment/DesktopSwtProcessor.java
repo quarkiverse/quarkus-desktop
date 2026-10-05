@@ -718,7 +718,15 @@ class DesktopSwtProcessor {
     }
 
     /**
-     * The JDK home of an executable of the {@code PATH} : the parent of its {@code bin} directory, links resolved.
+     * How many directories above the {@code bin} directory of the real {@code native-image} the JDK home may be :
+     * {@code <home>/lib/svm/bin/native-image}.
+     */
+    private static final int JDK_HOME_DEPTH = 3;
+
+    /**
+     * The JDK home of an executable of the {@code PATH}, links resolved : the closest directory above it with the
+     * {@code release} file of a JDK (GraalVM links {@code <home>/bin/native-image} to {@code <home>/lib/svm/bin/native-image}
+     * on Linux and macOS), else the parent of its {@code bin} directory.
      */
     private static Optional<Path> onPath(String executable, String path) {
         if (path == null) {
@@ -732,6 +740,12 @@ class DesktopSwtProcessor {
                 Path candidate = Path.of(directory, executable);
                 if (Files.isRegularFile(candidate)) {
                     Path bin = candidate.toRealPath().getParent();
+                    Path home = bin;
+                    for (int i = 0; home != null && i <= JDK_HOME_DEPTH; i++, home = home.getParent()) {
+                        if (Files.isRegularFile(home.resolve("release"))) {
+                            return Optional.of(home);
+                        }
+                    }
                     if (bin != null && bin.getParent() != null) {
                         return Optional.of(bin.getParent());
                     }
