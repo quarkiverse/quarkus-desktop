@@ -135,23 +135,24 @@ SWT applications (see xref:swt.adoc#platforms[Platforms] of Desktop SWT):
 integration tests of the extension on Windows 11, also with exact reachability metadata: the native executable renders
 the same pixels as JVM mode.
 
-|Linux x64
+|Linux x64 and arm64
 |Yes
-|Yes: a native build on Linux, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]). Verified the same way, with
-exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb; Wayland is not verified).
+|Yes: a native build on Linux or in a container, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]). Verified the
+same way, with exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb). On arm64, a native executable
+also ran on Wayland (a headless Weston), and one built in a container from macOS ran too.
 
-|macOS
+|macOS (Apple silicon)
 |With `-XstartOnFirstThread`
-|The event loop runs on the first thread of the process (see xref:swt.adoc#macos[macOS]). Not verified on a Mac yet,
-neither in JVM mode nor as a native executable.
+|Yes: the event loop runs on the first thread of the process (see xref:swt.adoc#macos[macOS]). Verified the same way,
+with exact reachability metadata, on macOS 27.0, together with the cycles of the SWT variant of the showcase.
 
-|Windows arm64, Linux arm64
+|Windows arm64
 |Not verified
-|Not verified on Linux arm64; no GraalVM native image builder for Windows on arm64.
+|No: GraalVM has no native image builder for Windows on arm64.
 |===
 
-The SWT native executables are verified with GraalVM for JDK 25, with SWT 3.132.0 (and 3.135.0 on Linux), see
-xref:swt.adoc#verification[Verification] of Desktop SWT.
+The SWT native executables are verified with GraalVM for JDK 25, with SWT 3.132.0 (and 3.135.0 on Linux x64 and macOS),
+see xref:swt.adoc#verification[Verification] of Desktop SWT.
 
 == Guides
 
@@ -178,9 +179,10 @@ xref:awt.adoc#limitations[Limitations]). It also has a Docker image for the Linu
 macOS on a Mac.
 
 The showcase also has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt`
-compares its JVM mode and native runs. The integration tests of the Desktop SWT extension compare the rendering of JVM
-mode and native executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode
-tests, and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
+compares its JVM mode and native runs (they match on macOS 27.0, and matched on Windows 11 before the pages got their
+macOS values). The integration tests of the Desktop SWT extension compare the rendering of JVM mode and native
+executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode tests, and so
+this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
 
 [[configuration]]
 == Configuration

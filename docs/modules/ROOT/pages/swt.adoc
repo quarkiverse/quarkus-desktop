@@ -183,9 +183,9 @@ destroyed right after the event.
 
 No `@QuarkusMain` is needed: without one, the extension gives the application a main that runs the user interface on the
 main thread until the application stops. `./mvnw quarkus:dev` runs the application in dev mode (on Windows and Linux,
-not verified yet, see <<dev-mode>>), `java -jar target/quarkus-app/quarkus-run.jar` runs it in production (on macOS:
-`java -XstartOnFirstThread -jar target/quarkus-app/quarkus-run.jar`), and `./mvnw package -Dnative` builds a native
-executable (see <<native-executables>>).
+not verified there yet, see <<dev-mode>>), `java -jar target/quarkus-app/quarkus-run.jar` runs it in production (on
+macOS: `java -XstartOnFirstThread -jar target/quarkus-app/quarkus-run.jar`), and `./mvnw package -Dnative` builds a
+native executable (see <<native-executables>>).
 
 [[startup]]
 === Starting the user interface
@@ -297,7 +297,8 @@ user interface would never start. It is a heuristic: it looks for a reference to
 
 With another extension that provides the main of the application (Picocli, Quarkus FX), its main replaces the one of
 this extension: the application calls `SwtLifecycle.run()` itself, on the main thread (for instance from the Picocli
-command). This is not verified.
+command). Verified with Picocli on macOS, in JVM mode and as a native executable; not verified with Quarkus FX, nor on
+Windows and Linux.
 
 [[exit]]
 == Closing shells and exit
@@ -414,20 +415,25 @@ confirmation in a `SWT.Close` listener of the shell.
 unsaved changes never loses them. `request.event()` is the `SWT.Close` event of the `Display`.
 * *Windows and Linux*: when no observer cancels the request, SWT disposes the `Display` and the application stops.
 When an observer cancels it, the end of the session does not go on either: cancel only when the user asked to.
-* *macOS* (not verified on a Mac yet): the extension always answers "cancel" to AppKit (`doit = false`), and stops the
-application itself when the request is not cancelled: SWT would otherwise dispose the `Display` and let AppKit exit the
-process without the shutdown of Quarkus (the `ShutdownEvent` observers and `@PreDestroy` methods would not run). A
-logout, a restart or a shutdown of the Mac is then cancelled by the system (it reports that the application canceled
-logout) while the application stops, as with the Desktop AWT extension in dev mode (see
-xref:cdi.adoc#desktop-events[Application menu, Finder and Dock events]): the user repeats it.
+* *macOS*: the extension always answers "cancel" to AppKit (`doit = false`), and stops the application itself when the
+request is not cancelled: SWT would otherwise dispose the `Display` and let AppKit exit the process without the shutdown
+of Quarkus (the `ShutdownEvent` observers and `@PreDestroy` methods would not run). A logout, a restart or a shutdown of
+the Mac is then cancelled by the system (it reports that the application canceled logout) while the application stops,
+as with the Desktop AWT extension in dev mode (see xref:cdi.adoc#desktop-events[Application menu, Finder and Dock
+events]): the user repeats it.
 * *macOS, `SIGTERM`*: a `SIGTERM` also makes AppKit ask the application to terminate, so the `QuitRequest` observers
-may be called while the application stops anyway (in JVM mode it happened in 3 of 3 runs, in native executables in
-none of 2: a race). Cancelling the request has no effect then. An observer must not block the user interface thread (a
+may be called while the application stops anyway (in JVM mode it happened in 3 of 5 runs, in native executables in
+none of 3: likely a race). Cancelling the request has no effect then. An observer must not block the user interface thread (a
 modal dialog), or the exit waits for the stop time-out, 10 seconds, after which the application stops without
 disposing the `Display` (see <<exit>>).
 
-Only a cancelled `Display.close()` is verified (see <<verification>>): a quit request that is not cancelled and the end
-of the session are not.
+A cancelled `Display.close()` is verified on Windows, Linux and macOS (see <<verification>>). On macOS, a
+`Display.close()` that is not cancelled and a quit Apple Event sent to an application bundle
+(`tell application id "..." to quit`) are verified too, in JVM mode and as native executables: the observers run once,
+the application stops through Quarkus with exit code 0, and the sender of the Apple Event gets "User canceled" (-128).
+So is an observer that throws: the error is logged, the request is cancelled and the application keeps running. Not
+verified: Cmd-Q and Quit in the application menu and the Dock (they need a user at the Mac), the end of the session,
+and a quit request that is not cancelled on Windows and Linux.
 
 [[ui-thread]]
 == The user interface thread
@@ -910,12 +916,14 @@ there, before the user interface thread runs
 <<container-builds>> for a build in a container).
 
 |Linux arm64
-|Not verified (the SWT jar exists)
-|Not verified.
+|Yes, verified (Ubuntu 24.04 in Docker on an Apple silicon Mac, GTK 3, X11 under Xvfb)
+|Yes, verified with exact reachability metadata, in the same environment. A native executable also ran on Wayland (a
+headless Weston), and one built in a container from macOS ran too (see <<container-builds>>).
 
 |macOS (Apple silicon)
-|With `-XstartOnFirstThread`, not verified on a Mac yet
-|Not verified on a Mac yet: the event loop runs on the first thread of the process (see <<macos>>).
+|Yes, with `-XstartOnFirstThread`, verified (macOS 27.0)
+|Yes, verified (macOS 27.0), also with exact reachability metadata: the event loop runs on the first thread of the
+process (see <<macos>>).
 
 |macOS x86_64
 |Not verified (the SWT jar exists)
@@ -937,8 +945,7 @@ it, the `Display` cannot be created: the application logs an error with a hint a
 * *Native executables*: `main` runs on the first thread of the process, and so does the event loop. Do not build them
 with `-H:+RunMainInNewThread`, which moves `main` to another thread (the build logs a warning). When the application
 also has the Desktop AWT extension and an SWT user interface (a `SwtStartupEvent` observer), the first thread is not
-parked for AWT (`quarkus.desktop.awt.macos.park-main-thread` is ignored): SWT owns it (not verified, see
-<<awt-and-swt>>).
+parked for AWT (`quarkus.desktop.awt.macos.park-main-thread` is ignored): SWT owns it (see <<awt-and-swt>>).
 * A `@QuarkusMain` calls `SwtLifecycle.run()` on the thread of its `run` method: never on another thread.
 * Dev mode does not run the user interface on macOS: it runs the application on another thread than the first one (see
 <<dev-mode>>). Test the user interface with `@QuarkusMainTest` and `-XstartOnFirstThread` (see <<testing>>).
@@ -969,7 +976,7 @@ writes the version of the SDK of the Xcode tools as both, for instance `26.5`: t
 version and later, and draws the controls of that macOS version. With the Desktop AWT extension, that extension writes
 the versions instead (`quarkus.desktop.awt.macos.jdk-build-version`, see <<awt-and-swt>>).
 
-The extension supports the Cocoa SWT jars, but neither JVM mode nor native executables are verified on a Mac yet.
+JVM mode and native executables are verified on macOS 27.0 on Apple silicon (see <<verification>>), not on Intel Macs.
 
 [[native-executables]]
 == Native executables
@@ -994,7 +1001,8 @@ not started from a console: log to a file (`quarkus.log.file.enabled=true`).
 === Linux
 
 The executable uses GTK 3, as SWT does in JVM mode (`libgtk-3-0t64` on Ubuntu 24.04), and the display of the `DISPLAY`
-or `WAYLAND_DISPLAY` environment variable (X11, XWayland or Wayland; only X11, under Xvfb, is verified). Tests need a
+or `WAYLAND_DISPLAY` environment variable (X11, XWayland or Wayland; X11 under Xvfb is verified on x64 and arm64, and
+Wayland, a headless Weston with `GDK_BACKEND=wayland` and no `DISPLAY`, on arm64 with native executables). Tests need a
 display: use a virtual one (`xvfb-run`).
 
 [[container-builds]]
@@ -1012,8 +1020,9 @@ container build that does not exclude the SWT jar of the build host), a native b
 a warning and uses the first one. A native build in a container (`-Dquarkus.native.container-build=true`) produces a
 Linux executable, also from Windows or macOS, where Maven adds the SWT jar of the build host: use the Linux jar in a
 Maven profile of the container build instead. The Linux jar depends on `org.eclipse.swt`, whose profiles would add the
-jar of the build host again: exclude it there too (this dependency resolution is verified on Windows, the container
-build itself is not verified yet):
+jar of the build host again: exclude it there too (the dependency resolution is verified on Windows; on an Apple silicon
+Mac, the container build with this profile produced a Linux arm64 executable that runs, and failed without it, naming
+the jar to use; a container build from Windows is not verified):
 
 [source,xml,subs=attributes+]
 ----
@@ -1061,9 +1070,10 @@ On an Apple silicon Mac, the container builds a Linux executable for arm64: use 
 
 By default (`quarkus.desktop.swt.native-libraries=embedded`), the native libraries of the SWT jar
 (`swt-win32-<version>.dll`, `swt-gdip-win32-<version>.dll`... and `WebView2Loader.dll` on Windows,
-`libswt-gtk-<version>.so`... on Linux) are resources of the native executable: a single file to distribute. SWT
-extracts them on the first run into `~/.swt/lib/<os>/<arch>` (or into the directory of the `swt.library.path` system
-property, when it is set), as it does in JVM mode, and loads them from there.
+`libswt-gtk-<version>.so`... on Linux, `libswt-cocoa-<version>.jnilib` and `libswt-pi-cocoa-<version>.jnilib` on macOS)
+are resources of the native executable: a single file to distribute. SWT extracts them on the first run into
+`~/.swt/lib/<os>/<arch>` (or into the directory of the `swt.library.path` system property, when it is set), as it does
+in JVM mode, and loads them from there.
 
 With `quarkus.desktop.swt.native-libraries=next-to-executable`, the libraries are not embedded in the executable: the
 native build copies them next to it, and the executable loads them from its directory (it sets the `swt.library.path`
@@ -1125,16 +1135,18 @@ native libraries (for instance `4971r15`), and then fails to load them.
 
 The extension computes the JNI metadata of native executables from the SWT jar of the application (see
 <<how-it-works>>): it follows the SWT version. The extension is verified with SWT 3.132.0, and with SWT 3.135.0 on
-Linux, in JVM mode and as native executables (see <<verification>>).
+Linux x64 and macOS, in JVM mode and as native executables (see <<verification>>).
 
 [[dev-mode]]
 == Dev mode
 
-`./mvnw quarkus:dev` runs the application in dev mode on Windows and Linux (not verified yet): a restart runs the
+`./mvnw quarkus:dev` runs the application in dev mode on Windows and Linux (not verified there yet): a restart runs the
 application again in the same JVM, on its new main thread, and the user interface with it, once the previous `Display`
 is disposed. `SwtStartupEvent` is fired again, to the new beans, which open the shells again. Dev mode does not run the
 user interface on macOS, where SWT needs the first thread of the process: dev mode runs the application on another
-thread (the `Display` cannot be created, an error is logged).
+thread (the `Display` cannot be created, an error is logged). Verified on macOS: the error is logged with its hint, dev
+mode keeps running, and `q` quits it; `-Djvm.args=-XstartOnFirstThread` changes nothing, since dev mode runs the
+application on its `Quarkus Main Thread`, not on the first thread.
 
 *What a restart disposes*: the user interface stops as for any other stop, before the `ShutdownEvent` observers (see
 <<exit>>): the shells are disposed, and the `@Dependent` beans of `WidgetBeans` with them, the tasks already handed to
@@ -1174,9 +1186,12 @@ process (a warning is logged): use `@QuarkusMainTest` there.
 * *`@QuarkusMainTest`* runs the main of the application (the generated one, or the `@QuarkusMain`), hence the user
 interface on the thread of the main, as in production. The exit policy is never installed in tests: the application
 stops by itself (`Quarkus.asyncExit()`), as the integration tests of the extension do. On macOS, add
-`-XstartOnFirstThread` to the `argLine` of the Surefire plugin (not verified on a Mac yet).
+`-XstartOnFirstThread` to the `argLine` of the Surefire plugin (verified on macOS).
 * *`@QuarkusIntegrationTest`* and *`@QuarkusMainIntegrationTest`* run the packaged application (a jar or a native
-executable) as in production: the user interface runs, with the exit policy.
+executable) as in production: the user interface runs, with the exit policy. On macOS, a jar needs
+`quarkus.test.arg-line=-XstartOnFirstThread` (for instance `-Dquarkus.test.arg-line=-XstartOnFirstThread` on the
+command line of Maven), which Quarkus adds to the `java` command that runs it; a native executable needs nothing
+(verified on macOS).
 
 [source,java]
 ----
@@ -1220,18 +1235,27 @@ test thread (see xref:cdi.adoc#testing[Testing] of the AWT application model for
 == Using AWT or Swing with SWT
 
 An application may depend on `quarkus-desktop-swt` and on `quarkus-desktop-awt` (or `quarkus-desktop-swing`). This
-combination is not verified, on any platform. Each extension runs its own user interface thread, with its own API: the
-event dispatch thread of AWT (`DesktopStartupEvent`, `EdtExecutor`, `@RunOnEdt`, see xref:cdi.adoc[Application model
-and CDI]) and the user interface thread of SWT (`SwtStartupEvent`, `UiThreadExecutor`, `@RunOnUiThread`). On Windows
-and Linux, the two threads run side by side. On macOS, SWT owns the first thread of the process: when the application
-has an SWT user interface (a `SwtStartupEvent` observer: the Desktop SWT extension then provides the main), the Desktop
-AWT extension does not park the first thread for AWT in native executables. When another extension provides the main
+combination is verified with Swing on macOS, in JVM mode and as a native executable (built with Quarkus 4.0.0.Beta1, as
+macOS native executables with AWT need, see xref:awt.adoc#macos[macOS]), not on Windows and Linux. Each extension runs
+its own user interface thread, with its own API: the event dispatch thread of AWT (`DesktopStartupEvent`,
+`EdtExecutor`, `@RunOnEdt`, see xref:cdi.adoc[Application model and CDI]) and the user interface thread of SWT
+(`SwtStartupEvent`, `UiThreadExecutor`, `@RunOnUiThread`). On Windows and Linux, the two threads run side by side. On
+macOS, SWT owns the first thread of the process: when the application has an SWT user interface (a `SwtStartupEvent`
+observer: the Desktop SWT extension then provides the main), the Desktop AWT extension does not park the first thread
+for AWT in native executables. When another extension provides the main
 (Picocli, Quarkus FX), the Desktop AWT extension cannot tell: set `quarkus.desktop.awt.macos.park-main-thread=false`.
 
 * Each exit policy counts the windows of its own toolkit (the AWT one the AWT windows of an application observing
 `DesktopStartupEvent`, the SWT one the shells), but either one stops the whole application: closing the last SWT shell
 stops it even with AWT windows open, and the reverse. Disable one of them
 (`quarkus.desktop.swt.exit-on-last-shell-closed=false` or `quarkus.desktop.awt.exit-on-last-window-closed=false`).
+* On macOS, the event dispatch thread waits for the first thread for some AWT calls (`Window.dispose()` asks AppKit for
+the locale of the input method there), and the first thread runs them only while the SWT event loop runs. Once the
+loop ended, a `ShutdownEvent` observer running on the first thread (after the last shell closed or
+`Quarkus.asyncExit()`, the shutdown runs on the main thread) blocks when it waits for the event dispatch thread: in JVM
+mode and in a native executable, an observer that disposed a `JFrame` on the event dispatch thread and waited for it
+gave up after its 2 second time-out. Dispose the AWT windows while the event loop runs (in a `SWT.Close` listener of
+the last shell, for instance), or do not wait for the event dispatch thread at shutdown.
 * Both extensions have a `QuitRequest` class, in different packages (`io.quarkiverse.desktop.swt.QuitRequest` and
 `io.quarkiverse.desktop.awt.QuitRequest`): observe the one of the toolkit that receives the request.
 * Both extensions have a `windows.subsystem` property: either one set to `windows` makes the executable a Windows
@@ -1248,13 +1272,15 @@ The SWT_AWT bridge (`org.eclipse.swt.awt.SWT_AWT`, AWT components in SWT shells)
 
 * The SWT_AWT bridge is not supported in native executables: its native library needs the `jawt` library of AWT, and is
 not embedded in the executable.
-* The `Browser` widget (Edge WebView2 on Windows, WebKitGTK on Linux) and `GLCanvas` are not verified, neither in JVM
-mode nor in native executables (the extension registers the callbacks of Edge WebView2).
+* The `Browser` widget and `GLCanvas` are verified on macOS only (WebKit, in JVM mode and in native executables, also
+with exact reachability metadata), not with Edge WebView2 on Windows nor WebKitGTK on Linux (the extension registers
+the callbacks of Edge WebView2).
 * JFace and the Eclipse Rich Client Platform are not covered: the extension supports plain SWT.
 * An uber-jar (`quarkus.package.jar.type=uber-jar`) drops the manifest of the SWT jar, and SWT would then exit the JVM:
 it loads its native libraries only from a jar whose manifest declares `SWT-OS` and `SWT-Arch`. The extension reports it
 and stops the application first (see <<startup>>). Use the default fast-jar packaging.
-* macOS is not verified on a Mac yet, and dev mode does not run the user interface there (see <<macos>>).
+* Dev mode does not run the user interface on macOS (see <<dev-mode>>), and SWT 3.132.0 and 3.135.0 never fire
+`SWT.OpenUrl` there (see <<macos>>).
 * Classes that the application or its libraries load by name need their own native image metadata, for instance with
 `@RegisterForReflection`. Please report the features of SWT that fail in a native executable. The native image tracing
 agent of GraalVM gives the missing metadata:
@@ -1291,15 +1317,29 @@ They were run locally, with GraalVM for JDK 25:
 (`-Dquarkus.native.additional-build-args=--exact-reachability-metadata`), with SWT 3.132.0, together with the cycles of
 the SWT variant of the showcase;
 * on Linux x64, Ubuntu 24.04 in Docker (GTK 3, X11 under Xvfb), the deployment tests and the integration tests in JVM
-mode and as native executables built with exact reachability metadata, with SWT 3.132.0 and 3.135.0.
+mode and as native executables built with exact reachability metadata, with SWT 3.132.0 and 3.135.0;
+* on macOS 27.0 on Apple silicon, the deployment tests and the integration tests in JVM mode (also on Java 17, and
+against the packaged jar), and as native executables, also built with exact reachability metadata, with SWT 3.132.0 and
+3.135.0, together with the cycles of the SWT variant of the showcase (JVM mode, native, exact reachability metadata),
+plus a probe application run in JVM mode and as native executables: the signals, `System.exit()`, a blocked user
+interface thread at the stop, uncaught exceptions, the exit policy, quit requests (a `Display.close()` cancelled or
+not, an observer that throws, a quit Apple Event), the native libraries next to the executable in a signed application
+bundle, `SWT.OpenDocument`, the `Browser` widget (WebKit) and `GLCanvas`, Picocli, Swing with SWT, dev mode, and the
+SWT jar of another architecture;
+* on Linux arm64, Ubuntu 24.04 in Docker on that Mac, the deployment tests and the integration tests in JVM mode and as
+native executables built with exact reachability metadata, a native executable on Wayland (a headless Weston), and a
+native executable built in a container from macOS (see <<container-builds>>).
 
-The continuous integration is configured to run them on Windows and Linux (and in JVM mode on macOS), but has not run
-yet. Its native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the
+The continuous integration runs them on Windows and Linux, in JVM mode and as native executables, and in JVM mode on
+macOS. Its native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the
 native executable with JVM mode.
 
-Not verified: macOS (JVM mode and native executables; the macOS JVM job of the continuous integration will be the first
-run), dev mode, Wayland, a quit request that is not cancelled and the end of the session, the `Browser` widget and
-`GLCanvas`, AWT or Swing with SWT, and Picocli.
+Not verified: macOS on Intel Macs, a Retina display and the dark appearance (every macOS run used a display at scale
+1, in the light appearance), the name of the application in the menu bar and the Dock as shown on screen (only as
+reported by `lsappinfo`), the About and Settings items of the application menu, Windows arm64, dev mode on Windows and
+Linux, Wayland on Linux x64, Cmd-Q and Quit in the application menu and the Dock, the end of the session, a quit
+request that is not cancelled on Windows and Linux, the `Browser` widget and `GLCanvas` on Windows and Linux, AWT or
+Swing with SWT on Windows and Linux, Picocli on Windows and Linux, and Quarkus FX.
 
 The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] has an SWT
 variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt` compares its JVM mode and

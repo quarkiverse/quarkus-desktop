@@ -11,8 +11,8 @@ executables.
   executables for macOS need Quarkus 4.0 or later, whose quarkus-awt supports macOS
   ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979); not released yet: until then, a
   Quarkus `999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later.
-- SWT: Windows x64 and Linux x64, in JVM mode and as native executables. On macOS, JVM mode needs
-  `-XstartOnFirstThread`; macOS is not verified on a Mac yet.
+- SWT: Windows x64, Linux x64 and arm64, and macOS on Apple silicon, in JVM mode and as native executables. On macOS,
+  JVM mode needs `-XstartOnFirstThread`.
 
 | Extension | Coordinates | Description |
 |---|---|---|
@@ -78,7 +78,7 @@ dependencies {
 
 SWT 3.132.0 is the last SWT release that runs on Java 17; an application on Java 21 or later can declare a later version
 of `org.eclipse.platform:org.eclipse.swt` (never with a `swt.version` property: SWT reads a system property of that
-name). SWT 3.135.0 is verified on Linux.
+name). SWT 3.135.0 is verified on Linux x64 and macOS.
 
 ## Application model and CDI
 
@@ -250,7 +250,7 @@ stops, the user interface stops first: the shells are disposed before the `Shutd
 ([docs/modules/ROOT/pages/swt.adoc](docs/modules/ROOT/pages/swt.adoc)) covers the installation (the SWT jar of each
 platform), the user interface thread, the exit and quit requests, the build checks, macOS (`-XstartOnFirstThread`),
 native executables (the native libraries of SWT embedded or next to the executable), SWT versions, dev mode (not
-verified yet) and tests.
+verified on Windows and Linux yet) and tests.
 
 ## Platforms
 
@@ -268,9 +268,9 @@ SWT:
 | Platform | JVM mode | Native executable |
 |---|---|---|
 | Windows x64 | yes | yes (native build on Windows with Visual Studio; no manifest nor Visual C++ runtime needed; verified on Windows 11) |
-| Linux x64 | yes | yes (native build on Linux; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb) |
-| macOS | with `-XstartOnFirstThread`, not verified on a Mac yet | the event loop runs on the first thread of the process; not verified on a Mac yet |
-| Windows arm64, Linux arm64 | not verified | not verified on Linux arm64 (no GraalVM native image builder for Windows on arm64) |
+| Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb, and Wayland on arm64) |
+| macOS on Apple silicon | yes, with `-XstartOnFirstThread` | yes (the event loop runs on the first thread of the process; verified on macOS 27.0) |
+| Windows arm64 | not verified | no (no GraalVM native image builder for Windows on arm64) |
 
 ## Showcase
 

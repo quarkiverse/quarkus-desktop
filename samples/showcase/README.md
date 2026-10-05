@@ -17,9 +17,10 @@ This directory is a Maven project of its own, not a module of the extension buil
 - quarkus-desktop `999-SNAPSHOT` in the local Maven repository: run `./mvnw install -DskipTests` at the root of this
   repository (`../..`) first.
 - Windows arm64: JVM mode only (GraalVM has no native image builder there).
-- macOS native executables: Quarkus 4.0 or later (until its release, a Quarkus `999-SNAPSHOT` built from `main`, used
-  with `-Dquarkus.platform.version=999-SNAPSHOT`) and GraalVM 25.1 or later. The Robot pages
-  (`-Dshowcase.robot=true`) need the Screen Recording and Accessibility permissions for the terminal.
+- macOS native executables of the AWT and Swing variants: Quarkus 4.0 or later (until its release, a Quarkus
+  `999-SNAPSHOT` built from `main`, used with `-Dquarkus.platform.version=999-SNAPSHOT`) and GraalVM 25.1 or later (the
+  SWT variant does not need Quarkus 4.0). The Robot pages (`-Dshowcase.robot=true`) need the Screen Recording and
+  Accessibility permissions for the terminal.
 
 ## Run
 
@@ -95,6 +96,11 @@ page must be identical, except the expected differences of `swt-native-limits`. 
 `-Dswt.autoScale=100` (instead of `-Dsun.java2d.uiScale=1`; `--hidpi` keeps the zoom of the monitor) and add
 `-XstartOnFirstThread` to the JVM runs on macOS. `--swt` is not compatible with `--awt-only`, `--pipeline` and
 `--trace`.
+
+The cycles of the SWT variant match on macOS 27.0 (Apple silicon, with `--exact` too), and matched on Windows 11
+before the pages got their macOS values. Where Cocoa SWT behaves differently (`Text.DELIMITER`, `Transform.shear`,
+`Path.contains` with `SWT.FILL_EVEN_ODD`, the glyph metrics of Core Text...), the checks of the pages expect the macOS
+value, with a comment naming the cause.
 
 On Windows, the snapshots copy the pixels from the windows (`GC.copyArea`) instead of `Control.print`, whose
 `PrintWindow` now and then misses parts of a window; a window holds the pixels of its parts on the screen only, so a
