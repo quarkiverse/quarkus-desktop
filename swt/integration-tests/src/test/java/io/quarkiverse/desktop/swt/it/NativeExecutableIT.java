@@ -3,13 +3,16 @@ package io.quarkiverse.desktop.swt.it;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Properties;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -27,9 +30,23 @@ public class NativeExecutableIT {
     private static Path executable;
 
     @BeforeAll
-    static void executable() {
+    static void executable() throws IOException {
         executable = Path.of(System.getProperty("native.image.path"));
+        // the integration tests also run against the jar (-DskipITs=false without -Dnative) : no executable to check then
+        assumeTrue(nativeArtifact(executable.getParent()), "the application is not built as a native executable");
         assertTrue(Files.isRegularFile(executable), executable + " not found");
+    }
+
+    /**
+     * Whether Quarkus built a native executable : {@code type=native} in the {@code quarkus-artifact.properties} file of
+     * the build, which the integration tests of Quarkus read too.
+     */
+    private static boolean nativeArtifact(Path target) throws IOException {
+        Properties artifact = new Properties();
+        try (Reader reader = Files.newBufferedReader(target.resolve("quarkus-artifact.properties"))) {
+            artifact.load(reader);
+        }
+        return "native".equals(artifact.getProperty("type"));
     }
 
     /**
