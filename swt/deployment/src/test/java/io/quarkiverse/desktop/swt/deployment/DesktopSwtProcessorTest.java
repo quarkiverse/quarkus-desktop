@@ -18,6 +18,7 @@ import java.util.jar.JarFile;
 import java.util.jar.Manifest;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkus.maven.dependency.ResolvedDependency;
@@ -226,6 +227,33 @@ class DesktopSwtProcessorTest {
         // the option that keeps main on the first thread
         assertFalse(DesktopSwtProcessor.isRunMainInNewThreadOption("-H:-RunMainInNewThread"));
         assertFalse(DesktopSwtProcessor.isRunMainInNewThreadOption("--exact-reachability-metadata"));
+    }
+
+    @Test
+    void macExecutableArgs(@TempDir Path directory) throws IOException {
+        // a JDK whose java launcher declares minos 11.0 and sdk 14.5
+        Path jdkHome = SwtMacExecutableTest.jdkHome(directory.resolve("jdk"),
+                SwtMacExecutableTest.machO(SwtMacExecutableTest.command(0x32, 24, 1, 0x000b0000, 0x000e0500, 0)));
+        WindowingSystem macos = DesktopSwtProcessor.targetWindowingSystem(OS.MAC, false);
+        List<String> args = DesktopSwtProcessor.macExecutableArgs(macos, true, false, jdkHome);
+        assertEquals(List.of("-H:NativeLinkerOption=-Wl,-platform_version,macos,11.0,14.5"), args);
+        assertEquals("Args = -H:NativeLinkerOption=-Wl,-platform_version,macos,11.0,14.5\n",
+                DesktopSwtProcessor.nativeImageProperties(args));
+
+        // quarkus.desktop.swt.macos.jdk-build-version=false
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(macos, false, false, jdkHome));
+        // the executables of the other platforms, and a container build on macOS (a Linux executable)
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(WindowingSystem.GTK, true, false, jdkHome));
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(WindowingSystem.WIN32, true, false, jdkHome));
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(
+                DesktopSwtProcessor.targetWindowingSystem(OS.MAC, true), true, false, jdkHome));
+        // the Desktop AWT extension writes the versions itself
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(macos, true, true, jdkHome));
+        // unknown versions : no java launcher, or the launcher of another platform
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(macos, true, false, directory.resolve("none")));
+        Path linuxJdk = SwtMacExecutableTest.jdkHome(directory.resolve("linux"),
+                "\u007fELF".getBytes(StandardCharsets.ISO_8859_1));
+        assertEquals(List.of(), DesktopSwtProcessor.macExecutableArgs(macos, true, false, linuxJdk));
     }
 
     @Test

@@ -48,6 +48,32 @@ public interface DesktopSwtConfig {
     }
 
     /**
+     * The native executables for macOS (a native build on a macOS host, not a container build).
+     */
+    Macos macos();
+
+    /**
+     * The native executables for macOS (a native build on a macOS host, not a container build).
+     */
+    interface Macos {
+
+        /**
+         * Whether the native executable declares the minimum macOS version and the SDK version of the {@code java}
+         * launcher of the JDK that builds it (its {@code LC_BUILD_VERSION} load command), as a JVM application does.
+         * <p>
+         * macOS does not start an executable on a version older than its minimum version, and AppKit chooses the look
+         * of the windows and controls (the height of the title bars, the size of the controls, the background color of
+         * the widgets for instance) from its SDK version : the executable starts on the macOS versions that the JDK
+         * supports, and looks as in JVM mode. When disabled, the linker writes the version of the SDK of the Xcode
+         * tools as both : the executable then only starts on that macOS version and later, and gets the look of that
+         * version. With the Desktop AWT extension, {@code quarkus.desktop.awt.macos.jdk-build-version} applies
+         * instead : that extension writes the versions.
+         */
+        @WithDefault("true")
+        boolean jdkBuildVersion();
+    }
+
+    /**
      * Where the native executable finds the native libraries of SWT.
      */
     enum NativeLibraries {

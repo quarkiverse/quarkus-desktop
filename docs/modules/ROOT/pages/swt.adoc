@@ -928,6 +928,15 @@ and `SWT.OpenUrl` events of the `Display` (see <<startup>>), not CDI events.
 * An application bundle that signs its content keeps the native libraries of SWT next to the executable
 (`quarkus.desktop.swt.native-libraries=next-to-executable`, see <<native-libraries>>).
 
+The native executable declares the minimum macOS version and the SDK version of the `java` launcher of the JDK used for
+the native build (`otool -l` shows them in `LC_BUILD_VERSION`, for instance `minos 11.0` and `sdk 14.5`): it starts on
+the macOS versions the JDK supports, and AppKit gives its windows and controls the same look as in JVM mode (AppKit
+chooses the size of the controls, the height of the title bars and the background color of the widgets, for instance,
+from the SDK version of the executable). Without it (`quarkus.desktop.swt.macos.jdk-build-version=false`), the linker
+writes the version of the SDK of the Xcode tools as both, for instance `26.5`: the executable only starts on that macOS
+version and later, and draws the controls of that macOS version. With the Desktop AWT extension, that extension writes
+the versions instead (`quarkus.desktop.awt.macos.jdk-build-version`, see <<awt-and-swt>>).
+
 The extension supports the Cocoa SWT jars, but neither JVM mode nor native executables are verified on a Mac yet.
 
 [[native-executables]]
@@ -1189,6 +1198,9 @@ stops it even with AWT windows open, and the reverse. Disable one of them
 `io.quarkiverse.desktop.awt.QuitRequest`): observe the one of the toolkit that receives the request.
 * Both extensions have a `windows.subsystem` property: either one set to `windows` makes the executable a Windows
 subsystem one, without console window.
+* Both extensions have a `macos.jdk-build-version` property: the Desktop AWT extension writes the minimum macOS version
+and the SDK version of the executable, and `quarkus.desktop.awt.macos.jdk-build-version` decides it
+(`quarkus.desktop.swt.macos.jdk-build-version` is ignored, see <<macos>>).
 
 The SWT_AWT bridge (`org.eclipse.swt.awt.SWT_AWT`, AWT components in SWT shells) is not supported in native executables
 (see <<limitations>>).
@@ -1257,8 +1269,9 @@ native runs (see the showcase README, and xref:index.adoc#verification[Verificat
 
 See xref:index.adoc#configuration[the overview of the properties]. The run time properties
 (`quarkus.desktop.swt.startup-event.enabled`, `quarkus.desktop.swt.exit-on-last-shell-closed`,
-`quarkus.desktop.swt.application-name`) also apply in JVM mode; `quarkus.desktop.swt.native-libraries` and
-`quarkus.desktop.swt.windows.subsystem` only apply to native executables.
+`quarkus.desktop.swt.application-name`) also apply in JVM mode; `quarkus.desktop.swt.native-libraries`,
+`quarkus.desktop.swt.windows.subsystem` and `quarkus.desktop.swt.macos.jdk-build-version` only apply to native
+executables.
 
 `quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built:
 overriding `quarkus.application.name` at run time does not change it, set `quarkus.desktop.swt.application-name`

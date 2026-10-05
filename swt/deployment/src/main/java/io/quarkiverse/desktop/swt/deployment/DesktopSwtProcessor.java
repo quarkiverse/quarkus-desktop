@@ -1,5 +1,6 @@
 package io.quarkiverse.desktop.swt.deployment;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
@@ -24,6 +25,7 @@ import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtRecorder;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.ExecutionTime;
@@ -81,6 +83,18 @@ class DesktopSwtProcessor {
      */
     static final String WINDOWS_NATIVE_IMAGE_PROPERTIES = "META-INF/native-image/io.quarkiverse.desktop/"
             + "quarkus-desktop-swt-windows/native-image.properties";
+
+    /**
+     * The options of the macOS executable, read by native-image from the application jar.
+     */
+    static final String MAC_NATIVE_IMAGE_PROPERTIES = "META-INF/native-image/io.quarkiverse.desktop/"
+            + "quarkus-desktop-swt-macos/native-image.properties";
+
+    /**
+     * The capability of the Desktop AWT extension ({@code DesktopCapabilities.AWT}, declared in the {@code pom.xml} of
+     * its runtime module), which this extension does not depend on.
+     */
+    static final String AWT_CAPABILITY = "io.quarkiverse.desktop.awt";
 
     /**
      * The lookups expected to fail, for native executables built with exact reachability metadata.
@@ -561,6 +575,68 @@ class DesktopSwtProcessor {
      */
     static boolean isRunMainInNewThreadOption(String option) {
         return option.trim().startsWith("-H:+RunMainInNewThread");
+    }
+
+    /**
+     * The minimum macOS version and the SDK version of the macOS executable
+     * ({@code quarkus.desktop.swt.macos.jdk-build-version}) : the ones of the {@code java} launcher of the JDK used for
+     * the native build, so that the executable starts on the same macOS versions, and AppKit gives its windows and
+     * controls the same look, as in JVM mode.
+     */
+    @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
+    void macExecutable(NativeImageRunnerBuildItem nativeImageRunner, DesktopSwtConfig config, NativeConfig nativeConfig,
+            Capabilities capabilities, BuildProducer<GeneratedResourceBuildItem> generatedResources) {
+        List<String> args = macExecutableArgs(targetWindowingSystem(OS.current(), nativeImageRunner.isContainerBuild()),
+                config.macos().jdkBuildVersion(), capabilities.isPresent(AWT_CAPABILITY), builderJdkHome(nativeConfig));
+        if (!args.isEmpty()) {
+            LOGGER.debugf("macOS executable options : %s", args);
+            generatedResources.produce(new GeneratedResourceBuildItem(MAC_NATIVE_IMAGE_PROPERTIES,
+                    nativeImageProperties(args).getBytes(StandardCharsets.ISO_8859_1)));
+        }
+    }
+
+    /**
+     * The options of the macOS executable : the {@code -platform_version} of the linker, with the versions of the
+     * {@code java} launcher of the JDK used for the native build.
+     *
+     * @param target the windowing system of the executable ({@link #targetWindowingSystem}) : a container build
+     *        produces a Linux executable
+     * @param jdkBuildVersion {@code quarkus.desktop.swt.macos.jdk-build-version}
+     * @param awt whether the application has the Desktop AWT extension
+     * @param jdkHome the home of the JDK used for the native build ({@link #builderJdkHome})
+     * @return empty for an executable of another platform, when disabled, with the Desktop AWT extension, or when the
+     *         versions of the launcher are unknown
+     */
+    static List<String> macExecutableArgs(WindowingSystem target, boolean jdkBuildVersion, boolean awt, Path jdkHome) {
+        if (target != WindowingSystem.COCOA || !jdkBuildVersion) {
+            return List.of();
+        }
+        if (awt) {
+            // The Desktop AWT extension writes the same versions in macOS executables, unless
+            // quarkus.desktop.awt.macos.jdk-build-version=false : a single -platform_version option, and a single
+            // property that decides it
+            LOGGER.debug("The Desktop AWT extension writes the minimum macOS version and the SDK version of the native"
+                    + " executable (quarkus.desktop.awt.macos.jdk-build-version)");
+            return List.of();
+        }
+        Optional<SwtMacExecutable.BuildVersion> version = SwtMacExecutable.launcherBuildVersion(jdkHome);
+        if (version.isEmpty()) {
+            LOGGER.warnf("The minimum macOS version and the SDK version of the java launcher of %s are unknown : the"
+                    + " native executable declares the ones of the Xcode tools (it only starts on that macOS version"
+                    + " and later, and gets the look of that version)", jdkHome);
+            return List.of();
+        }
+        return List.of(version.get().linkerOption());
+    }
+
+    /**
+     * The home of the JDK used by the native build : the GraalVM home, the Java home configured for native builds, or
+     * the home of the JDK running the build.
+     */
+    static Path builderJdkHome(NativeConfig nativeConfig) {
+        return nativeConfig.graalvmHome().filter(home -> !home.isBlank()).map(Path::of).filter(Files::isDirectory)
+                .or(() -> Optional.ofNullable(nativeConfig.javaHome()).map(File::toPath).filter(Files::isDirectory))
+                .orElse(Path.of(System.getProperty("java.home")));
     }
 
     // -------------------------------------------------------------------------------- exact reachability metadata

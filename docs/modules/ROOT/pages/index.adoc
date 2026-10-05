@@ -304,6 +304,11 @@ xref:swt.adoc#configuration[Configuration] of Desktop SWT.
 |`quarkus.desktop.swt.windows.subsystem`
 |`console`
 |Windows: `windows` for an SWT application without console window (as `javaw`).
+
+|`quarkus.desktop.swt.macos.jdk-build-version`
+|`true`
+|macOS: the executable declares the minimum macOS version and SDK version of the `java` launcher of the JDK (the look
+of the windows depends on them). Ignored with the Desktop AWT extension, see xref:swt.adoc#macos[macOS].
 |===
 
 See xref:config-reference.adoc[the configuration reference] for the details.
