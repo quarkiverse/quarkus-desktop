@@ -969,13 +969,19 @@ display: use a virtual one (`xvfb-run`).
 === The SWT jar and container builds
 
 A native build fails when the SWT jar of the application is not the one of the platform of the executable, with a
-message naming the jar to use, and logs a warning when the architecture of the jar is not the one of the build. With
-several SWT jars on the class path (typically a container build that does not exclude the SWT jar of the build host), a
-native build fails, listing them; JVM mode logs a warning and uses the first one. A native
-build in a container (`-Dquarkus.native.container-build=true`) produces a Linux executable, also from Windows or macOS,
-where Maven adds the SWT jar of the build host: use the Linux jar in a Maven profile of the container build instead. The
-Linux jar depends on `org.eclipse.swt`, whose profiles would add the jar of the build host again: exclude it there too
-(this dependency resolution is verified on Windows, the container build itself is not verified yet):
+message naming the jar to use. A local native build fails too when the architecture of the jar is not the one of the
+native image builder (the `OS_ARCH` of the `release` file of the GraalVM used for the build, the architecture of the JVM
+running the build when it is unknown): the executable could never load the native libraries of SWT, and running it would
+leave them in `~/.swt/lib/<os>/<arch>`, where SWT never replaces a file, so that the other SWT applications of that
+version would load them too. A container build or a native sources build (`quarkus.native.sources-only=true`) only logs
+a warning then: the builder image of a container may run another architecture than the build host, and the sources may
+be compiled later on a machine of the architecture of the jar. With several SWT jars on the class path (typically a
+container build that does not exclude the SWT jar of the build host), a native build fails, listing them; JVM mode logs
+a warning and uses the first one. A native build in a container (`-Dquarkus.native.container-build=true`) produces a
+Linux executable, also from Windows or macOS, where Maven adds the SWT jar of the build host: use the Linux jar in a
+Maven profile of the container build instead. The Linux jar depends on `org.eclipse.swt`, whose profiles would add the
+jar of the build host again: exclude it there too (this dependency resolution is verified on Windows, the container
+build itself is not verified yet):
 
 [source,xml,subs=attributes+]
 ----

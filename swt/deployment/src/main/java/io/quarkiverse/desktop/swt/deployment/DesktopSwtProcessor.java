@@ -212,19 +212,20 @@ class DesktopSwtProcessor {
      * The artifact id suffix of the SWT jar of the build host ({@code win32.win32.x86_64}...).
      */
     static String hostFragment() {
-        String arch = hostArch();
-        return switch (OS.current()) {
-            case WINDOWS -> "win32.win32." + arch;
-            case MAC -> "cocoa.macosx." + arch;
-            default -> "gtk.linux." + arch;
-        };
+        return fragment(targetWindowingSystem(OS.current(), false), hostArch());
     }
 
     /**
      * The architecture of the build host, as SWT names it.
      */
     static String hostArch() {
-        String arch = System.getProperty("os.arch", "");
+        return swtArch(System.getProperty("os.arch", ""));
+    }
+
+    /**
+     * An architecture as SWT names it : {@code x86_64} for {@code amd64}, {@code aarch64} for {@code arm64}.
+     */
+    static String swtArch(String arch) {
         return switch (arch) {
             case "amd64" -> "x86_64";
             case "arm64" -> "aarch64";
@@ -233,30 +234,87 @@ class DesktopSwtProcessor {
     }
 
     /**
+     * The architecture of the native image builder of a local build, as SWT names it : the {@code OS_ARCH} of the
+     * {@code release} file of the JDK used for the native build ({@link #builderJdkHome}), which may not be the one of
+     * the JVM running the build (an x86_64 GraalVM under Rosetta, run by an arm64 Maven), or the architecture of the
+     * build host when it is unknown.
+     */
+    static String builderArch(Path jdkHome) {
+        Path release = jdkHome.resolve("release");
+        if (Files.isRegularFile(release)) {
+            try (Stream<String> lines = Files.lines(release, StandardCharsets.ISO_8859_1)) {
+                Optional<String> arch = lines.filter(line -> line.startsWith("OS_ARCH="))
+                        .map(line -> line.substring("OS_ARCH=".length()).trim().replace("\"", ""))
+                        .filter(value -> !value.isEmpty()).findFirst();
+                if (arch.isPresent()) {
+                    return swtArch(arch.get());
+                }
+            } catch (IOException | UncheckedIOException e) {
+                LOGGER.debugf(e, "Unable to read %s", release);
+            }
+        }
+        return hostArch();
+    }
+
+    /**
      * Fails a native build without the SWT jar of its target : a container build (Linux) from Windows or macOS, where
-     * Maven adds the SWT jar of the build host.
+     * Maven adds the SWT jar of the build host, or the SWT jar of another architecture.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     @Produce(ArtifactResultBuildItem.class)
-    void checkTargetPlatform(Optional<SwtPlatformBuildItem> platform, NativeImageRunnerBuildItem nativeImageRunner) {
-        WindowingSystem target = targetWindowingSystem(OS.current(), nativeImageRunner.isContainerBuild());
-        String targetName = target == WindowingSystem.GTK ? "linux" : OS.current().name().toLowerCase(Locale.ROOT);
+    void checkTargetPlatform(Optional<SwtPlatformBuildItem> platform, NativeImageRunnerBuildItem nativeImageRunner,
+            NativeConfig nativeConfig) {
+        boolean containerBuild = nativeImageRunner.isContainerBuild();
+        // the builder image of a container build runs the architecture of the container runtime, not of the local JDK
+        String builderArch = containerBuild ? hostArch() : builderArch(builderJdkHome(nativeConfig));
+        checkTargetPlatform(platform, OS.current(), builderArch, containerBuild, nativeConfig.sourcesOnly());
+    }
+
+    /**
+     * Checks the SWT jar of a native build : the one of the platform of the executable, which is the build host
+     * ({@link #targetWindowingSystem}). A local build with the SWT jar of another architecture fails too : the
+     * executable could never load the native libraries of SWT, and running it extracts them into
+     * {@code ~/.swt/lib/<os>/<arch>} of the architecture that runs it, where SWT never replaces a file : every SWT
+     * application of that version then loads them, and fails. A container build only warns : the builder image may run
+     * another architecture than the build host. So does a native sources build : the sources may be compiled later on
+     * a machine of the architecture of the SWT jar.
+     *
+     * @param host the operating system of the build host
+     * @param builderArch the architecture of the native image builder, as SWT names it ({@link #builderArch})
+     * @param sourcesOnly whether the build only generates the sources of the native executable
+     *        ({@code quarkus.native.sources-only})
+     * @throws IllegalStateException when the native executable could not load the native libraries of SWT
+     */
+    static void checkTargetPlatform(Optional<SwtPlatformBuildItem> platform, OS host, String builderArch,
+            boolean containerBuild, boolean sourcesOnly) {
+        WindowingSystem target = targetWindowingSystem(host, containerBuild);
+        String targetName = target == WindowingSystem.GTK ? "linux" : host.name().toLowerCase(Locale.ROOT);
+        String jar = "org.eclipse.platform:org.eclipse.swt." + fragment(target, builderArch);
         if (platform.isEmpty()) {
             throw new IllegalStateException("The native executable for " + targetName + " needs the SWT jar of the"
-                    + " platform : add the dependency org.eclipse.platform:org.eclipse.swt." + fragment(target)
-                    + " (with the version of org.eclipse.swt)");
+                    + " platform : add the dependency " + jar + " (with the version of org.eclipse.swt)");
         }
         if (platform.get().getWindowingSystem() != target) {
             throw new IllegalStateException("The native executable is built for " + targetName
-                    + (nativeImageRunner.isContainerBuild() ? " (a container build)" : "") + ", but the SWT jar of the"
-                    + " application is " + platform.get() + ". Use the dependency org.eclipse.platform:org.eclipse.swt."
-                    + fragment(target) + " instead (in a Maven profile of the container build), or build on "
-                    + targetName + ".");
+                    + (containerBuild ? " (a container build)" : "") + ", but the SWT jar of the application is "
+                    + platform.get() + ". Use the dependency " + jar + " instead (in a Maven profile of the container"
+                    + " build), or build on " + targetName + ".");
         }
-        if (!platform.get().getArch().isEmpty() && !platform.get().getArch().equals(hostArch())) {
+        String arch = platform.get().getArch();
+        if (arch.isEmpty() || arch.equals(builderArch)) {
+            return;
+        }
+        if (containerBuild || sourcesOnly) {
             LOGGER.warnf("The SWT jar of the application is %s, the native image builder runs on %s : the native libraries"
-                    + " of SWT may not load", platform.get(), hostArch());
+                    + " of SWT may not load", platform.get(), builderArch);
+            return;
         }
+        throw new IllegalStateException("The native executable is built for " + targetName + " " + builderArch
+                + ", but the SWT jar of the application is " + platform.get() + " : the executable could never load"
+                + " the native libraries of SWT, and running it may leave them in ~/.swt/lib/" + platform.get().getOs()
+                + "/" + builderArch + ", where the other SWT applications of that version would load them too. Use the"
+                + " dependency " + jar + " instead (with the version of org.eclipse.swt), or build with a GraalVM of the"
+                + " architecture of the SWT jar.");
     }
 
     /**
@@ -273,8 +331,10 @@ class DesktopSwtProcessor {
         };
     }
 
-    private static String fragment(WindowingSystem windowingSystem) {
-        String arch = hostArch();
+    /**
+     * The artifact id suffix of the SWT jar of a platform ({@code cocoa.macosx.aarch64}...).
+     */
+    static String fragment(WindowingSystem windowingSystem, String arch) {
         return switch (windowingSystem) {
             case WIN32 -> "win32.win32." + arch;
             case COCOA -> "cocoa.macosx." + arch;
@@ -635,13 +695,52 @@ class DesktopSwtProcessor {
     }
 
     /**
-     * The home of the JDK used by the native build : the GraalVM home, the Java home configured for native builds, or
-     * the home of the JDK running the build.
+     * The home of the JDK used by the native build : the one of the {@code native-image} that Quarkus runs, chosen as
+     * Quarkus chooses it (NativeImageBuildStep) : the GraalVM home, then the Java home configured for native builds,
+     * when it has {@code bin/native-image}, else the {@code native-image} of the {@code PATH}, else the home of the JDK
+     * running the build.
      */
     static Path builderJdkHome(NativeConfig nativeConfig) {
-        return nativeConfig.graalvmHome().filter(home -> !home.isBlank()).map(Path::of).filter(Files::isDirectory)
-                .or(() -> Optional.ofNullable(nativeConfig.javaHome()).map(File::toPath).filter(Files::isDirectory))
-                .orElse(Path.of(System.getProperty("java.home")));
+        return builderJdkHome(nativeConfig.graalvmHome(), nativeConfig.javaHome(), System.getenv("PATH"),
+                OS.current() == OS.WINDOWS, Path.of(System.getProperty("java.home")));
+    }
+
+    static Path builderJdkHome(Optional<String> graalvmHome, File javaHome, String path, boolean windows,
+            Path fallback) {
+        String executable = windows ? "native-image.cmd" : "native-image";
+        return Stream.of(graalvmHome.filter(home -> !home.isBlank()).map(Path::of),
+                Optional.ofNullable(javaHome).map(File::toPath))
+                .flatMap(Optional::stream)
+                .filter(home -> Files.isRegularFile(home.resolve("bin").resolve(executable)))
+                .findFirst()
+                .or(() -> onPath(executable, path))
+                .orElse(fallback);
+    }
+
+    /**
+     * The JDK home of an executable of the {@code PATH} : the parent of its {@code bin} directory, links resolved.
+     */
+    private static Optional<Path> onPath(String executable, String path) {
+        if (path == null) {
+            return Optional.empty();
+        }
+        for (String directory : path.split(File.pathSeparator)) {
+            if (directory.isBlank()) {
+                continue;
+            }
+            try {
+                Path candidate = Path.of(directory, executable);
+                if (Files.isRegularFile(candidate)) {
+                    Path bin = candidate.toRealPath().getParent();
+                    if (bin != null && bin.getParent() != null) {
+                        return Optional.of(bin.getParent());
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                LOGGER.debugf(e, "Unable to resolve %s in %s", executable, directory);
+            }
+        }
+        return Optional.empty();
     }
 
     // -------------------------------------------------------------------------------- exact reachability metadata

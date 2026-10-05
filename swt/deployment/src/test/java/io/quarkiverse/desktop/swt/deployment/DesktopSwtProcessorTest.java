@@ -1,14 +1,18 @@
 package io.quarkiverse.desktop.swt.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
@@ -132,6 +136,148 @@ class DesktopSwtProcessorTest {
         for (OS host : OS.values()) {
             assertEquals(WindowingSystem.GTK, DesktopSwtProcessor.targetWindowingSystem(host, true), host.name());
         }
+    }
+
+    @Test
+    void nativeBuildWithTheSwtJarOfThePlatform() {
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.cocoa.macosx.aarch64"), OS.MAC, "aarch64", false, false));
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.win32.win32.x86_64"), OS.WINDOWS, "x86_64", false, false));
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.gtk.linux.aarch64"), OS.LINUX, "aarch64", false, false));
+        // a container build : the Linux jar
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.gtk.linux.aarch64"), OS.MAC, "aarch64", true, false));
+        // a jar without architecture (repackaged) : the one of the build host
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                Optional.of(DesktopSwtProcessor.platform(dependency("com.example", "swt-bundle"), new Manifest())),
+                OS.current(), "aarch64", false, false));
+    }
+
+    @Test
+    void nativeBuildWithTheSwtJarOfAnotherOperatingSystem() {
+        // the jar of the build host in a container build
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> DesktopSwtProcessor
+                .checkTargetPlatform(platform("org.eclipse.swt.cocoa.macosx.aarch64"), OS.MAC, "aarch64", true, false));
+        assertTrue(e.getMessage().contains("built for linux (a container build)"), e.getMessage());
+        assertTrue(e.getMessage().contains("org.eclipse.platform:org.eclipse.swt.gtk.linux.aarch64"), e.getMessage());
+        // no SWT jar
+        e = assertThrows(IllegalStateException.class,
+                () -> DesktopSwtProcessor.checkTargetPlatform(Optional.empty(), OS.LINUX, "x86_64", false, false));
+        assertTrue(e.getMessage().contains("org.eclipse.platform:org.eclipse.swt.gtk.linux.x86_64"), e.getMessage());
+        // a native sources build fails too : the sources are compiled for the operating system of the build host
+        e = assertThrows(IllegalStateException.class, () -> DesktopSwtProcessor
+                .checkTargetPlatform(platform("org.eclipse.swt.cocoa.macosx.x86_64"), OS.LINUX, "x86_64", false, true));
+        assertTrue(e.getMessage().contains("org.eclipse.platform:org.eclipse.swt.gtk.linux.x86_64"), e.getMessage());
+    }
+
+    /**
+     * The native executable could never load the native libraries of an SWT jar of another architecture, and running it
+     * would extract them where every SWT application of that version loads them : the native build fails, unless it
+     * runs in a container, whose builder image may run another architecture, or only generates the sources, which may
+     * be compiled later on a machine of the architecture of the jar.
+     */
+    @Test
+    void nativeBuildWithTheSwtJarOfAnotherArchitecture() {
+        IllegalStateException e = assertThrows(IllegalStateException.class, () -> DesktopSwtProcessor
+                .checkTargetPlatform(platform("org.eclipse.swt.cocoa.macosx.x86_64"), OS.MAC, "aarch64", false, false));
+        assertTrue(e.getMessage().contains("org.eclipse.platform:org.eclipse.swt.cocoa.macosx.x86_64:3.132.0"),
+                e.getMessage());
+        assertTrue(e.getMessage().contains("Use the dependency org.eclipse.platform:org.eclipse.swt.cocoa.macosx"
+                + ".aarch64"), e.getMessage());
+        assertTrue(e.getMessage().contains("~/.swt/lib/macosx/aarch64"), e.getMessage());
+        assertTrue(e.getMessage().contains("or build with a GraalVM of the architecture of the SWT jar"),
+                e.getMessage());
+        e = assertThrows(IllegalStateException.class, () -> DesktopSwtProcessor
+                .checkTargetPlatform(platform("org.eclipse.swt.win32.win32.aarch64"), OS.WINDOWS, "x86_64", false, false));
+        assertTrue(e.getMessage().contains("Use the dependency org.eclipse.platform:org.eclipse.swt.win32.win32"
+                + ".x86_64"), e.getMessage());
+        // a container build only warns
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.gtk.linux.x86_64"), OS.MAC, "aarch64", true, false));
+        // a native sources build only warns
+        assertDoesNotThrow(() -> DesktopSwtProcessor.checkTargetPlatform(
+                platform("org.eclipse.swt.gtk.linux.aarch64"), OS.LINUX, "x86_64", false, true));
+    }
+
+    /**
+     * The architecture of the native image builder : the {@code OS_ARCH} of the {@code release} file of the JDK of the
+     * native build, as SWT names it, the one of the build host when it is unknown.
+     */
+    @Test
+    void builderArch(@TempDir Path directory) throws IOException {
+        Path jdkHome = Files.createDirectories(directory.resolve("jdk"));
+        Path release = jdkHome.resolve("release");
+        // as a GraalVM writes it
+        Files.writeString(release, "IMPLEMENTOR=\"GraalVM Community\"\nJAVA_VERSION=\"25.0.1\"\nOS_ARCH=\"aarch64\"\n"
+                + "OS_NAME=\"Darwin\"\nCOMMIT_INFO={\"vm\": {\"commit.rev\": \"95ce149\"}}\n", StandardCharsets.ISO_8859_1);
+        assertEquals("aarch64", DesktopSwtProcessor.builderArch(jdkHome));
+        Files.writeString(release, "OS_NAME=\"Linux\"\nOS_ARCH=\"x86_64\"\n", StandardCharsets.ISO_8859_1);
+        assertEquals("x86_64", DesktopSwtProcessor.builderArch(jdkHome));
+        // the names of os.arch
+        Files.writeString(release, "OS_ARCH=\"amd64\"\r\n", StandardCharsets.ISO_8859_1);
+        assertEquals("x86_64", DesktopSwtProcessor.builderArch(jdkHome));
+        Files.writeString(release, "OS_ARCH=arm64\n", StandardCharsets.ISO_8859_1);
+        assertEquals("aarch64", DesktopSwtProcessor.builderArch(jdkHome));
+
+        // unknown : the architecture of the build host
+        Files.writeString(release, "JAVA_VERSION=\"25.0.1\"\nOS_ARCH=\"\"\n", StandardCharsets.ISO_8859_1);
+        assertEquals(DesktopSwtProcessor.hostArch(), DesktopSwtProcessor.builderArch(jdkHome));
+        Files.delete(release);
+        assertEquals(DesktopSwtProcessor.hostArch(), DesktopSwtProcessor.builderArch(jdkHome));
+        assertEquals(DesktopSwtProcessor.hostArch(), DesktopSwtProcessor.builderArch(directory.resolve("none")));
+
+        // the JDK running the tests
+        assertEquals(DesktopSwtProcessor.hostArch(),
+                DesktopSwtProcessor.builderArch(Path.of(System.getProperty("java.home"))));
+    }
+
+    /**
+     * The JDK of the native build, chosen as Quarkus chooses its {@code native-image} : the GraalVM home, then the Java
+     * home, when it has {@code bin/native-image}, else the {@code native-image} of the {@code PATH}, else the JDK of the
+     * build.
+     */
+    @Test
+    void builderJdkHome(@TempDir Path directory) throws IOException {
+        Path graalvm = nativeImageHome(directory.resolve("graalvm"));
+        Path javaHome = nativeImageHome(directory.resolve("java"));
+        Path jdkWithout = Files.createDirectories(directory.resolve("jdk").resolve("bin"));
+        Path fallback = directory.resolve("fallback");
+
+        assertEquals(graalvm, DesktopSwtProcessor.builderJdkHome(Optional.of(graalvm.toString()), javaHome.toFile(),
+                null, false, fallback));
+        // a home without native-image is not the one Quarkus runs
+        assertEquals(javaHome, DesktopSwtProcessor.builderJdkHome(Optional.of(jdkWithout.getParent().toString()),
+                javaHome.toFile(), null, false, fallback));
+        assertEquals(javaHome, DesktopSwtProcessor.builderJdkHome(Optional.of(" "), javaHome.toFile(), null, false,
+                fallback));
+
+        // the native-image of the PATH, through a link
+        Path links = Files.createDirectories(directory.resolve("links"));
+        Files.createSymbolicLink(links.resolve("native-image"), graalvm.resolve("bin").resolve("native-image"));
+        String path = directory.resolve("empty") + File.pathSeparator + links;
+        assertEquals(graalvm.toRealPath(), DesktopSwtProcessor.builderJdkHome(Optional.empty(),
+                jdkWithout.getParent().toFile(), path, false, fallback));
+        // native-image.cmd on Windows
+        assertEquals(fallback, DesktopSwtProcessor.builderJdkHome(Optional.of(graalvm.toString()), null, path, true,
+                fallback));
+
+        assertEquals(fallback, DesktopSwtProcessor.builderJdkHome(Optional.empty(), null, null, false, fallback));
+    }
+
+    private static Path nativeImageHome(Path home) throws IOException {
+        Files.createFile(Files.createDirectories(home.resolve("bin")).resolve("native-image"));
+        return home;
+    }
+
+    @Test
+    void swtArch() {
+        assertEquals("x86_64", DesktopSwtProcessor.swtArch("amd64"));
+        assertEquals("x86_64", DesktopSwtProcessor.swtArch("x86_64"));
+        assertEquals("aarch64", DesktopSwtProcessor.swtArch("arm64"));
+        assertEquals("aarch64", DesktopSwtProcessor.swtArch("aarch64"));
+        assertEquals("ppc64le", DesktopSwtProcessor.swtArch("ppc64le"));
     }
 
     // ----------------------------------------------------------------------------------------------- native libraries
@@ -272,6 +418,10 @@ class DesktopSwtProcessorTest {
 
     private static ResolvedDependency swt(String artifactId) {
         return dependency(DesktopSwtProcessor.SWT_GROUP_ID, artifactId);
+    }
+
+    private static Optional<SwtPlatformBuildItem> platform(String artifactId) {
+        return Optional.of(DesktopSwtProcessor.platform(swt(artifactId), new Manifest()));
     }
 
     private static ResolvedDependency dependency(String groupId, String artifactId) {
