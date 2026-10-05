@@ -518,8 +518,17 @@ public class SwtListsTablesTreesPage implements SwtPage {
                 + " at once (LVM_SETITEMSTATE asks for it)", s.selectMaterialized, s.selectMaterialized)));
         checks.add(Check.info("virtual Table : fully visible rows", visible));
         checks.add(Check.info("virtual Table : rows materialized by the first paint", ranges(first)));
+        // GTK : a virtual Table is a GtkTreeView in fixed height mode (Table.createHandle, Table.java:709 of SWT GTK
+        // 3.132.0), and SetData comes for every row whose cells GTK asks for (Table.cellDataProc, Table.java:227-231) :
+        // GtkTreeView also measures the row above the top one (validate_visible_area), a few rows below the partly
+        // visible one (3 in the Docker image, 4 allowed), and once the root of its red-black tree of rows, for the
+        // height of every row (initialize_fixed_height_mode) : a row far below (32767 of 100,000). The table stays lazy
+        int above = SwtMode.isLinux() ? 1 : 0;
+        int below = SwtMode.isLinux() ? 4 : 1;
+        int far = SwtMode.isLinux() ? 1 : 0;
         checks.add(SwtChecks.expect("virtual Table : first paint : only the rows shown from row 0", true,
-                () -> !first.isEmpty() && first.getFirst() == 0 && first.getLast() <= visible + 1));
+                () -> !first.isEmpty() && first.getFirst() == 0
+                        && first.stream().filter(i -> i > visible + below).count() <= far));
         checks.add(SwtChecks.expect("virtual Table : getTopIndex() after setTopIndex(50000), once settled",
                 VIRTUAL_TOP + " " + VIRTUAL_TOP, () -> s.scrolledTop + " " + virtual.getTopIndex()));
         checks.add(Check.info("virtual Table : rows materialized after the scroll", ranges(scrolled)));
@@ -528,8 +537,8 @@ public class SwtListsTablesTreesPage implements SwtPage {
         // just above the top index (49998 and 49999 for a 28 point header)
         int underHeader = SwtMode.isMac() ? Math.ceilDiv(virtual.getHeaderHeight(), virtual.getItemHeight()) : 0;
         checks.add(SwtChecks.expect("virtual Table : after the scroll : only the rows shown from row 50000", true,
-                () -> !scrolled.isEmpty() && scrolled.getFirst() >= VIRTUAL_TOP - underHeader
-                        && scrolled.getLast() <= VIRTUAL_TOP + visible + 1));
+                () -> !scrolled.isEmpty() && scrolled.getFirst() >= VIRTUAL_TOP - underHeader - above
+                        && scrolled.getLast() <= VIRTUAL_TOP + visible + below));
         checks.add(SwtChecks.expect("virtual Table : getItem(99999).getText(1) fires SetData", "Item 99999 true",
                 () -> virtual.getItem(LAZY_INDEX).getText(1) + " " + s.materialized.contains(LAZY_INDEX)));
         updateLabel(s);
@@ -548,9 +557,16 @@ public class SwtListsTablesTreesPage implements SwtPage {
         checks.add(SwtChecks.expect("Table : column alignments", "LEFT LEFT RIGHT CENTER LEFT",
                 () -> Arrays.stream(table.getColumns()).map(c -> alignment(c.getAlignment()))
                         .collect(Collectors.joining(" "))));
-        checks.add(SwtChecks.expect("Table : widths of the columns set with setWidth", "230 150 120 150",
-                () -> IntStream.of(0, 1, 2, 4).mapToObj(i -> String.valueOf(table.getColumn(i).getWidth()))
-                        .collect(Collectors.joining(" "))));
+        // GTK : getWidth() is the width set by setWidth until the column is allocated, then its allocated width
+        // (TableColumn.getWidth and gtk_size_allocate, TableColumn.java:320-327 and 401-402 of SWT GTK 3.132.0), and
+        // GtkTreeView gives the width left in the table to the last column : State, last in the display order
+        checks.add(SwtChecks.expect("Table : widths of the columns set with setWidth",
+                SwtMode.pick("230 150 120 150", "230 150 120 150", "230 150 120 150 or more"),
+                () -> IntStream.of(0, 1, 2, 4).mapToObj(i -> {
+                    int width = table.getColumn(i).getWidth();
+                    return SwtMode.isLinux() && i == 4 && width >= TABLE_WIDTHS[i] ? TABLE_WIDTHS[i] + " or more"
+                            : String.valueOf(width);
+                }).collect(Collectors.joining(" "))));
         checks.add(SwtChecks.info("Table : width of the Modified column after pack()",
                 () -> table.getColumn(MODIFIED_COLUMN).getWidth()));
         checks.add(SwtChecks.expect("Table : getSortColumn(), getSortDirection()", "Size DOWN",
@@ -635,8 +651,12 @@ public class SwtListsTablesTreesPage implements SwtPage {
                             bounds.y + bounds.height / 2));
                     return hit == null ? "none" : hit.getText();
                 }));
-        checks.add(SwtChecks.expect("Tree : getTopItem(), texts of the selected row", "docs SwtKit.java/Java"
-                + " source/11,804", () -> tree.getTopItem().getText() + " " + IntStream.range(0, 3)
+        // GTK : while the tree is not scrolled (its vertical adjustment equals the cached one, 0 when setTopItem was
+        // never called), getTopItem() returns the first selected item, not the item at the top (Tree.getTopItem and
+        // _getCachedTopItem, Tree.java:2114-2134 and 2151-2172 of SWT GTK 3.132.0), a GTK SWT bug
+        checks.add(SwtChecks.expect("Tree : getTopItem(), texts of the selected row",
+                SwtMode.pick("docs", "docs", TREE_SELECTED) + " SwtKit.java/Java source/11,804",
+                () -> tree.getTopItem().getText() + " " + IntStream.range(0, 3)
                         .mapToObj(i -> tree.getSelection()[0].getText(i)).collect(Collectors.joining("/"))));
         checks.add(SwtChecks.info("Tree : getItemHeight(), getHeaderHeight()",
                 () -> tree.getItemHeight() + " " + tree.getHeaderHeight()));

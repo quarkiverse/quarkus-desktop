@@ -88,6 +88,13 @@ public final class SwtChecks {
     }
 
     /**
+     * {@code check} as is on {@code os} and on {@code other}, and informational on the third operating system.
+     */
+    public static Check onlyOn(SwtMode.Os os, SwtMode.Os other, Check check) {
+        return SwtMode.os() == other ? check : onlyOn(os, check);
+    }
+
+    /**
      * {@code class: message <- cause class: message...} (5 causes at most).
      */
     public static String describe(Throwable t) {

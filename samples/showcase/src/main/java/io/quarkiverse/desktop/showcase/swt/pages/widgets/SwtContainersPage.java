@@ -710,9 +710,9 @@ public class SwtContainersPage implements SwtPage {
                 "true true", () -> top.getSelection()[0].getControl().getBounds().equals(top.getClientArea()) + " "
                         + bottom.getSelection()[0].getControl().getBounds().equals(bottom.getClientArea())));
         checks.add(SwtChecks.expect("TabFolder : tabs above the client area (TOP), below it (BOTTOM)", "true true",
-                () -> Arrays.stream(top.getItems()).allMatch(i -> bottomOf(i.getBounds()) <= top.getClientArea().y)
-                        + " " + Arrays.stream(bottom.getItems()).allMatch(i -> i.getBounds().y >= bottomOf(bottom
-                                .getClientArea()))));
+                () -> Arrays.stream(top.getItems()).allMatch(i -> bottomOf(i.getBounds()) <= clientArea(top).y)
+                        + " " + Arrays.stream(bottom.getItems()).allMatch(i -> i.getBounds().y >= bottomOf(
+                                clientArea(bottom)))));
         checks.add(SwtChecks.info("TabFolder : getClientArea() (TOP ; BOTTOM)",
                 () -> SwtChecks.rect(top.getClientArea()) + " ; " + SwtChecks.rect(bottom.getClientArea())));
         checks.add(SwtChecks.info("TabItem.getBounds() of the selected tabs (TCM_GETITEMRECT)",
@@ -746,8 +746,10 @@ public class SwtContainersPage implements SwtPage {
         checks.add(SwtChecks.info("ToolBar SWT.RIGHT : bounds of the DROP_DOWN item (TB_GETITEMRECT)",
                 () -> SwtChecks.rect(right.getItem(10).getBounds())));
         ToolBar wrap = s.wrapBar;
-        checks.add(SwtChecks.expect("ToolBar SWT.WRAP : more than one row (TB_GETROWS)", true,
-                () -> wrap.getRowCount() > 1));
+        // GTK : "On GTK, toolbars cannot wrap", getRowCount() is always 1 (ToolBar.getRowCount, ToolBar.java:409-413 of
+        // SWT GTK 3.132.0) : SWT.WRAP shows the overflow arrow of the GtkToolbar instead (ToolBar.java:193)
+        checks.add(SwtChecks.expect("ToolBar SWT.WRAP : more than one row (TB_GETROWS)",
+                SwtMode.pick(true, true, false), () -> wrap.getRowCount() > 1));
         checks.add(SwtChecks.info("ToolBar SWT.WRAP : getRowCount(), getSize()",
                 () -> wrap.getRowCount() + " " + SwtChecks.size(wrap.getSize())));
         checks.add(SwtChecks.expect("ToolBar SWT.WRAP : text below the image (higher than 24 + text)", true,
@@ -876,8 +878,13 @@ public class SwtContainersPage implements SwtPage {
         checks.add(SwtChecks.expect("Shells : SWT.TOOL, SWT.ON_TOP and SWT.NO_TRIM in getStyle()", "true true true",
                 () -> ((shells.get(2).getStyle() & SWT.TOOL) != 0) + " " + ((shells.get(4).getStyle() & SWT.ON_TOP)
                         != 0) + " " + ((shells.get(3).getStyle() & SWT.NO_TRIM) != 0)));
-        checks.add(SwtChecks.expect("Shells : none took the focus (Display.getActiveShell())", false,
-                () -> shells.contains(Display.getCurrent().getActiveShell())));
+        // GTK : Shell.setVisible shows the shell without activating it (Shell.java:2901 of SWT GTK 3.132.0), and the
+        // active shell is the one the window manager gives the focus to (Shell.gtk_focus_in_event,
+        // Shell.java:1621-1625) : a window manager that focuses new windows activates them (the openbox of the Docker
+        // image, focusNew), informational on Linux
+        checks.add(SwtChecks.onlyOn(SwtMode.Os.WINDOWS, SwtMode.Os.MAC, SwtChecks.expect(
+                "Shells : none took the focus (Display.getActiveShell())", false,
+                () -> shells.contains(Display.getCurrent().getActiveShell()))));
         checks.add(SwtChecks.expect("Shell SWT.DIALOG_TRIM : getDefaultButton()", "OK",
                 () -> shells.get(1).getDefaultButton().getText()));
     }
@@ -929,6 +936,21 @@ public class SwtContainersPage implements SwtPage {
     private static String visibleControls(TabFolder folder) {
         return Arrays.stream(folder.getItems()).map(i -> String.valueOf(i.getControl().isVisible()))
                 .collect(Collectors.joining(" "));
+    }
+
+    /**
+     * The client area of {@code folder} in its coordinates. GTK : getClientArea() is at 0,0,
+     * TabFolder.getClientAreaInPixels forces x and y to 0 (SWT bug 454936, TabFolder.java:214-235 of SWT GTK 3.132.0) ;
+     * the client widget, the page of the selected tab, is placed by the trim of computeTrim (its allocation,
+     * TabFolder.computeTrimInPixels, TabFolder.java:191-211).
+     */
+    private static Rectangle clientArea(TabFolder folder) {
+        Rectangle area = folder.getClientArea();
+        if (SwtMode.isLinux()) {
+            Rectangle trim = folder.computeTrim(0, 0, 0, 0);
+            area = new Rectangle(area.x - trim.x, area.y - trim.y, area.width, area.height);
+        }
+        return area;
     }
 
     private static int bottomOf(Rectangle r) {

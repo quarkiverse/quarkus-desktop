@@ -563,9 +563,18 @@ public class SwtButtonsPage implements SwtPage {
         // Group
         checks.add(SwtChecks.expect("Group texts : titled, untitled", "Group with a title, ''",
                 () -> w.titled.getText() + ", '" + w.untitled.getText() + "'"));
+        // GTK : getClientArea() is at 0,0, Group.getClientAreaInPixels forces x and y to 0 (SWT bug 453827,
+        // Group.java:135-153 of SWT GTK 3.132.0) : the client widget is placed by the trim of computeTrim (its
+        // allocation in the frame, Group.computeTrimInPixels, Group.java:120-132), and below the title its top trim is
+        // larger than the one of the untitled Group
         checks.add(SwtChecks.expect("Group client area inside its bounds, below its title", true, () -> {
             Rectangle area = w.titled.getClientArea();
             Point size = w.titled.getSize();
+            if (SwtMode.isLinux()) {
+                Rectangle trim = w.titled.computeTrim(0, 0, 0, 0);
+                return area.x == 0 && area.y == 0 && trim.x <= 0 && area.width - trim.x <= size.x
+                        && area.height - trim.y <= size.y && trim.y < w.untitled.computeTrim(0, 0, 0, 0).y;
+            }
             return area.x >= 0 && area.y > 0 && area.x + area.width <= size.x && area.y + area.height <= size.y;
         }));
         // computed sizes : relations that hold on every platform, the values themselves for the comparison

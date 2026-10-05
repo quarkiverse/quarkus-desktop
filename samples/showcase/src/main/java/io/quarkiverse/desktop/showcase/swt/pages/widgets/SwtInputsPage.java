@@ -445,19 +445,30 @@ public class SwtInputsPage implements SwtPage {
         // macOS : Text.DELIMITER is "\r", but the NSTextView keeps the "\n" of setText and getText returns the text as
         // stored (no conversion either way, Text.setText / Text.getText) : the text comes back unchanged, a Cocoa SWT
         // bug against the Javadoc of Text.DELIMITER ("when text is queried ... delimited using this delimiter")
-        checks.add(SwtChecks.expect("Text MULTI : getText with Text.DELIMITER", true,
-                () -> w.multi.getText().equals(SwtMode.isMac() ? MULTI : MULTI.replace("\n", Text.DELIMITER))));
-        checks.add(SwtChecks.expect("Text WRAP : text unchanged, lines wrapped", "true true", () -> {
-            String text = w.wrap.getText();
-            // getLineCount counts the wrapped lines on Windows (EM_GETLINECOUNT) ; on Cocoa the paragraphs of the
-            // NSTextStorage, 1 for this text without a line break : there the wrap shows in computeSize at the width
-            // of the control
-            boolean wrapped = SwtMode.isMac()
-                    ? w.wrap.getLineCount() == 1 && w.wrap.computeSize(AREA_WIDTH, SWT.DEFAULT).y
-                            > w.wrap.computeSize(SWT.DEFAULT, SWT.DEFAULT).y
-                    : w.wrap.getLineCount() > 1;
-            return text.equals(WRAP) + " " + wrapped;
-        }));
+        checks.add(SwtChecks.expect("Text MULTI : delimiter of getText",
+                SwtMode.pick("\\n as set, not Text.DELIMITER", "Text.DELIMITER", "Text.DELIMITER"), () -> {
+                    String text = w.multi.getText();
+                    return text.equals(MULTI.replace("\n", Text.DELIMITER)) ? "Text.DELIMITER"
+                            : text.equals(MULTI) ? "\\n as set, not Text.DELIMITER" : "other";
+                }));
+        // getLineCount counts the wrapped lines on Windows (EM_GETLINECOUNT) ; the paragraphs on Cocoa (NSTextStorage) and
+        // GTK (gtk_text_buffer_get_line_count), 1 for this text without a line break : there the wrap shows in the
+        // preferred height of the text at the width of the control (computeSize lays the text out again, wrapped
+        // because of SWT.WRAP)
+        checks.add(SwtChecks.expect("Text WRAP : text unchanged, wrapped",
+                SwtMode.pick("true, computeSize wraps at the width", "true, more than 1 line",
+                        "true, computeSize wraps at the width"),
+                () -> {
+                    String wrapped;
+                    if (SwtMode.isWindows()) {
+                        wrapped = w.wrap.getLineCount() > 1 ? "more than 1 line" : "1 line";
+                    } else {
+                        wrapped = w.wrap.getLineCount() == 1 && w.wrap.computeSize(AREA_WIDTH, SWT.DEFAULT).y
+                                > w.wrap.computeSize(SWT.DEFAULT, SWT.DEFAULT).y ? "computeSize wraps at the width"
+                                        : w.wrap.getLineCount() + " lines, computeSize does not wrap";
+                    }
+                    return w.wrap.getText().equals(WRAP) + ", " + wrapped;
+                }));
         // Spinner
         checks.add(SwtChecks.expect("Spinner selection min max digits increment page",
                 "1234 -500 1500 2 25 100 / 35 0 100 0 5 20", () -> spinner(w.decimal) + " / " + spinner(w.integer)));
@@ -598,14 +609,20 @@ public class SwtInputsPage implements SwtPage {
         // SWT.SIMPLE is a hint : Cocoa creates the NSComboBox of DROP_DOWN and limits the height of an editable combo
         // to the height of its text (Combo.computeSize, Combo.setBounds) : the heightHint 96 is ignored there, the
         // SIMPLE combo is exactly as tall as the DROP_DOWN combo
-        checks.add(SwtChecks.expect("getSize : SIMPLE combo taller than DROP_DOWN", true,
-                () -> SwtMode.isMac() ? w.simple.getSize().y == w.dropDown.getSize().y
-                        : w.simple.getSize().y > w.dropDown.getSize().y));
-        checks.add(SwtChecks.expect("computeSize : calendar larger than date field", "true true", () -> {
-            Point calendar = w.calendar.computeSize(SWT.DEFAULT, SWT.DEFAULT);
-            Point date = w.mediumDate.computeSize(SWT.DEFAULT, SWT.DEFAULT);
-            return (calendar.x > date.x) + " " + (calendar.y > date.y);
-        }));
+        checks.add(SwtChecks.expect("getSize : SIMPLE combo height against DROP_DOWN",
+                SwtMode.pick("same height", "taller", "taller"), () -> {
+                    int simple = w.simple.getSize().y;
+                    int dropDown = w.dropDown.getSize().y;
+                    return simple > dropDown ? "taller" : simple == dropDown ? "same height" : "shorter";
+                }));
+        // GTK : a DROP_DOWN date is as wide as its longest text, the trim of its entry and its button
+        // (DateTime.computeSizeInPixels, DateTime.java:329-334 of SWT GTK 3.132.0), wider than the GtkCalendar
+        checks.add(SwtChecks.expect("computeSize : calendar larger than date field",
+                SwtMode.pick("true true", "true true", "false true"), () -> {
+                    Point calendar = w.calendar.computeSize(SWT.DEFAULT, SWT.DEFAULT);
+                    Point date = w.mediumDate.computeSize(SWT.DEFAULT, SWT.DEFAULT);
+                    return (calendar.x > date.x) + " " + (calendar.y > date.y);
+                }));
         checks.add(SwtChecks.info("computeSize : text, spinner, combo x 2",
                 () -> join(Stream.of(w.single, w.decimal, w.dropDown, w.readOnlyCombo),
                         c -> SwtChecks.size(c.computeSize(SWT.DEFAULT, SWT.DEFAULT)))));

@@ -64,8 +64,8 @@ The verdict is the first line of `comparison/logs-mine/compare.txt` (`MATCH` or 
 
 ## SWT variant
 
-`-Dswt` builds a third variant into `target/swt/`: an SWT main window and 16 SWT pages (687 checks), with
-`quarkus-desktop-swt` alone (Eclipse SWT, no AWT or Swing extension). Only
+`-Dswt` builds a third variant into `target/swt/`: an SWT main window and 16 SWT pages (688 checks on Windows: the
+count depends on the platform), with `quarkus-desktop-swt` alone (Eclipse SWT, no AWT or Swing extension). Only
 `src/main/java/io/quarkiverse/desktop/showcase/swt` (and the toolkit neutral `core/Check.java` and `core/Json.java`) is
 compiled, and only `application.properties` and the SWT assets of `src/main/resources/showcase/swt` are packaged. Its
 pages are CDI beans implementing `swt/core/SwtPage`, in `swt/pages/<category>`; quarkus-desktop-swt runs them on the
@@ -97,10 +97,12 @@ page must be identical, except the expected differences of `swt-native-limits`. 
 `-XstartOnFirstThread` to the JVM runs on macOS. `--swt` is not compatible with `--awt-only`, `--pipeline` and
 `--trace`.
 
-The cycles of the SWT variant match on macOS 27.0 (Apple silicon, with `--exact` too), and matched on Windows 11
-before the pages got their macOS values. Where Cocoa SWT behaves differently (`Text.DELIMITER`, `Transform.shear`,
-`Path.contains` with `SWT.FILL_EVEN_ODD`, the glyph metrics of Core Text...), the checks of the pages expect the macOS
-value, with a comment naming the cause.
+The cycles of the SWT variant match, with `--exact` too, on Windows 11, on macOS 27.0 (Apple silicon), and on Linux x64
+in Docker (the image above, `docker/linux`), with no failed check. Where SWT behaves differently on a platform
+(`Text.DELIMITER` and `Path.contains` with `SWT.FILL_EVEN_ODD` on Cocoa, `Transform.shear` on Cocoa and GTK, the client
+area of a `Group` or a `TabFolder`, the rows of a virtual `Table` and the toolbars that cannot wrap on GTK, the glyph
+metrics of Core Text...), the checks of the pages expect the value of that platform, with a comment naming the cause.
+On Linux, whether a new shell takes the focus depends on the window manager: that check is informational there.
 
 On Windows, the snapshots copy the pixels from the windows (`GC.copyArea`) instead of `Control.print`, whose
 `PrintWindow` now and then misses parts of a window; a window holds the pixels of its parts on the screen only, so a

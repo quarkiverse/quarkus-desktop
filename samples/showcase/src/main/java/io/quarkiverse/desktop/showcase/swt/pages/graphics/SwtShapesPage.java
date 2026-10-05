@@ -556,8 +556,19 @@ public class SwtShapesPage implements SwtPage {
                 GRADIENT_BOTTOM, GRADIENT_TOP));
         checks.add(gradient("fillGradientRectangle horizontal, GDI : left, right", tiles, image, HORIZONTAL, 10, 59,
                 139, 59, GRADIENT_LEFT, GRADIENT_RIGHT));
-        checks.add(SwtChecks.expect("setAntialias(OFF) : colors of the drawing (background, fill, ink)", 3,
-                () -> colors(tiles, image, ALIASED)));
+        // GTK : GC.drawLine switches Cairo to CAIRO_ANTIALIAS_BEST and never restores the antialias of setAntialias
+        // (GC.drawLineInPixels, GC.java:1001-1011 of SWT GTK 3.132.0), a GTK SWT bug : the line and the arc drawn after
+        // it are anti-aliased ; the oval, drawn before the line (the top left 80 x 64, clear of the line and of the
+        // arc), has the three colors
+        checks.add(SwtChecks.expect("setAntialias(OFF) : colors of the drawing (background, fill, ink)",
+                SwtMode.<Object> pick(3, 3, "3 in the oval (before drawLine), more than 3 in all"), () -> {
+                    int all = colors(tiles, image, ALIASED);
+                    if (!SwtMode.isLinux()) {
+                        return all;
+                    }
+                    return colors(tiles, image, ALIASED, 0, 0, 80, 64) + " in the oval (before drawLine), "
+                            + (all > 3 ? "more than 3" : String.valueOf(all)) + " in all";
+                }));
         checks.add(SwtChecks.run("setAntialias(ON) : colors of the drawing (more than 3)", () -> {
             int count = colors(tiles, image, ANTIALIASED);
             if (count <= 3) {

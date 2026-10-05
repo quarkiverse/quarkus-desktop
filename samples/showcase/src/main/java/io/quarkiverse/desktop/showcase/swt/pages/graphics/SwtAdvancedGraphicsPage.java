@@ -1015,9 +1015,12 @@ public class SwtAdvancedGraphicsPage implements SwtPage {
                 })));
         // macOS : Transform.shear puts shearX in m12 and shearY in m21 of the NSAffineTransformStruct, where
         // x' = m11 x + m21 y + tX and y' = m12 x + m22 y + tY : shear(0.5, 0) shears vertically (the shear(0.6, 0)
-        // tile too), a Cocoa SWT bug against the Javadoc of Transform.shear ("the shear factor in the X direction")
+        // tile too), a Cocoa SWT bug against the Javadoc of Transform.shear ("the shear factor in the X direction").
+        // The same SWT bug on GTK : shear multiplies by the cairo_matrix_t {1, shearX, shearY, 1, 0, 0}, shearX in yx
+        // where y' = yx x + yy y + y0 (Transform.shear, Transform.java:338-342 of SWT GTK 3.132.0 ; getElements returns
+        // xx, yx, xy, yy, x0, y0, Transform.java:178-188)
         checks.add(SwtChecks.expect("Transform : shear(0.5, 0)", SwtMode.pick("1.000 0.500 0.000 1.000 0.000 0.000",
-                "1.000 0.000 0.500 1.000 0.000 0.000", "1.000 0.000 0.500 1.000 0.000 0.000"),
+                "1.000 0.000 0.500 1.000 0.000 0.000", "1.000 0.500 0.000 1.000 0.000 0.000"),
                 () -> onTransform(display, t -> t.shear(0.5f, 0), SwtAdvancedGraphicsPage::elements)));
         checks.add(SwtChecks.expect("Transform : translate(10, 0).multiply(scale(2, 2))",
                 "2.000 0.000 0.000 2.000 10.000 0.000", () -> onTransform(display, t -> t.translate(10, 0), t -> {
