@@ -9,6 +9,10 @@ updates:
     directory: "/" # Location of package manifests
     schedule:
       interval: "daily"
+    ignore:
+      # SWT 3.133.0 and later need Java 21 : the extensions are built and tested on Java 17 too (version.swt)
+      - dependency-name: "org.eclipse.platform:org.eclipse.swt*"
+        versions: [ ">=3.133.0" ]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

@@ -24,6 +24,11 @@
             <artifactId>quarkus-desktop-swing-deployment</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-swt-deployment</artifactId>
+            <version>${project.version}</version>
+        </dependency>
     </dependencies>
 
     <build>

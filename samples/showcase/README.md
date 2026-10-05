@@ -33,6 +33,7 @@ java -jar target/quarkus-app/quarkus-run.jar
 
 - `-Dawt-only` builds the AWT-only variant into `target/awt-only/`: an AWT main window and the AWT pages only, with
   `quarkus-desktop-awt` alone.
+- `-Dswt` builds the SWT variant into `target/swt/` (see [SWT variant](#swt-variant)).
 - `-Dshowcase.pages=overview-environment,j2d-` (page ids, a trailing `-` is a prefix) and `-Dshowcase.categories=java2d,text`
   select pages.
 
@@ -51,6 +52,7 @@ The verdict is the first line of `comparison/logs-mine/compare.txt` (`MATCH` or 
 `overview-native-limits`. Useful options:
 
 - `--awt-only`: the AWT-only variant;
+- `--swt`: the SWT variant;
 - `--exact`: a native build with `--exact-reachability-metadata`, reporting every access missing from the metadata;
 - `--trace`: a JVM run under the GraalVM tracing agent, and `tools/MetadataDiff.java` to compare its metadata with
   quarkus-desktop;
@@ -58,6 +60,46 @@ The verdict is the first line of `comparison/logs-mine/compare.txt` (`MATCH` or 
 - `--pages=...`, `--hidpi` (the real display scale), `--pipeline=gdi|opengl|x11` (another Java2D pipeline).
 
 `tools/Snapshot.java` and `tools/Compare.java` run the single steps.
+
+## SWT variant
+
+`-Dswt` builds a third variant into `target/swt/`: an SWT main window and 16 SWT pages (687 checks), with
+`quarkus-desktop-swt` alone (Eclipse SWT, no AWT or Swing extension). Only
+`src/main/java/io/quarkiverse/desktop/showcase/swt` (and the toolkit neutral `core/Check.java` and `core/Json.java`) is
+compiled, and only `application.properties` and the SWT assets of `src/main/resources/showcase/swt` are packaged. Its
+pages are CDI beans implementing `swt/core/SwtPage`, in `swt/pages/<category>`; quarkus-desktop-swt runs them on the
+main thread, the thread of the SWT `Display`.
+
+| Category | Pages |
+|---|---|
+| Overview | `swt-environment`, `swt-native-limits` |
+| Widgets | `swt-buttons`, `swt-inputs`, `swt-lists-tables-trees`, `swt-containers` |
+| Custom Widgets | `swt-custom-widgets` |
+| Layouts | `swt-layouts` |
+| Graphics | `swt-graphics-shapes`, `swt-graphics-advanced` |
+| Text & Fonts | `swt-text-fonts` |
+| Images | `swt-images` |
+| Data Transfer & Desktop | `swt-data-transfer`, `swt-desktop` |
+| Printing | `swt-printing` |
+| Accessibility | `swt-accessibility` |
+
+```bash
+./mvnw package -Dswt
+java -jar target/swt/quarkus-app/quarkus-run.jar
+
+$GRAALVM_HOME/bin/java tools/Cycle.java mine-swt --swt
+```
+
+Its snapshot mode writes the same `report.json` and images as the other variants, compared by the same tools: every
+page must be identical, except the expected differences of `swt-native-limits`. With `--swt`, the tools pin
+`-Dswt.autoScale=100` (instead of `-Dsun.java2d.uiScale=1`; `--hidpi` keeps the zoom of the monitor) and add
+`-XstartOnFirstThread` to the JVM runs on macOS. `--swt` is not compatible with `--awt-only`, `--pipeline` and
+`--trace`.
+
+On Windows, the snapshots copy the pixels from the windows (`GC.copyArea`) instead of `Control.print`, whose
+`PrintWindow` now and then misses parts of a window; a window holds the pixels of its parts on the screen only, so a
+page taller than the screen is captured by tiles. Every image is taken once three renders in a row give the same
+pixels. During a snapshot run, the clicks and the mouse wheel over its windows are ignored.
 
 ## Linux in Docker
 

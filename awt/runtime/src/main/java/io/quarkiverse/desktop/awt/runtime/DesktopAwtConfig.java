@@ -190,7 +190,8 @@ public interface DesktopAwtConfig {
          * AppKit, which AWT, Swing and JavaFX use on macOS, only runs on the first thread of the process : without this,
          * the first window of an AWT or Swing application never shows. Disable it only with the Quarkus FX launcher,
          * which then runs JavaFX on the first thread itself (AWT then runs embedded in JavaFX), or with a GraalVM version
-         * that keeps the first thread in the Cocoa event loop itself.
+         * that keeps the first thread in the Cocoa event loop itself. It is ignored when the application has an SWT user
+         * interface (Desktop SWT extension), whose event loop runs on the first thread.
          */
         @WithDefault("true")
         boolean parkMainThread();

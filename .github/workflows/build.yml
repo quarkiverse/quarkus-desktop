@@ -62,7 +62,14 @@ jobs:
           java-version: ${{ matrix.java-version }}
           cache: 'maven'
 
-      # AWT and Swing tests need a display : a virtual X display on Linux
+      # SWT needs GTK 3 on Linux
+      - name: Install the GTK 3 runtime libraries
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-0t64
+
+      # AWT, Swing and SWT tests need a display : a virtual X display on Linux
       - name: Build with Maven (virtual X display)
         if: startsWith(matrix.os, 'ubuntu')
         run: xvfb-run -a ./mvnw -B -ntp clean install -Dno-format 2>&1 | tee maven.log
@@ -109,7 +116,7 @@ jobs:
           cache: 'maven'
 
       # The AWT libraries of the native executable are linked dynamically : running it needs the X11, font, sound,
-      # printing and GTK runtime libraries of the host, and a (virtual) X display
+      # printing and GTK runtime libraries of the host, and a (virtual) X display (SWT loads GTK 3 too)
       - name: Install native build and run prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |

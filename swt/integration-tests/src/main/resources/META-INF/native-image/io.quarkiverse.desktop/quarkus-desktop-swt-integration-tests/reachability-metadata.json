@@ -1,0 +1,7 @@
+{
+  "resources": [
+    { "glob": "application.properties" },
+    { "glob": "application-prod.properties" },
+    { "glob": "META-INF/microprofile-config.properties" }
+  ]
+}

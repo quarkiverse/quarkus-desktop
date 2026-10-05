@@ -15,18 +15,27 @@ import java.util.stream.Stream;
  * environment, checks and errors in comparison/&lt;label&gt;/report.json and the console output in
  * comparison/&lt;label&gt;/run.log.
  * <p>
- * usage: java tools/Snapshot.java jvm|native [label] [--pages=ids] [--categories=names] [--awt-only] [--hidpi]
+ * usage: java tools/Snapshot.java jvm|native [label] [--pages=ids] [--categories=names] [--awt-only|--swt] [--hidpi]
  * [--pipeline=gdi|opengl|x11] [--screen] [--trace] [--timeout=seconds] [-- options...]
  * <ul>
  * <li>java tools/Snapshot.java jvm</li>
  * <li>java tools/Snapshot.java native native-d3d-off -- -Dsun.java2d.d3d=false</li>
  * <li>java tools/Snapshot.java jvm jvm-j2d --pages=j2d-,overview-environment</li>
  * <li>java tools/Snapshot.java jvm --awt-only (runs target/awt-only, built with mvn package -Dawt-only)</li>
+ * <li>java tools/Snapshot.java jvm --swt (runs target/swt, built with mvn package -Dswt)</li>
  * </ul>
  * Defaults (unless given after {@code --}) : {@code -Duser.language=en -Duser.country=US} (a native executable defaults
  * to the locale of the build machine) and {@code -Dsun.java2d.uiScale=1} (AWT heavyweight components render correctly
  * with printAll at scale 1 only). {@code --hidpi} keeps the real UI scale : its report shows whether the executable is
  * DPI aware (defaultTransform, screenResolution).
+ * <p>
+ * {@code --swt} runs the SWT variant (an SWT main window and the SWT pages, quarkus-desktop-swt alone), whose report
+ * has the same contract. It is exclusive with {@code --awt-only} and with {@code --pipeline} (SWT draws with GDI and
+ * GDI+ on Windows, Cairo on Linux, Core Graphics on macOS : no Java2D pipeline). Its default is
+ * {@code -Dswt.autoScale=100} instead of {@code -Dsun.java2d.uiScale=1} (SWT draws, and the snapshots are taken, at
+ * 100 % whatever the zoom of the monitor) ; {@code --hidpi} keeps the zoom that SWT derives from the monitor (the
+ * environment keys swtDeviceZoom and dpi of the report). On macOS, its JVM runs get {@code -XstartOnFirstThread} (SWT
+ * creates its Display on the first thread of the process), and none of the AWT defaults below.
  * <p>
  * {@code --pipeline} selects another Java2D pipeline than the default one of the platform, for both runs of a
  * comparison : {@code gdi} ({@code -Dsun.java2d.d3d=false} : GDI instead of Direct3D on Windows), {@code opengl}
@@ -44,10 +53,11 @@ import java.util.stream.Stream;
  * <p>
  * {@code --pages} : comma separated page ids, an entry ending with {@code -} or {@code *} being a prefix.
  * {@code --categories} : comma separated category keys (overview, awt, java2d, text, images, swing, laf, desktop,
- * printing, a11y, sound) or names. {@code --trace} (jvm only) runs the JVM under the GraalVM tracing agent, metadata in
+ * printing, a11y, sound ; with --swt : overview, widgets, custom, layouts, graphics, text, images, desktop, printing,
+ * a11y) or names. {@code --trace} (jvm only) runs the JVM under the GraalVM tracing agent, metadata in
  * comparison/&lt;label&gt;/metadata (the agent comes with GraalVM : the java of GRAALVM_HOME is used if the current one
  * has no agent). Options after {@code --} are passed to the JVM (before -jar) or to the native executable. The default
- * label is the mode, suffixed with {@code -awt} and {@code -hidpi} for these variants.
+ * label is the mode, suffixed with {@code -awt}, {@code -swt} and {@code -hidpi} for these variants.
  * <p>
  * Exit code 0 when the showcase exited normally and wrote its report, 1 otherwise (no report, a crash, the watchdog).
  */
@@ -74,6 +84,8 @@ public class Snapshot {
                 o.categories = arg.substring("--categories=".length());
             } else if (arg.equals("--awt-only")) {
                 o.awtOnly = true;
+            } else if (arg.equals("--swt")) {
+                o.swt = true;
             } else if (arg.equals("--hidpi")) {
                 o.hidpi = true;
             } else if (arg.startsWith("--pipeline=")) {
@@ -89,14 +101,15 @@ public class Snapshot {
                 positional.add(arg);
             }
         }
+        checkVariant(o);
         if (o.trace && !positional.isEmpty() && !positional.getFirst().equals("jvm")) {
             System.err.println("--trace runs the JVM under the tracing agent : jvm mode only");
             System.exit(2);
         }
         if (positional.isEmpty() || !List.of("jvm", "native").contains(positional.getFirst())) {
             System.err.println("usage: java tools/Snapshot.java jvm|native [label] [--pages=ids] [--categories=names] "
-                    + "[--awt-only] [--hidpi] [--pipeline=gdi|opengl|x11] [--screen] [--trace] [--timeout=seconds] "
-                    + "[-- options...]");
+                    + "[--awt-only|--swt] [--hidpi] [--pipeline=gdi|opengl|x11] [--screen] [--trace] "
+                    + "[--timeout=seconds] [-- options...]");
             System.exit(2);
         }
         String mode = positional.get(0);
@@ -112,6 +125,8 @@ public class Snapshot {
         String pages;
         String categories;
         boolean awtOnly;
+        /** The SWT variant (target/swt) : exclusive with {@link #awtOnly} and {@link #pipeline}. */
+        boolean swt;
         boolean hidpi;
         /** A Java2D pipeline of {@link #PIPELINES}, or {@code null} for the default one. */
         String pipeline;
@@ -127,6 +142,7 @@ public class Snapshot {
             c.pages = pages;
             c.categories = categories;
             c.awtOnly = awtOnly;
+            c.swt = swt;
             c.hidpi = hidpi;
             c.pipeline = pipeline;
             c.screen = screen;
@@ -163,15 +179,30 @@ public class Snapshot {
         }
     }
 
+    /**
+     * Exits (code 2) when the options select two variants, or a Java2D pipeline for the SWT variant.
+     */
+    static void checkVariant(Options o) {
+        if (o.swt && o.awtOnly) {
+            System.err.println("--swt and --awt-only select two variants : one of them only");
+            System.exit(2);
+        }
+        if (o.swt && o.pipeline != null) {
+            System.err.println("--pipeline selects a Java2D pipeline : not with --swt (SWT does not draw with Java2D)");
+            System.exit(2);
+        }
+    }
+
     static String defaultLabel(String mode, Options o) {
-        return mode + (o.awtOnly ? "-awt" : "") + (o.hidpi ? "-hidpi" : "") + (o.pipeline != null ? "-" + o.pipeline : "");
+        return mode + (o.awtOnly ? "-awt" : "") + (o.swt ? "-swt" : "") + (o.hidpi ? "-hidpi" : "")
+                + (o.pipeline != null ? "-" + o.pipeline : "");
     }
 
     static int run(String mode, String label, Options o) throws IOException, InterruptedException {
         Path out = Path.of("comparison", label);
         deleteRecursively(out);
         Files.createDirectories(out);
-        Path target = targetDir(o.awtOnly);
+        Path target = targetDir(o);
 
         List<String> command = new ArrayList<>();
         if (mode.equals("jvm")) {
@@ -197,9 +228,11 @@ public class Snapshot {
             command.add("-Duser.language=en");
             command.add("-Duser.country=US");
         }
-        // heavyweight AWT components print correctly at scale 1 only ; --hidpi keeps the real scale
-        if (!o.hidpi && o.options.stream().noneMatch(opt -> opt.startsWith("-Dsun.java2d.uiScale="))) {
-            command.add("-Dsun.java2d.uiScale=1");
+        // heavyweight AWT components print correctly at scale 1 only, and SWT draws at 100 % whatever the zoom of the
+        // monitor : the same scale in both runs ; --hidpi keeps the real scale
+        String scale = o.swt ? "-Dswt.autoScale=" : "-Dsun.java2d.uiScale=";
+        if (!o.hidpi && o.options.stream().noneMatch(opt -> opt.startsWith(scale))) {
+            command.add(scale + (o.swt ? "100" : "1"));
         }
         if (o.pipeline != null) {
             String property = PIPELINES.get(o.pipeline);
@@ -208,7 +241,12 @@ public class Snapshot {
                 command.add(property);
             }
         }
-        if (isMac()) {
+        if (isMac() && o.swt) {
+            if (mode.equals("jvm")) {
+                // SWT creates its Display on the first thread of the process (a native executable runs main there)
+                command.add("-XstartOnFirstThread");
+            }
+        } else if (isMac()) {
             // set by the java launcher (the application name) or changing the rendering : the same in both runs
             for (String[] property : new String[][] { { "apple.awt.application.name", "Quarkus Desktop Showcase" },
                     { "apple.awt.application.appearance", "NSAppearanceNameAqua" },
@@ -260,9 +298,10 @@ public class Snapshot {
         String warning = "";
         if (report) {
             String ui = String.valueOf(Compare.readReport(out).get("ui"));
-            if (o.awtOnly != ui.equals("awt")) {
-                warning = " WARNING: main window " + ui + " (" + target + " is not the " + (o.awtOnly ? "awt-only" : "default")
-                        + " variant ?)";
+            // awt-only : awt, swt : swt, default : another main window (swing)
+            String expected = o.swt ? "swt" : o.awtOnly ? "awt" : null;
+            if (expected != null ? !ui.equals(expected) : ui.equals("awt") || ui.equals("swt")) {
+                warning = " WARNING: main window " + ui + " (" + target + " is not the " + variant(o) + " variant ?)";
             }
         }
         long missing = missingMetadata(log);
@@ -293,10 +332,24 @@ public class Snapshot {
     }
 
     /**
-     * target (default variant) or target/awt-only (built with -Dawt-only).
+     * The variant of the options : {@code default}, {@code awt-only} or {@code swt}.
      */
-    static Path targetDir(boolean awtOnly) {
-        return awtOnly ? Path.of("target", "awt-only") : Path.of("target");
+    static String variant(Options o) {
+        return o.swt ? "swt" : o.awtOnly ? "awt-only" : "default";
+    }
+
+    /**
+     * The Maven property that builds the variant ({@code -Dawt-only}, {@code -Dswt}), {@code null} for the default one.
+     */
+    static String mavenProperty(Options o) {
+        return o.swt ? "-Dswt" : o.awtOnly ? "-Dawt-only" : null;
+    }
+
+    /**
+     * target (default variant), target/awt-only (built with -Dawt-only) or target/swt (built with -Dswt).
+     */
+    static Path targetDir(Options o) {
+        return o.swt ? Path.of("target", "swt") : o.awtOnly ? Path.of("target", "awt-only") : Path.of("target");
     }
 
     static String javaExecutable() {
@@ -351,7 +404,7 @@ public class Snapshot {
             }
         }
         throw new IllegalStateException("No native executable in " + target + " : build it with mvn package -Dnative"
-                + (target.endsWith("awt-only") ? " -Dawt-only" : ""));
+                + (target.endsWith("awt-only") ? " -Dawt-only" : target.endsWith("swt") ? " -Dswt" : ""));
     }
 
     static boolean isWindows() {

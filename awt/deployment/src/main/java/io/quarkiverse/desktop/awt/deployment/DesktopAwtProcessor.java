@@ -46,6 +46,7 @@ import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
@@ -185,6 +186,11 @@ class DesktopAwtProcessor {
      * The {@code QuarkusApplication} of the Quarkus FX launcher, which runs JavaFX on the first thread itself.
      */
     static final String QUARKUS_FX_APPLICATION = "io.quarkiverse.fx.QuarkusFxApplication";
+
+    /**
+     * The main of the applications with an SWT user interface (Desktop SWT extension).
+     */
+    static final String SWT_APPLICATION = "io.quarkiverse.desktop.swt.runtime.SwtApplication";
 
     /**
      * The interceptor binding that dev mode adds to the beans for the monitoring of ArC.
@@ -826,25 +832,36 @@ class DesktopAwtProcessor {
 
     /**
      * Keeps the first thread of macOS native executables in the Cocoa event loop (see
-     * {@code io.quarkiverse.desktop.awt.runtime.macos.MacMainThread}).
+     * {@code io.quarkiverse.desktop.awt.runtime.macos.MacMainThread}), unless the application has an SWT user interface
+     * (the Desktop SWT extension then provides the main of the application) : SWT creates its {@code Display} and runs the
+     * Cocoa event loop on the first thread itself.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     void macosMainThread(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config, NativeConfig nativeConfig,
-            Optional<QuarkusApplicationClassBuildItem> quarkusApplication,
+            Optional<QuarkusApplicationClassBuildItem> quarkusApplication, Capabilities capabilities,
             BuildProducer<NativeImageSystemPropertyBuildItem> builderProperties) {
         if (!platform.isMac()) {
             return;
         }
         DesktopAwtConfig.Macos macos = config.macos();
+        // an SWT user interface (an SwtStartupEvent observer) : the Desktop SWT extension provides the main, even with a
+        // @QuarkusMain of the application, which then calls SwtLifecycle.run() on the first thread
+        boolean swt = capabilities.isPresent(DesktopCapabilities.SWT) && quarkusApplication
+                .map(item -> SWT_APPLICATION.equals(item.getClassName())).orElse(false);
+        boolean park = macos.parkMainThread() && !swt;
+        if (swt && macos.parkMainThread()) {
+            LOGGER.debug("The application has an SWT user interface : the first thread runs the SWT event loop, it is not"
+                    + " parked");
+        }
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(ParkMainThreadEnabled.PROPERTY,
-                String.valueOf(macos.parkMainThread())));
+                String.valueOf(park)));
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(MacMainThread.STACK_SIZE_PROPERTY,
                 String.valueOf(macos.mainThreadStackSize().asLongValue())));
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(MacMainThread.EXIT_HALT_TIMEOUT_PROPERTY,
                 String.valueOf(macos.exitHaltTimeout().toMillis())));
         boolean fxLauncher = quarkusApplication.map(item -> QUARKUS_FX_APPLICATION.equals(item.getClassName()))
                 .orElse(false);
-        if (!macos.parkMainThread() && !fxLauncher) {
+        if (!park && !fxLauncher && !swt) {
             if (isPresent(QUARKUS_FX_APPLICATION, Thread.currentThread().getContextClassLoader())) {
                 // a @QuarkusMain of the application that delegates to QuarkusFxApplication, which then runs the Cocoa
                 // event loop on the first thread itself
@@ -861,7 +878,7 @@ class DesktopAwtProcessor {
             LOGGER.warn("-H:+RunMainInNewThread moves main off the first thread of the process : an AWT or Swing user"
                     + " interface hangs on macOS");
         }
-        if (macos.parkMainThread()) {
+        if (park) {
             checkQuarkusRun(Thread.currentThread().getContextClassLoader());
         }
     }

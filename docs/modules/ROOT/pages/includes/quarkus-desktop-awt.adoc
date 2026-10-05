@@ -205,7 +205,7 @@ endif::add-copy-button-to-config-props[]
 --
 Whether the first thread of the process runs the Cocoa event loop, as with the `java` launcher, the Quarkus application running on a new thread named `main`.
 
-AppKit, which AWT, Swing and JavaFX use on macOS, only runs on the first thread of the process : without this, the first window of an AWT or Swing application never shows. Disable it only with the Quarkus FX launcher, which then runs JavaFX on the first thread itself (AWT then runs embedded in JavaFX), or with a GraalVM version that keeps the first thread in the Cocoa event loop itself.
+AppKit, which AWT, Swing and JavaFX use on macOS, only runs on the first thread of the process : without this, the first window of an AWT or Swing application never shows. Disable it only with the Quarkus FX launcher, which then runs JavaFX on the first thread itself (AWT then runs embedded in JavaFX), or with a GraalVM version that keeps the first thread in the Cocoa event loop itself. It is ignored when the application has an SWT user interface (Desktop SWT extension), whose event loop runs on the first thread.
 
 
 ifdef::add-copy-button-to-env-var[]

@@ -1,0 +1,1269 @@
+= Desktop SWT
+
+include::./includes/attributes.adoc[]
+:diataxis-type: reference
+:categories: miscellaneous
+
+The `quarkus-desktop-swt` extension makes https://eclipse.dev/eclipse/swt/[Eclipse SWT] applications work in JVM mode
+and as GraalVM native executables: the native widgets of Windows, GTK and macOS (Cocoa), graphics, images, text and
+layouts, with an application model built on CDI. The extension starts the user interface once the application started,
+runs the event loop of SWT on the main thread, stops the application when its last shell closes, and gives the ways to
+reach the user interface thread from any thread (`CompletableFuture`, Mutiny, CDI events, an interceptor), without
+`Display.asyncExec` boilerplate.
+
+It does not include `quarkus-desktop-awt` (nor the Quarkus core extension `quarkus-awt`): SWT draws with the toolkit of
+the platform. It covers plain SWT: JFace and the Eclipse Rich Client Platform are not covered. An application may use
+AWT or Swing with SWT, see <<awt-and-swt>>.
+
+The API is in the `io.quarkiverse.desktop.swt` package:
+
+[cols="1,3"]
+|===
+|API |What for
+
+|`SwtStartupEvent`
+|Observed to create the user interface, on the user interface thread (see <<startup>>)
+
+|`SwtLifecycle`
+|Runs the user interface from a `@QuarkusMain` (see <<quarkus-main>>)
+
+|`UiThreadExecutor`
+|The `Executor` of the user interface thread, for `CompletableFuture`, Mutiny and asynchronous CDI events (see
+<<background-work>>)
+
+|`UiThread`
+|Static helpers: `isUiThread()`, `display()`, `run(Runnable)` and `call(Callable, Duration)` (see <<ui-thread-helpers>>)
+
+|`@RunOnUiThread`
+|Runs the methods of a bean (a presenter) on the user interface thread, whatever thread calls them (see
+<<run-on-ui-thread>>)
+
+|`WidgetBeans`
+|Destroys a `@Dependent` bean when the widget it created is disposed (see <<widget-beans>>)
+
+|`QuitRequest`
+|The quit requests of the `Display` (Cmd-Q on macOS, the end of the session...) as a CDI event (see <<quit-requests>>)
+|===
+
+[[installation]]
+== Installation
+
+.Maven
+[source,xml,subs=attributes+]
+----
+<dependency>
+    <groupId>io.quarkiverse.desktop</groupId>
+    <artifactId>quarkus-desktop-swt</artifactId>
+    <version>{project-version}</version>
+</dependency>
+----
+
+SWT is a jar per platform. The extension depends on `org.eclipse.platform:org.eclipse.swt`, whose jar is empty: its pom
+has profiles, activated by the operating system and the architecture of the build, that add the SWT jar of the platform,
+`org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>` (for instance `org.eclipse.swt.win32.win32.x86_64`,
+`org.eclipse.swt.gtk.linux.x86_64`, `org.eclipse.swt.gtk.linux.aarch64` or `org.eclipse.swt.cocoa.macosx.aarch64`).
+Maven applies them: nothing else is needed.
+
+Gradle does not apply these profiles: add the SWT jar of the platform yourself, with the SWT version of the extension
+(3.132.0, see <<swt-versions>>), for instance chosen from the operating system and the architecture of the build:
+
+.Gradle (`build.gradle`)
+[source,groovy,subs=attributes+]
+----
+def os = System.getProperty("os.name").toLowerCase()
+def arch = System.getProperty("os.arch") in ["aarch64", "arm64"] ? "aarch64" : "x86_64"
+def swtPlatform = os.contains("win") ? "win32.win32." + arch
+        : os.contains("mac") ? "cocoa.macosx." + arch
+        : "gtk.linux." + arch
+
+dependencies {
+    implementation("io.quarkiverse.desktop:quarkus-desktop-swt:{project-version}")
+    implementation("org.eclipse.platform:org.eclipse.swt." + swtPlatform + ":3.132.0")
+}
+----
+
+.Gradle (`build.gradle.kts`)
+[source,kotlin,subs=attributes+]
+----
+val os = System.getProperty("os.name").lowercase()
+val arch = if (System.getProperty("os.arch") in listOf("aarch64", "arm64")) "aarch64" else "x86_64"
+val swtPlatform = when {
+    os.contains("win") -> "win32.win32.$arch"
+    os.contains("mac") -> "cocoa.macosx.$arch"
+    else -> "gtk.linux.$arch"
+}
+
+dependencies {
+    implementation("io.quarkiverse.desktop:quarkus-desktop-swt:{project-version}")
+    implementation("org.eclipse.platform:org.eclipse.swt.$swtPlatform:3.132.0")
+}
+----
+
+The build logs a warning when the application has no SWT jar of a platform, and a native build fails without the SWT jar
+of the platform of the executable (see <<container-builds>>).
+
+[[how-it-works]]
+== How it works
+
+In JVM mode, SWT needs nothing special: it extracts its native libraries into `~/.swt/lib/<os>/<arch>` on the first run,
+and loads them from there. The extension adds the application model (see <<first-application>>), and enables the native
+access of SWT: the runner jar declares `Enable-Native-Access: ALL-UNNAMED` in its manifest (and dev mode gives the
+option to its JVM), so that the JDK (24 and later) does not warn about the `System.load` calls of SWT. On macOS, the JVM
+needs `-XstartOnFirstThread` (see <<macos>>).
+
+For native executables, the extension adds:
+
+* The run time initialization of SWT (the `org.eclipse.swt` packages): its static initializers load its native libraries
+and call them.
+* The run time initialization of the *classes whose static initializer uses SWT*, in the application and in its
+libraries (whether they are in the Jandex index or not): a class with a `static final RGB ACCENT = new RGB(0, 150, 201)`
+(or a `Point`, a `FontData`...) is initialized at run time, as in JVM mode, instead of failing the native build.
+* The JNI metadata of SWT, computed from the class files of the SWT jar of the application, since it differs between
+platforms and SWT versions: the struct classes whose fields the native code of SWT reads and writes (`RECT`, `MSG`,
+`GdkRectangle`, `NSRect`...), the callback methods that it calls (`Callback`, the COM objects on Windows, the callbacks
+of the Edge WebView2 browser on Windows), and a few fixed JNI members.
+* What SWT looks up by name: the `SWTMessages` resource bundle (the messages of SWT, for the locales of
+`quarkus.locales`), the style sheets of SWT for the GTK themes on Linux, and the `Display` class (with reflection).
+* The native libraries of SWT, embedded in the executable or copied next to it (see <<native-libraries>>).
+* A check of the SWT jar: it must be the jar of the platform of the executable (see <<container-builds>>).
+* On Windows, the subsystem of the executable (see <<windows>>).
+* With `--exact-reachability-metadata`, the lookups of SWT expected to fail (see <<exact-reachability-metadata>>).
+
+The native image needs no configuration from the application for SWT itself.
+
+[[first-application]]
+== Writing an SWT application
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.SwtStartupEvent;
+
+@ApplicationScoped // <1>
+public class Library {
+
+    public List<String> titles() {
+        return List.of("Dune", "Emma", "Ulysses");
+    }
+}
+
+@Singleton // <2>
+public class MainWindow {
+
+    @Inject
+    Library library; // <3>
+
+    @ConfigProperty(name = "app.title", defaultValue = "Library")
+    String title;
+
+    private Shell shell;
+
+    void open(@Observes SwtStartupEvent event) { // <4>
+        shell = new Shell(event.display()); // <5>
+        shell.setText(title);
+        shell.setLayout(new FillLayout());
+        org.eclipse.swt.widgets.List titles = new org.eclipse.swt.widgets.List(shell, SWT.BORDER | SWT.V_SCROLL);
+        library.titles().forEach(titles::add);
+        shell.setSize(320, 240);
+        shell.open(); // <6>
+    }
+
+    public Shell shell() {
+        return shell;
+    }
+}
+----
+<1> The services of the application are ordinary beans, of any scope.
+<2> The bean that creates the main shell. It is not a widget: SWT widgets are created in methods, with their parent (see
+<<widgets-and-beans>>). A `@Singleton` (or `@ApplicationScoped`) bean keeps its shell; a `@Dependent` observer would be
+destroyed right after the event.
+<3> It gets beans and configuration injected, as any bean.
+<4> Called once, on the user interface thread, once the `Display` is created and before the event loop runs.
+<5> The `Display` of the application (also `UiThread.display()`).
+<6> The application stops when its last shell closes (see <<exit>>).
+
+No `@QuarkusMain` is needed: without one, the extension gives the application a main that runs the user interface on the
+main thread until the application stops. `./mvnw quarkus:dev` runs the application in dev mode (on Windows and Linux,
+not verified yet, see <<dev-mode>>), `java -jar target/quarkus-app/quarkus-run.jar` runs it in production (on macOS:
+`java -XstartOnFirstThread -jar target/quarkus-app/quarkus-run.jar`), and `./mvnw package -Dnative` builds a native
+executable (see <<native-executables>>).
+
+[[startup]]
+=== Starting the user interface
+
+SWT runs its event loop on the thread that creates the `Display` (on macOS, it must be the first thread of the
+process): the extension runs it on the main thread. An application that observes `SwtStartupEvent` with `@Observes` is
+a user interface application: without a `@QuarkusMain`, its main (generated by the extension) calls
+`SwtLifecycle.run()`, which:
+
+. creates the `Display` on the main thread, which becomes the user interface thread, once the application started
+(after the `StartupEvent` observers);
+. fires `SwtStartupEvent` there, synchronously: the event loop starts once its observers return, so that the listeners
+they add to the `Display` get the first events (for instance `SWT.OpenDocument` and `SWT.OpenUrl`, the files and URLs
+opened with the application on macOS);
+. runs the tasks queued before the start (`UiThreadExecutor`, `@RunOnUiThread`, `UiThread.run` from another thread), in
+order (when the application stops before the user interface runs, they are rejected, see <<ui-thread>>);
+. runs the event loop until the application stops, then disposes the `Display` (see <<exit>>).
+
+[source,java]
+----
+@Singleton
+public class OpenedDocuments {
+
+    @Inject
+    Documents documents;
+
+    void listen(@Observes SwtStartupEvent event) {
+        event.display().addListener(SWT.OpenDocument, e -> documents.open(Path.of(e.text)));
+        event.display().addListener(SWT.OpenUrl, e -> documents.open(URI.create(e.text)));
+    }
+}
+----
+
+`@Priority` orders several observers. Keep them short, they delay the first shell: load the data on another thread (see
+<<background-work>>).
+
+When an observer throws (an exception or an error, such as the `LinkageError` of a native executable missing some
+metadata), the error is logged and, in production and in a `@QuarkusMainTest`, the application stops with exit code 1,
+instead of running without a shell. When the `Display` cannot be created, the error is logged, with a hint on Linux
+(GTK 3 and a display), on macOS (the first thread of the process) and when the native libraries of SWT do not load
+(an `UnsatisfiedLinkError`: the SWT jar of another operating system or architecture), without one otherwise on
+Windows; in production and in a `@QuarkusMainTest`, the application stops with exit code 1. In dev mode and in a
+`@QuarkusTest`, the errors are only logged.
+
+The build logs a warning for an `@ObservesAsync` observer of `SwtStartupEvent`, which is never notified. In tests, the
+user interface does not run unless it is enabled (see <<testing>>).
+
+[[quarkus-main]]
+=== A @QuarkusMain
+
+A `@QuarkusMain` runs the user interface itself, with `SwtLifecycle.run()`, once its work before the user interface is
+done: the arguments, a single instance lock, a login, or a batch mode without user interface.
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.SwtLifecycle;
+
+@QuarkusMain
+public class Main implements QuarkusApplication {
+
+    @Inject
+    SwtLifecycle lifecycle;
+
+    @Inject
+    Exporter exporter;
+
+    @Override
+    public int run(String... args) throws Exception {
+        if (args.length == 2 && args[0].equals("--export")) { // <1>
+            exporter.export(Path.of(args[1]));
+            return 0;
+        }
+        lifecycle.run(); // <2>
+        return 0; // <3>
+    }
+}
+----
+<1> A batch mode, which may run without display: the user interface never starts (the tasks queued for it are rejected
+when the application stops, see <<ui-thread>>).
+<2> Creates the `Display` on this thread (the main thread), fires `SwtStartupEvent`, and runs the event loop until the
+application stops: the last shell closed, a quit request, `Quarkus.asyncExit()`, a signal. It blocks, unlike
+`DesktopLifecycle.start()` of the AWT extension: no `Quarkus.waitForExit()`.
+<3> Runs once the `Display` is disposed. When the stop comes from `Quarkus.asyncExit()` (the last shell closed, a quit
+request, the application calling it), it runs before the `ShutdownEvent` observers. On a signal (Ctrl+C, `SIGTERM`),
+Quarkus stops the application on its shutdown thread: the `ShutdownEvent` observers may run at the same time as this
+code. The exit code given to `Quarkus.asyncExit(code)`, when there is one, wins over the returned one.
+
+`SwtLifecycle.run()` returns at once when the user interface is disabled (tests, see <<testing>>) and when the
+application is stopping (an exit requested before, or the user interface already ran). In a `@QuarkusTest`, where the
+user interface runs on the thread `quarkus-desktop-swt-ui` of the extension, it blocks until the application stops.
+Otherwise, it throws an `IllegalStateException` when the user interface already runs.
+
+An exit requested before `run()` (a `StartupEvent` observer, or the main, calling `Quarkus.asyncExit()`) makes `run()`
+return without creating the `Display`. A thread of the extension, started with the application, waits for the exit:
+when it only wakes up once `run()` started, the user interface starts and stops at once.
+
+The build logs a warning when a user interface application (observing `SwtStartupEvent`) has `@QuarkusMain` classes and
+none of them, nor any `QuarkusApplication` implementation of the index, mentions `SwtLifecycle` in its class file: the
+user interface would never start. It is a heuristic: it looks for a reference to `SwtLifecycle`, not for a call to
+`run()`.
+
+With another extension that provides the main of the application (Picocli, Quarkus FX), its main replaces the one of
+this extension: the application calls `SwtLifecycle.run()` itself, on the main thread (for instance from the Picocli
+command). This is not verified.
+
+[[exit]]
+== Closing shells and exit
+
+The application stops (`Quarkus.asyncExit()`) when its last visible shell is closed or hidden, once a first shell
+opened, as the Desktop AWT extension does with its windows. Closing a shell disposes it (the default of SWT), and a
+hidden shell (`setVisible(false)`) counts as closed. The shells are counted in a later task, so a listener may dispose a
+shell and open another one. The application also stops when it disposes the `Display` itself.
+
+Whatever stops the application (`Quarkus.asyncExit()`, the last shell closed, a quit request, a signal such as Ctrl+C
+or `SIGTERM`, a dev mode restart, the end of a `@QuarkusTest`), the user interface stops *before* the `ShutdownEvent`
+observers and the destruction of the beans. On the user interface thread, the event loop ends, then:
+
+. the shells are disposed: their `SWT.Dispose` listeners and the `@PreDestroy` methods of the `WidgetBeans` beans run;
+. the events and tasks already handed to the `Display` run (10,000 at most): the shells are gone, check `isDisposed()`;
+. the `Display` is disposed.
+
+Then the `ShutdownEvent` observers run. Their calls to `UiThread.run`, `UiThread.call`, `UiThreadExecutor` and
+`@RunOnUiThread` methods are rejected at once (`RejectedExecutionException`): a `void` `@RunOnUiThread` call is skipped
+(with a debug log), and the stage of a `CompletionStage` one completes exceptionally.
+
+When the user interface thread is blocked (a long task, a lock), the stop waits for it 10 seconds, logs a warning, and
+the application stops without disposing the `Display`: the `SWT.Dispose` listeners and the `@PreDestroy` methods of the
+widget beans do not run. `System.exit()` called on the user interface thread stops the application without disposing
+the `Display` either, and without waiting: call `Quarkus.asyncExit()` instead.
+
+A shell that asks before closing:
+
+[source,java]
+----
+@Singleton
+public class EditorWindow {
+
+    @Inject
+    Documents documents;
+
+    void open(@Observes SwtStartupEvent event) {
+        Shell shell = new Shell(event.display());
+        shell.setText("Editor");
+        shell.addListener(SWT.Close, e -> { // <1>
+            if (documents.hasUnsavedChanges()) {
+                MessageBox box = new MessageBox(shell, SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+                box.setText("Close");
+                box.setMessage("Close without saving?");
+                e.doit = box.open() == SWT.YES;
+            }
+        });
+        shell.addListener(SWT.Dispose, e -> documents.saveBounds(shell.getBounds())); // <2>
+        shell.setSize(640, 480);
+        shell.open();
+    }
+}
+----
+<1> Closing the shell (its close button, Alt-F4) sends `SWT.Close`: the shell stays open when a listener sets `doit` to
+`false`, and is disposed otherwise. The last shell closed stops the application.
+<2> Save the state of the user interface (bounds, open documents) in `SWT.Close` or `SWT.Dispose` listeners, on the user
+interface thread: the `ShutdownEvent` observers and `@PreDestroy` methods run once the `Display` is disposed, on other
+threads. `SWT.Dispose` also runs when the application stops for another reason (on macOS, Cmd-Q does not close the
+shells, see <<quit-requests>>), unless the stop times out or `System.exit()` is called on the user interface thread.
+
+An application that stays alive without shells (a tray icon application, or the macOS convention of an application
+without window) disables the exit policy, and calls `Quarkus.asyncExit()` itself (from a Quit menu item, for instance):
+
+[source,properties]
+----
+quarkus.desktop.swt.exit-on-last-shell-closed=false
+----
+
+The exit policy is also for a splash screen: open the main shell before closing the splash screen, or the application
+stops in between (or disable the policy). It is never installed in tests.
+
+[[quit-requests]]
+=== Quit requests
+
+`QuitRequest` is fired on the user interface thread when the `Display` is asked to close (its `SWT.Close` event): Quit
+in the application menu of macOS, Cmd-Q, Quit in the Dock, a logout or a shutdown of the Mac, the end of the session on
+Windows and GNOME, and `Display.close()` on every platform. The application stops (`Quarkus.asyncExit()`) unless an
+observer cancels the request:
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.QuitRequest;
+
+@Singleton
+public class QuitConfirmation {
+
+    @Inject
+    MainWindow window;
+
+    @Inject
+    Documents documents;
+
+    void confirm(@Observes QuitRequest request) { // on the user interface thread
+        if (documents.hasUnsavedChanges()) {
+            MessageBox box = new MessageBox(window.shell(), SWT.ICON_QUESTION | SWT.YES | SWT.NO);
+            box.setText("Quit");
+            box.setMessage("Quit without saving?");
+            if (box.open() != SWT.YES) {
+                request.cancel(); // the application keeps running
+            }
+        }
+    }
+}
+----
+
+* Closing the shells is not a quit request: the last shell closed stops the application (see <<exit>>), ask for
+confirmation in a `SWT.Close` listener of the shell.
+* An observer that throws (any exception or error) cancels the request (the error is logged): an observer guarding
+unsaved changes never loses them. `request.event()` is the `SWT.Close` event of the `Display`.
+* *Windows and Linux*: when no observer cancels the request, SWT disposes the `Display` and the application stops.
+When an observer cancels it, the end of the session does not go on either: cancel only when the user asked to.
+* *macOS* (not verified on a Mac yet): the extension always answers "cancel" to AppKit (`doit = false`), and stops the
+application itself when the request is not cancelled: SWT would otherwise dispose the `Display` and let AppKit exit the
+process without the shutdown of Quarkus (the `ShutdownEvent` observers and `@PreDestroy` methods would not run). A
+logout, a restart or a shutdown of the Mac is then cancelled by the system (it reports that the application canceled
+logout) while the application stops, as with the Desktop AWT extension in dev mode (see
+xref:cdi.adoc#desktop-events[Application menu, Finder and Dock events]): the user repeats it.
+
+Only a cancelled `Display.close()` is verified (see <<verification>>): a quit request that is not cancelled and the end
+of the session are not.
+
+[[ui-thread]]
+== The user interface thread
+
+SWT widgets are created and used on the user interface thread, the thread that created the `Display` (SWT throws an
+`SWTException`, "Invalid thread access", on other threads). With the extension, it is the main thread of the
+application, the thread calling `SwtLifecycle.run()` (in `@QuarkusTest` tests, a thread of the extension, see
+<<testing>>). The `SwtStartupEvent` and `QuitRequest` observers, the listeners of the widgets and of the `Display`, the
+timers (`Display.timerExec`), the tasks of `Display.asyncExec` and the `@RunOnUiThread` methods run there; everything
+else (`StartupEvent` observers, REST resources, `@Scheduled` methods, messaging, `ShutdownEvent` observers) runs on
+other threads. The extension gives three ways to get to the user interface thread:
+
+* `UiThreadExecutor`, the executor of the user interface thread: continue there after work done on another thread;
+* `UiThread`, static helpers, including the only call that waits for the user interface thread;
+* `@RunOnUiThread`, an interceptor binding: the methods of a bean always run there, whatever thread calls them.
+
+Unlike `Display.asyncExec`, they work before the user interface starts: the tasks queued then (for instance by a
+`StartupEvent` observer) run once it started, after the `SwtStartupEvent` observers, in order. When the application
+stops before the user interface runs (a `@QuarkusMain` returning without calling `SwtLifecycle.run()`, an exit
+requested before `run()`, a `Display` that cannot be created, a `SwtStartupEvent` observer disposing the `Display`, a
+`@QuarkusTest` on macOS), these tasks are rejected: `UiThread.call` throws a `RejectedExecutionException`, the stage of
+a `@RunOnUiThread` method returning a `CompletionStage` completes exceptionally with it, and the `void`
+`@RunOnUiThread` calls and the tasks of `UiThread.run` and `UiThreadExecutor` are dropped. Once the user interface
+stopped (before the `ShutdownEvent` observers, see <<exit>>), the calls are rejected at once.
+
+Never block the user interface thread (a database query, an HTTP call, a file read): the user interface freezes.
+
+[[background-work]]
+=== Background work
+
+Run the work on a Quarkus executor and continue on the user interface thread with `UiThreadExecutor`, an `Executor`
+bean that always queues the task (`Display.asyncExec`), in order, even when called on the user interface thread:
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.UiThreadExecutor;
+
+@Singleton
+public class BooksWindow {
+
+    @Inject
+    BookRepository repository;
+
+    @Inject
+    ManagedExecutor workers; // <1>
+
+    @Inject
+    UiThreadExecutor ui; // <2>
+
+    private Shell shell;
+
+    private org.eclipse.swt.widgets.List books;
+
+    private Label status;
+
+    void open(@Observes SwtStartupEvent event) {
+        shell = new Shell(event.display());
+        shell.setLayout(new GridLayout());
+        books = new org.eclipse.swt.widgets.List(shell, SWT.BORDER | SWT.V_SCROLL);
+        books.setLayoutData(new GridData(SWT.FILL, SWT.FILL, true, true));
+        status = new Label(shell, SWT.NONE);
+        status.setLayoutData(new GridData(SWT.FILL, SWT.CENTER, true, false));
+        shell.setSize(400, 300);
+        shell.open();
+        refresh();
+    }
+
+    void refresh() { // on the user interface thread
+        status.setText("Loading...");
+        CompletableFuture.supplyAsync(repository::titles, workers) // <3>
+                .whenCompleteAsync(this::show, ui); // <4>
+    }
+
+    void search(String text) { // on the user interface thread
+        repository.search(text) // a Uni<List<String>>
+                .emitOn(ui) // <5>
+                .subscribe().with(titles -> show(titles, null), error -> show(null, error));
+    }
+
+    void reload(@ObservesAsync BooksChanged event) { // <6>
+        refresh();
+    }
+
+    private void show(List<String> titles, Throwable error) {
+        if (shell.isDisposed()) { // <7>
+            return;
+        }
+        if (error != null) {
+            status.setText("Loading failed: " + error.getMessage());
+        } else {
+            books.setItems(titles.toArray(String[]::new));
+            status.setText(titles.size() + " books");
+        }
+    }
+}
+----
+<1> The `ManagedExecutor` of `quarkus-smallrye-context-propagation` propagates the contexts (CDI request context,
+transactions) to the worker threads. Without it, `@Inject ExecutorService` gets the worker pool of Quarkus.
+<2> The only bean type of `UiThreadExecutor` is `UiThreadExecutor`: `@Inject Executor` still gets the worker pool of
+Quarkus.
+<3> Loads the data on a worker thread.
+<4> Continues on the user interface thread, with the result or the error. Once the user interface stopped (the
+application is stopping), the executor rejects the task and the continuation does not run.
+<5> Mutiny: the items and the failure are emitted on the user interface thread. Use `runSubscriptionOn(workers)` for a
+`Uni` that blocks when subscribed.
+<6> Asynchronous events fired with the `UiThreadExecutor` are notified on the user interface thread, see below.
+<7> The shell may be closed while the work runs: a disposed widget throws an `SWTException` ("Widget is disposed").
+
+An asynchronous CDI event fired with `NotificationOptions.ofExecutor(ui)` notifies its `@ObservesAsync` observers on the
+user interface thread, from any thread:
+
+[source,java]
+----
+@ApplicationScoped
+public class BookService {
+
+    @Inject
+    BookRepository repository;
+
+    @Inject
+    Event<BooksChanged> booksChanged;
+
+    @Inject
+    UiThreadExecutor ui;
+
+    public void save(String title) { // on any thread
+        repository.save(title);
+        booksChanged.fireAsync(new BooksChanged(), NotificationOptions.ofExecutor(ui));
+    }
+}
+----
+
+[[ui-thread-helpers]]
+=== UiThread
+
+`UiThread` has static helpers:
+
+* `UiThread.isUiThread()`: whether the current thread is the user interface thread.
+* `UiThread.display()`: the `Display` of the application. It throws an `IllegalStateException` when the user interface
+does not run (before `SwtLifecycle.run()`, or once the application stopped).
+* `UiThread.run(task)`: runs the task now when called on the user interface thread, later (`Display.asyncExec`)
+otherwise. It throws a `RejectedExecutionException` once the user interface stopped, or when it is disabled (tests).
+* `UiThread.call(callable, timeout)`: the only call that waits for the user interface thread, for background threads
+and tests. Called on the user interface thread, it calls the task now. It throws a `TimeoutException` instead of waiting
+for ever, the exception of the task, and a `RejectedExecutionException` when the user interface stopped, or stops (or
+never runs) before the task ran.
+
+[source,java]
+----
+Point size = UiThread.call(() -> table.computeSize(SWT.DEFAULT, SWT.DEFAULT), Duration.ofSeconds(5));
+UiThread.run(() -> status.setText("Saved"));
+----
+
+When `UiThread.call` times out, or the waiting thread is interrupted, a task that did not start yet is skipped; a task
+already running goes on, and its result is dropped. Never call it while holding a lock that the user interface thread
+may need: a lock of the application, or ArC creating a bean (a constructor, a `@PostConstruct` method, a producer) while
+an observer of that bean runs on the user interface thread. Nor on the thread that will run the user interface, before
+it runs (a `StartupEvent` observer, a `@QuarkusMain` before `SwtLifecycle.run()`): it waits until the timeout. Nor
+from a `ShutdownEvent` observer, where the user interface stopped: the call is rejected at once.
+
+[[run-on-ui-thread]]
+=== @RunOnUiThread
+
+`@RunOnUiThread` runs the methods of a bean on the user interface thread, whatever thread calls them (a `@Scheduled`
+method, a REST resource, a Kafka consumer, an asynchronous observer). Put it on presenters (beans that are not widgets),
+or on methods:
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.RunOnUiThread;
+
+public interface StatusView {
+
+    void showStatus(String text);
+
+    String selectedBook();
+}
+
+@Singleton
+public class StatusBar implements StatusView { // <1>
+
+    private Label label;
+
+    private org.eclipse.swt.widgets.List books;
+
+    void create(Composite parent, org.eclipse.swt.widgets.List books) { // called by the main window
+        this.label = new Label(parent, SWT.NONE);
+        this.books = books;
+    }
+
+    @Override
+    public void showStatus(String text) {
+        if (label != null && !label.isDisposed()) {
+            label.setText(text);
+        }
+    }
+
+    @Override
+    public String selectedBook() {
+        return books.getSelectionCount() == 0 ? null : books.getSelection()[0];
+    }
+}
+
+@ApplicationScoped
+public class StatusPresenter {
+
+    @Inject
+    StatusView view; // <2>
+
+    @RunOnUiThread
+    public void show(String text) { // <3>
+        view.showStatus(text);
+    }
+
+    @RunOnUiThread
+    public CompletionStage<String> selectedBook() { // <4>
+        return CompletableFuture.completedFuture(view.selectedBook());
+    }
+}
+
+@ApplicationScoped
+public class ServerMonitor {
+
+    @Inject
+    StatusPresenter presenter;
+
+    @Inject
+    ServerClient server;
+
+    @Scheduled(every = "10s")
+    void poll() { // on a worker thread
+        presenter.show(server.status());
+    }
+}
+----
+<1> The view: a bean that creates its widgets when the main window calls it, on the user interface thread, and
+implements an interface that the presenter uses (which makes the presenter testable, see <<testing>>).
+<2> The view is not a widget: it can be injected directly, creating it creates no widget.
+<3> A `void` method runs now when called on the user interface thread: its exception goes to the caller. Called on
+another thread, it runs later (`Display.asyncExec`): the call returns at once, and an exception thrown then is logged
+(see <<uncaught-exceptions>>). A call before the user interface starts runs once it started (it is dropped when the user
+interface never runs, see <<ui-thread>>); a call once it stopped is skipped.
+<4> A method returning a `CompletionStage` (or a `CompletableFuture`) returns a stage completed with its result, or its
+exception, once it ran on the user interface thread. Called on the user interface thread, it runs now: an exception
+gives a failed stage, and a `null` stage is replaced with a completed one. Once the user interface stopped, or when it
+never runs, the stage completes exceptionally with a `RejectedExecutionException`.
+
+The build fails for a `@RunOnUiThread` method returning another type (there is no blocking mode: use `UiThread.call`),
+and for a bean that is not `@ApplicationScoped`, `@Singleton` or `@Dependent` (a `@RequestScoped` instance belongs to
+the request of the caller, which may be over when the method runs). `@RunOnUiThread` on a class applies to its business
+methods; on a widget class it is a build error, annotate the methods (see <<build-checks>>). It works on static methods
+too, with the same return types (the build fails for a private static method, which ArC does not intercept).
+
+The interceptor of `@RunOnUiThread` is the outermost one (priority `PLATFORM_BEFORE - 100`), so the other interceptors
+of the method run on the user interface thread, around the method:
+
+[cols="1,2"]
+|===
+|Interceptor |Where it runs with `@RunOnUiThread`
+
+|`@RunOnUiThread`
+|On the calling thread: it queues the call
+
+|`@ActivateRequestContext`, `@Transactional`, fault tolerance (`@Retry`, `@CircuitBreaker`...), `@CacheResult`,
+tracing, application interceptors
+|On the user interface thread, around the method: a transaction or a retry then blocks the user interface thread. Call
+such methods from a worker thread, and `@RunOnUiThread` only the user interface update
+
+|Fault tolerance `@Timeout`
+|On the user interface thread: when the timeout expires, it interrupts the user interface thread. The build logs a
+warning
+
+|Fault tolerance `@Asynchronous`, `@AsynchronousNonBlocking`
+|The method runs on another thread, not on the user interface thread. The build logs a warning
+|===
+
+The user interface thread has no active request context: use `@ActivateRequestContext` on a method that needs one. A
+call that the `Display` already queued when the application stops still runs, once the shells are disposed (see
+<<exit>>).
+
+[[uncaught-exceptions]]
+=== Uncaught exceptions
+
+An exception or an error that escapes a listener, a timer, a task (`Display.asyncExec`, `UiThreadExecutor`,
+`UiThread.run`) or a queued call of a `void` `@RunOnUiThread` method is logged at the `ERROR` level in the
+`io.quarkiverse.desktop.swt.ui-thread` category, with the name of the thread, and the event loop keeps running. The
+extension sets the runtime exception handler and the error handler of the `Display` for it
+(`Display.setRuntimeExceptionHandler`, `Display.setErrorHandler`): an application may replace them in a
+`SwtStartupEvent` observer. A `@RunOnUiThread` method called on the user interface thread runs inline: its exception
+goes to the caller instead.
+
+[source,properties]
+----
+# keep the log (and the uncaught exceptions) of a desktop application in a file
+quarkus.log.file.enabled=true
+# or do not log them
+quarkus.log.category."io.quarkiverse.desktop.swt.ui-thread".level=OFF
+----
+
+The errors of the lifecycle (a `Display` that cannot be created, a failing `SwtStartupEvent` or `QuitRequest` observer,
+the stop timeout) are logged in the `io.quarkiverse.desktop.swt.SwtLifecycle` category: turning off the `ui-thread`
+category does not silence them.
+
+[[widgets-and-beans]]
+== Widgets and beans
+
+SWT widgets are not CDI beans, unlike the components of the AWT extension (see xref:cdi.adoc#components[Components as
+CDI beans]): a widget needs its parent when it is created (`new Button(parent, SWT.PUSH)`), and SWT forbids subclassing
+most widget classes (`Shell`, `Button`... throw `SWTException: Subclassing not allowed`; `Composite` and `Canvas` may be
+subclassed). Beans create the widgets in their methods, on the user interface thread: in a `SwtStartupEvent` observer, a
+listener, a `@RunOnUiThread` method, or a method that one of them calls.
+
+* The bean that creates the main shell is a `@Singleton` (or `@ApplicationScoped`) bean that observes `SwtStartupEvent`
+(see <<first-application>>).
+* A dialog or a document window opened several times is a `@Dependent` bean created with `WidgetBeans` (see
+<<widget-beans>>).
+* The logic goes to presenters and services, of any scope, which use the widgets on the user interface thread
+(`@RunOnUiThread`, `UiThreadExecutor`) and are easy to test and mock (see <<testing>>).
+
+These beans are not widgets: they can be injected anywhere, and creating them creates no widget.
+
+[[widget-beans]]
+=== Widget beans
+
+A `@Dependent` bean got from an `Instance<T>` stays referenced by the `Instance` until it is destroyed: a dialog opened
+many times would leak. `WidgetBeans.create(instance, factory)` gets a bean on the user interface thread, calls the
+factory with it to create its widget, and destroys the bean once the widget is disposed (closing a shell disposes it):
+its `@PreDestroy` methods run (stop its timers, remove its global listeners) and its own dependent beans are destroyed.
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.WidgetBeans;
+
+@Dependent
+public class InvoiceDialog {
+
+    @Inject
+    InvoiceService service;
+
+    private final Runnable tick = this::tick;
+
+    private Display display;
+
+    private Label age;
+
+    private Invoice invoice;
+
+    Shell open(Shell parent, Invoice invoice) { // <1>
+        this.invoice = invoice;
+        display = parent.getDisplay();
+        Shell shell = new Shell(parent, SWT.DIALOG_TRIM | SWT.APPLICATION_MODAL);
+        shell.setText("Invoice " + invoice.number());
+        shell.setLayout(new GridLayout());
+        age = new Label(shell, SWT.NONE);
+        // the other widgets of the invoice...
+        tick();
+        shell.pack();
+        shell.open();
+        return shell;
+    }
+
+    private void tick() { // every minute, on the user interface thread
+        age.setText("Updated " + service.age(invoice) + " ago");
+        display.timerExec(60_000, tick);
+    }
+
+    @PreDestroy
+    void close() { // <2>
+        if (display != null && !display.isDisposed()) {
+            display.timerExec(-1, tick); // cancels the timer
+        }
+    }
+}
+
+@Singleton
+public class InvoicesWindow {
+
+    @Inject
+    InvoiceService service;
+
+    @Inject
+    Instance<InvoiceDialog> dialogs;
+
+    void open(@Observes SwtStartupEvent event) {
+        Shell shell = new Shell(event.display());
+        shell.setLayout(new GridLayout());
+        List<Invoice> all = service.findAll();
+        org.eclipse.swt.widgets.List invoices = new org.eclipse.swt.widgets.List(shell, SWT.BORDER | SWT.V_SCROLL);
+        all.forEach(invoice -> invoices.add(invoice.number()));
+        Button edit = new Button(shell, SWT.PUSH);
+        edit.setText("Edit");
+        edit.addListener(SWT.Selection, e -> {
+            if (invoices.getSelectionIndex() >= 0) {
+                Invoice selected = all.get(invoices.getSelectionIndex());
+                WidgetBeans.create(dialogs, dialog -> dialog.open(shell, selected)); // <3>
+            }
+        });
+        shell.pack();
+        shell.open();
+    }
+}
+----
+<1> Called by `WidgetBeans.create`, on the user interface thread, with the bean just created. The widget that it
+returns decides the life of the bean.
+<2> Called on the user interface thread when the shell is disposed: closed, or disposed when the application stops
+(before the `ShutdownEvent` observers; not when the stop times out, see <<exit>>).
+<3> Gets a new `InvoiceDialog`, creates its shell, and returns it. `WidgetBeans.create` throws an
+`IllegalStateException` outside the user interface thread. When the factory throws, or returns no widget (or a disposed
+one), the bean is destroyed at once. A bean of another scope than `@Dependent` is used as is, and never destroyed.
+
+[[build-checks]]
+=== Build checks
+
+The build checks the beans whose type is an SWT widget or device (a `Composite` subclass, a producer of widgets, a
+`Display`...) and the `@RunOnUiThread` methods. Errors for what cannot work, warnings for what may not:
+
+[cols="3,1,3"]
+|===
+|Found |Result |Instead
+
+|A normal scoped bean (`@ApplicationScoped`, `@RequestScoped`..., a class or a producer) whose type is an SWT widget
+(`Widget`) or device (`Display`, `Printer`): its client proxy extends it, so creating the proxy creates another widget
+(or `Display`), on the thread that first uses the bean
+|Build error
+|A bean that creates its widgets in a method (see <<widgets-and-beans>>), or `@Singleton` or `@Dependent`
+
+|An interceptor binding on a widget class (`@RunOnUiThread`, `@Transactional`..., declared, inherited or from a
+stereotype): it would intercept the methods that the class inherits from SWT
+|Build error
+|Annotate methods, or move the logic to a presenter that is not a widget
+
+|A `@RunOnUiThread` method that returns neither `void` nor a `CompletionStage`, or that is private and static
+|Build error
+|Return `void` or a `CompletionStage` (or call `UiThread.call`), make a static method package private
+
+|`@RunOnUiThread` on a bean that is not `@ApplicationScoped`, `@Singleton` or `@Dependent`
+|Build error
+|One of these scopes
+
+|A widget bean injected directly into a `@QuarkusMain` class or into a bean observing `StartupEvent`: it is created
+there, before the user interface thread runs
+|Build warning
+|`Instance<T>`, resolved on the user interface thread
+
+|`@QuarkusMain` classes in a user interface application, none of which (nor any `QuarkusApplication`) mentions
+`SwtLifecycle`: a heuristic, which looks for a reference, not for a call (see <<quarkus-main>>)
+|Build warning
+|Call `SwtLifecycle.run()` once the work before the user interface is done
+
+|`@ObservesAsync SwtStartupEvent` (never notified), `@Timeout`, `@Asynchronous` or `@AsynchronousNonBlocking` on a
+`@RunOnUiThread` method
+|Build warning
+|See the message
+|===
+
+[[platforms]]
+== Platforms
+
+[cols="1,1,3"]
+|===
+|Platform |JVM mode |Native executable
+
+|Windows x64
+|Yes, verified (Windows 11)
+|Yes, verified (Windows 11), also with exact reachability metadata: a native build on Windows, with Visual Studio (see
+<<windows>>).
+
+|Windows arm64
+|Not verified (the SWT jar exists)
+|No: GraalVM has no native image builder for Windows on arm64.
+
+|Linux x64
+|Yes, verified (Ubuntu 24.04 in Docker, GTK 3, X11 under Xvfb)
+|Yes, verified with exact reachability metadata, in the same environment: a native build on Linux (see <<linux>>, and
+<<container-builds>> for a build in a container).
+
+|Linux arm64
+|Not verified (the SWT jar exists)
+|Not verified.
+
+|macOS (Apple silicon)
+|With `-XstartOnFirstThread`, not verified on a Mac yet
+|Not verified on a Mac yet: the event loop runs on the first thread of the process (see <<macos>>).
+
+|macOS x86_64
+|Not verified (the SWT jar exists)
+|Not verified.
+|===
+
+Verified means the integration tests of the extension, run locally in JVM mode and as native executables (see
+<<verification>>).
+
+[[macos]]
+=== macOS
+
+On macOS (Cocoa), SWT creates the `Display` and runs its event loop on the first thread of the process. The extension
+runs the event loop on the main thread:
+
+* *JVM mode*: start the JVM with `-XstartOnFirstThread`
+(`java -XstartOnFirstThread -jar target/quarkus-app/quarkus-run.jar`), which runs `main` on the first thread. Without
+it, the `Display` cannot be created: the application logs an error with a hint and stops with exit code 1.
+* *Native executables*: `main` runs on the first thread of the process, and so does the event loop. Do not build them
+with `-H:+RunMainInNewThread`, which moves `main` to another thread (the build logs a warning). When the application
+also has the Desktop AWT extension and an SWT user interface (a `SwtStartupEvent` observer), the first thread is not
+parked for AWT (`quarkus.desktop.awt.macos.park-main-thread` is ignored): SWT owns it (not verified, see
+<<awt-and-swt>>).
+* A `@QuarkusMain` calls `SwtLifecycle.run()` on the thread of its `run` method: never on another thread.
+* Dev mode does not run the user interface on macOS: it runs the application on another thread than the first one (see
+<<dev-mode>>). Test the user interface with `@QuarkusMainTest` and `-XstartOnFirstThread` (see <<testing>>).
+* The name of the application in the menu bar and the Dock is `quarkus.desktop.swt.application-name`, given to
+`Display.setAppName` before the `Display` is created (see <<configuration>>).
+* Cmd-Q, Quit in the application menu and in the Dock, a logout and a shutdown fire `QuitRequest` and stop the
+application through Quarkus (see <<quit-requests>>). The other items of the application menu (About, Preferences) are
+SWT menu items (`Display.getSystemMenu()`), and the files and URLs opened with the application are `SWT.OpenDocument`
+and `SWT.OpenUrl` events of the `Display` (see <<startup>>), not CDI events.
+* An application bundle that signs its content keeps the native libraries of SWT next to the executable
+(`quarkus.desktop.swt.native-libraries=next-to-executable`, see <<native-libraries>>).
+
+The extension supports the Cocoa SWT jars, but neither JVM mode nor native executables are verified on a Mac yet.
+
+[[native-executables]]
+== Native executables
+
+Build a native executable as usual (`./mvnw package -Dnative`), on the platform of the executable: the SWT jar of the
+application must be the one of that platform (see <<container-builds>>).
+
+[[windows]]
+=== Windows
+
+The native build needs Visual Studio (the {cpp} build tools), as any Quarkus native build on Windows, and must run on
+Windows: a container build produces a Linux executable.
+
+Unlike AWT, the executable needs no application manifest and no Visual {cpp} runtime: SWT activates the visual styles of
+Windows and the DPI awareness itself, and its native libraries only link system libraries of Windows.
+
+The executable is a console application by default: set `quarkus.desktop.swt.windows.subsystem=windows` for an
+application without console window (as `javaw`). Such an executable has no standard output and error streams when it is
+not started from a console: log to a file (`quarkus.log.file.enabled=true`).
+
+[[linux]]
+=== Linux
+
+The executable uses GTK 3, as SWT does in JVM mode (`libgtk-3-0t64` on Ubuntu 24.04), and the display of the `DISPLAY`
+or `WAYLAND_DISPLAY` environment variable (X11, XWayland or Wayland; only X11, under Xvfb, is verified). Tests need a
+display: use a virtual one (`xvfb-run`).
+
+[[container-builds]]
+=== The SWT jar and container builds
+
+A native build fails when the SWT jar of the application is not the one of the platform of the executable, with a
+message naming the jar to use, and logs a warning when the architecture of the jar is not the one of the build. With
+several SWT jars on the class path (typically a container build that does not exclude the SWT jar of the build host), a
+native build fails, listing them; JVM mode logs a warning and uses the first one. A native
+build in a container (`-Dquarkus.native.container-build=true`) produces a Linux executable, also from Windows or macOS,
+where Maven adds the SWT jar of the build host: use the Linux jar in a Maven profile of the container build instead. The
+Linux jar depends on `org.eclipse.swt`, whose profiles would add the jar of the build host again: exclude it there too
+(this dependency resolution is verified on Windows, the container build itself is not verified yet):
+
+[source,xml,subs=attributes+]
+----
+<profile>
+    <id>container-build</id>
+    <activation>
+        <property>
+            <name>quarkus.native.container-build</name>
+            <value>true</value>
+        </property>
+    </activation>
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-swt</artifactId>
+            <version>{project-version}</version>
+            <exclusions>
+                <!-- the SWT jar of the build host -->
+                <exclusion>
+                    <groupId>org.eclipse.platform</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.eclipse.platform</groupId>
+            <artifactId>org.eclipse.swt.gtk.linux.x86_64</artifactId>
+            <version>3.132.0</version>
+            <exclusions>
+                <!-- org.eclipse.swt, and the SWT jar of the build host that its profiles add -->
+                <exclusion>
+                    <groupId>org.eclipse.platform</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+    </dependencies>
+</profile>
+----
+
+On an Apple silicon Mac, the container builds a Linux executable for arm64: use `org.eclipse.swt.gtk.linux.aarch64`.
+
+[[native-libraries]]
+=== Native libraries
+
+By default (`quarkus.desktop.swt.native-libraries=embedded`), the native libraries of the SWT jar
+(`swt-win32-<version>.dll`, `swt-gdip-win32-<version>.dll`... and `WebView2Loader.dll` on Windows,
+`libswt-gtk-<version>.so`... on Linux) are resources of the native executable: a single file to distribute. SWT
+extracts them on the first run into `~/.swt/lib/<os>/<arch>` (or into the directory of the `swt.library.path` system
+property, when it is set), as it does in JVM mode, and loads them from there.
+
+With `quarkus.desktop.swt.native-libraries=next-to-executable`, the libraries are not embedded in the executable: the
+native build copies them next to it, and the executable loads them from its directory (it sets the `swt.library.path`
+system property before the `StartupEvent` observers; a `swt.library.path` set by the user wins). Nothing is written to
+the home directory, and the libraries can be signed with the executable (a macOS application bundle). Distribute them
+with the executable. Only a full native build copies them, not a build of the native sources
+(`quarkus.native.sources-only=true`). When they are missing next to the executable, it logs a warning, and SWT looks
+for them in `java.library.path` and `~/.swt`, and fails when it does not find them there.
+
+The library of the SWT_AWT bridge is never included (see <<limitations>>).
+
+[[exact-reachability-metadata]]
+=== Exact reachability metadata
+
+With the GraalVM option `--exact-reachability-metadata` (see xref:awt.adoc#exact-reachability-metadata[Exact
+reachability metadata] for what it changes), the extension registers the lookups of SWT expected to fail: the
+`BrowserInitializer` class that the `Browser` widget looks for, and on Windows the classes of the Java plug-in of
+Internet Explorer that it probes. These registrations are added when `quarkus.native.additional-build-args` or
+`quarkus.native.additional-build-args-append` contains `--exact-reachability-metadata` (or
+`-H:ThrowMissingRegistrationErrors`).
+
+The application registers its own lookups in a
+`src/main/resources/META-INF/native-image/<group>/<artifact>/reachability-metadata.json` file, as the integration tests
+of the extension do for the configuration files that Quarkus looks up (`application.properties`,
+`application-prod.properties`, `META-INF/microprofile-config.properties`).
+
+=== Application resources and locales
+
+The images and other resources that the application loads from the class path
+(`new Image(display, getClass().getResourceAsStream("/icons/open.png"))`) are included with
+`quarkus.native.resources.includes`, as in any Quarkus native executable. The messages of SWT are included for the
+locales of the native executable: set `quarkus.locales` (and `quarkus.default-locale`) to the languages of the
+application.
+
+[[swt-versions]]
+== SWT versions
+
+The extension depends on `org.eclipse.platform:org.eclipse.swt` 3.132.0, the last SWT release that runs on Java 17, the
+Java version of these extensions: SWT 3.133.0 and later need Java 21. An application on Java 21 or later can use a
+later SWT release: declare `org.eclipse.platform:org.eclipse.swt` with that version, as a dependency or in its
+dependency management (with Gradle, the version of the SWT jar of the platform too):
+
+[source,xml]
+----
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>org.eclipse.platform</groupId>
+            <artifactId>org.eclipse.swt</artifactId>
+            <version>3.135.0</version>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+----
+
+WARNING: Never use a `swt.version` property for it, neither a system property nor a Maven property (`-Dswt.version=...`
+on the command line of Maven reaches the tests): SWT reads the `swt.version` system property as the version of its
+native libraries (for instance `4971r15`), and then fails to load them.
+
+The extension computes the JNI metadata of native executables from the SWT jar of the application (see
+<<how-it-works>>): it follows the SWT version. The extension is verified with SWT 3.132.0, and with SWT 3.135.0 on
+Linux, in JVM mode and as native executables (see <<verification>>).
+
+[[dev-mode]]
+== Dev mode
+
+`./mvnw quarkus:dev` runs the application in dev mode on Windows and Linux (not verified yet): a restart runs the
+application again in the same JVM, on its new main thread, and the user interface with it, once the previous `Display`
+is disposed. `SwtStartupEvent` is fired again, to the new beans, which open the shells again. Dev mode does not run the
+user interface on macOS, where SWT needs the first thread of the process: dev mode runs the application on another
+thread (the `Display` cannot be created, an error is logged).
+
+*What a restart disposes*: the user interface stops as for any other stop, before the `ShutdownEvent` observers (see
+<<exit>>): the shells are disposed, and the `@Dependent` beans of `WidgetBeans` with them, the tasks already handed to
+the `Display` run, then the `Display` is disposed (the shutdown waits for the user interface thread 10 seconds at
+most).
+
+*What stays*: SWT and its native libraries (loaded once per JVM), and what the application started outside the
+`Display`: its threads, its executors. Stop them in `@PreDestroy` methods, or they keep the code of the previous run
+alive.
+
+*Restarts and exit*: `[s]` in the console forces a restart, and dev mode looks for changes of the sources when the
+application gets an HTTP request, with an HTTP extension (see xref:cdi.adoc#dev-mode[Dev mode] of the AWT application
+model). When the last shell closes, the application stops (`Quarkus.asyncExit()`) and dev mode keeps running: press
+`[space]` in the console to start the application again.
+
+[[testing]]
+== Testing
+
+In tests (`@QuarkusTest`, `@QuarkusMainTest`), the user interface does not run by default: `SwtStartupEvent` is not
+fired, `SwtLifecycle.run()` returns at once, and the tasks for the user interface thread are rejected: `UiThread.run`
+(from another thread), `UiThread.call` and `UiThreadExecutor` throw a `RejectedExecutionException`, the `void`
+`@RunOnUiThread` calls are skipped, and the stage of the `CompletionStage` ones completes exceptionally with a
+`RejectedExecutionException`. The beans (services, presenters) are tested as in any Quarkus application.
+`quarkus.arc.test.disable-application-lifecycle-observers=true` disables the user interface even when it is enabled.
+
+User interface tests enable it (for all the tests, or in a test profile), and need a display (on Linux, run them on a
+virtual display: `xvfb-run ./mvnw verify`):
+
+[source,properties]
+----
+%test.quarkus.desktop.swt.startup-event.enabled=true
+----
+
+* *`@QuarkusTest`*: no main runs, so the extension runs the user interface on a thread of its own, named
+`quarkus-desktop-swt-ui`, once the application started. Not on macOS, where the `Display` needs the first thread of the
+process (a warning is logged): use `@QuarkusMainTest` there.
+* *`@QuarkusMainTest`* runs the main of the application (the generated one, or the `@QuarkusMain`), hence the user
+interface on the thread of the main, as in production. The exit policy is never installed in tests: the application
+stops by itself (`Quarkus.asyncExit()`), as the integration tests of the extension do. On macOS, add
+`-XstartOnFirstThread` to the `argLine` of the Surefire plugin (not verified on a Mac yet).
+* *`@QuarkusIntegrationTest`* and *`@QuarkusMainIntegrationTest`* run the packaged application (a jar or a native
+executable) as in production: the user interface runs, with the exit policy.
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.UiThread;
+
+@QuarkusTest
+class MainWindowTest {
+
+    @Inject
+    MainWindow window; // <1>
+
+    @Test
+    void opens() throws Exception {
+        assertEquals("Library", UiThread.call(() -> window.shell().getText(), Duration.ofSeconds(5))); // <2>
+    }
+}
+----
+<1> The bean that creates the main shell is not a widget: it is injected as any bean.
+<2> `UiThread.call` runs after the `SwtStartupEvent` observers when it is queued before the start, and reads the
+widgets on the user interface thread.
+
+Run the test classes that start the user interface in JVMs of their own: SWT loads its native libraries once per JVM,
+and allows one `Display` at a time. With Surefire, one JVM per test class:
+
+[source,xml]
+----
+<plugin>
+    <artifactId>maven-surefire-plugin</artifactId>
+    <configuration>
+        <reuseForks>false</reuseForks>
+    </configuration>
+</plugin>
+----
+
+*Presenters*: make them depend on view interfaces rather than on the classes that create the widgets, and test them
+with `@QuarkusComponentTest` (`quarkus-junit-component`), which mocks the views, without display. A component test runs
+the beans without the Quarkus extensions: the interceptor of `@RunOnUiThread` is not there, and the methods run on the
+test thread (see xref:cdi.adoc#testing[Testing] of the AWT application model for an example).
+
+[[awt-and-swt]]
+== Using AWT or Swing with SWT
+
+An application may depend on `quarkus-desktop-swt` and on `quarkus-desktop-awt` (or `quarkus-desktop-swing`). This
+combination is not verified, on any platform. Each extension runs its own user interface thread, with its own API: the
+event dispatch thread of AWT (`DesktopStartupEvent`, `EdtExecutor`, `@RunOnEdt`, see xref:cdi.adoc[Application model
+and CDI]) and the user interface thread of SWT (`SwtStartupEvent`, `UiThreadExecutor`, `@RunOnUiThread`). On Windows
+and Linux, the two threads run side by side. On macOS, SWT owns the first thread of the process: when the application
+has an SWT user interface (a `SwtStartupEvent` observer: the Desktop SWT extension then provides the main), the Desktop
+AWT extension does not park the first thread for AWT in native executables. When another extension provides the main
+(Picocli, Quarkus FX), the Desktop AWT extension cannot tell: set `quarkus.desktop.awt.macos.park-main-thread=false`.
+
+* Each exit policy counts the windows of its own toolkit (the AWT one the AWT windows of an application observing
+`DesktopStartupEvent`, the SWT one the shells), but either one stops the whole application: closing the last SWT shell
+stops it even with AWT windows open, and the reverse. Disable one of them
+(`quarkus.desktop.swt.exit-on-last-shell-closed=false` or `quarkus.desktop.awt.exit-on-last-window-closed=false`).
+* Both extensions have a `QuitRequest` class, in different packages (`io.quarkiverse.desktop.swt.QuitRequest` and
+`io.quarkiverse.desktop.awt.QuitRequest`): observe the one of the toolkit that receives the request.
+* Both extensions have a `windows.subsystem` property: either one set to `windows` makes the executable a Windows
+subsystem one, without console window.
+
+The SWT_AWT bridge (`org.eclipse.swt.awt.SWT_AWT`, AWT components in SWT shells) is not supported in native executables
+(see <<limitations>>).
+
+[[limitations]]
+== Limitations
+
+* The SWT_AWT bridge is not supported in native executables: its native library needs the `jawt` library of AWT, and is
+not embedded in the executable.
+* The `Browser` widget (Edge WebView2 on Windows, WebKitGTK on Linux) and `GLCanvas` are not verified, neither in JVM
+mode nor in native executables (the extension registers the callbacks of Edge WebView2).
+* JFace and the Eclipse Rich Client Platform are not covered: the extension supports plain SWT.
+* macOS is not verified on a Mac yet, and dev mode does not run the user interface there (see <<macos>>).
+* Classes that the application or its libraries load by name need their own native image metadata, for instance with
+`@RegisterForReflection`. Please report the features of SWT that fail in a native executable. The native image tracing
+agent gives the missing metadata:
+`java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/<group>/<artifact> -jar target/quarkus-app/quarkus-run.jar`,
+and a native executable built with exact metadata and run with `-XX:MissingRegistrationReportingMode=Warn` lists them
+(see <<exact-reachability-metadata>>).
+
+[[verification]]
+== Verification
+
+The integration tests of the extension run a `@QuarkusMain` application that calls `SwtLifecycle.run()` on the main
+thread, in JVM mode (`@QuarkusMainTest`) and as a native executable, with three scenarios:
+
+* *The application model*: `SwtStartupEvent` on the main thread, the tasks queued before the start, the order of the
+`UiThreadExecutor` tasks, `@RunOnUiThread` methods (`void` and `CompletionStage`, with an exception), `UiThread.call`,
+`WidgetBeans` (a `@Dependent` bean destroyed with its shell, rejected outside the user interface thread), a cancelled
+quit request (`Display.close()`), and the order of the shutdown through `Quarkus.asyncExit()` (the `Display` disposed
+before the `ShutdownEvent` observers).
+* *SWT*: the environment (platform, DPI, monitors, system font), a class whose static initializer creates SWT objects, a
+gallery of widgets rendered with `Control.print`, and graphics drawn into an image (shapes, antialiasing, alpha, text),
+without uncaught exceptions nor errors on the standard error. The checks install their own handlers on the `Display`:
+the logging of the uncaught exceptions by the extension (see <<uncaught-exceptions>>) is not exercised. The native
+executable renders the same pixels as JVM mode.
+* *The exit policy* (native executable only, the policy is disabled in tests): the application stops when its only
+shell closes.
+
+The tests of the deployment module check the build, and the user interface in tests without a main (as in a
+`@QuarkusTest`): among others, the shutdown order when the test ends, and the rejection of the tasks queued for a user
+interface that never runs.
+
+They were run locally, with GraalVM for JDK 25:
+
+* on Windows 11 x64, in JVM mode and as native executables, also built with exact reachability metadata
+(`-Dquarkus.native.additional-build-args=--exact-reachability-metadata`), with SWT 3.132.0, together with the cycles of
+the SWT variant of the showcase;
+* on Linux x64, Ubuntu 24.04 in Docker (GTK 3, X11 under Xvfb), the deployment tests and the integration tests in JVM
+mode and as native executables built with exact reachability metadata, with SWT 3.132.0 and 3.135.0.
+
+The continuous integration is configured to run them on Windows and Linux (and in JVM mode on macOS), but has not run
+yet. Its native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the
+native executable with JVM mode.
+
+Not verified: macOS (JVM mode and native executables; the macOS JVM job of the continuous integration will be the first
+run), dev mode, Wayland, a quit request that is not cancelled and the end of the session, the `Browser` widget and
+`GLCanvas`, AWT or Swing with SWT, and Picocli.
+
+The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] has an SWT
+variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt` compares its JVM mode and
+native runs (see the showcase README, and xref:index.adoc#verification[Verification]).
+
+[[configuration]]
+== Configuration
+
+See xref:index.adoc#configuration[the overview of the properties]. The run time properties
+(`quarkus.desktop.swt.startup-event.enabled`, `quarkus.desktop.swt.exit-on-last-shell-closed`,
+`quarkus.desktop.swt.application-name`) also apply in JVM mode; `quarkus.desktop.swt.native-libraries` and
+`quarkus.desktop.swt.windows.subsystem` only apply to native executables.
+
+`quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built:
+overriding `quarkus.application.name` at run time does not change it, set `quarkus.desktop.swt.application-name`
+instead. The extension also gives `quarkus.application.version` to `Display.setAppVersion`. In tests, where
+`quarkus.application.name` and `quarkus.application.version` are not set, SWT gets neither (unless
+`quarkus.desktop.swt.application-name` is set).
+
+include::includes/quarkus-desktop-swt.adoc[leveloffset=+1, opts=optional]

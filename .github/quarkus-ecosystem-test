@@ -4,5 +4,11 @@ set -e
 # update the versions
 mvn -nsu --settings .github/quarkus-ecosystem-maven-settings.xml -B versions:set-property -Dproperty=quarkus.version -DnewVersion=${QUARKUS_VERSION} -DgenerateBackupPoms=false
 
-# run the tests in JVM mode with a virtual X display (AWT and Swing GUI tests)
+# SWT needs the GTK 3 runtime libraries (usually installed on the GitHub runners)
+if ! ldconfig -p | grep -q 'libgtk-3\.so\.0'; then
+  sudo apt-get update
+  sudo apt-get install -y --no-install-recommends libgtk-3-0t64 || sudo apt-get install -y --no-install-recommends libgtk-3-0
+fi
+
+# run the tests in JVM mode with a virtual X display (AWT, Swing and SWT GUI tests)
 xvfb-run -a mvn -nsu --settings .github/quarkus-ecosystem-maven-settings.xml -B clean install --fail-at-end -e
