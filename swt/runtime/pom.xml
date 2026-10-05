@@ -47,6 +47,15 @@
                             <capabilities>
                                 <provides>io.quarkiverse.desktop.swt</provides>
                             </capabilities>
+                            <!-- The JVM of dev mode starts before any build step runs, with the JVM options of the
+                                 descriptors of the extensions (dev-mode.jvm-option.std.enable-native-access) : SWT loads
+                                 its native libraries, the JDK (24 and later) warns without the native access. Java 17
+                                 and later accept the option, and the dev mode launcher passes it to any version. -->
+                            <devMode>
+                                <jvmOptions>
+                                    <enable-native-access>ALL-UNNAMED</enable-native-access>
+                                </jvmOptions>
+                            </devMode>
                         </configuration>
                     </execution>
                 </executions>

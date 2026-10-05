@@ -152,7 +152,12 @@ class DesktopSwtProcessor {
     /**
      * SWT loads its native libraries ({@code System.load}) : enables the native access of SWT, so that the JDK does not
      * warn about it (JDK 24 and later). Quarkus enables it for the unnamed module, where SWT runs : the
-     * {@code Enable-Native-Access} attribute of the manifest of the runner jar, and an option of the dev mode JVM.
+     * {@code Enable-Native-Access} attribute of the manifest of the runner jar (and an option of the JVM of JBang).
+     * <p>
+     * Not the JVM of dev mode, which starts before any build step runs, with the JVM options of the descriptors of the
+     * extensions : the one of this extension gives it {@code --enable-native-access=ALL-UNNAMED}
+     * ({@code dev-mode.jvm-option.std.enable-native-access}, from the {@code devMode} configuration of the
+     * {@code quarkus-extension-maven-plugin} in the {@code pom.xml} of the runtime module).
      */
     @BuildStep
     void nativeAccess(Optional<SwtPlatformBuildItem> platform,

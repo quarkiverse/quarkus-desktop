@@ -107,9 +107,9 @@ of the platform of the executable (see <<container-builds>>).
 
 In JVM mode, SWT needs nothing special: it extracts its native libraries into `~/.swt/lib/<os>/<arch>` on the first run,
 and loads them from there. The extension adds the application model (see <<first-application>>), and enables the native
-access of SWT: the runner jar declares `Enable-Native-Access: ALL-UNNAMED` in its manifest (and dev mode gives the
-option to its JVM), so that the JDK (24 and later) does not warn about the `System.load` calls of SWT. On macOS, the JVM
-needs `-XstartOnFirstThread` (see <<macos>>).
+access of SWT: the runner jar declares `Enable-Native-Access: ALL-UNNAMED` in its manifest, and the descriptor of the
+extension gives `--enable-native-access=ALL-UNNAMED` to the JVM of dev mode, so that the JDK (24 and later) does not
+warn about the `System.load` calls of SWT. On macOS, the JVM needs `-XstartOnFirstThread` (see <<macos>>).
 
 For native executables, the extension adds:
 
