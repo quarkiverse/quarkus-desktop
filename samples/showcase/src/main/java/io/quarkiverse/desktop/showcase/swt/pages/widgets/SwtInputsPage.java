@@ -442,8 +442,11 @@ public class SwtInputsPage implements SwtPage {
         }));
         checks.add(SwtChecks.expect("Text MULTI : getLineCount, line delimiter length", "6, " + Text.DELIMITER.length(),
                 () -> w.multi.getLineCount() + ", " + w.multi.getLineDelimiter().length()));
+        // macOS : Text.DELIMITER is "\r", but the NSTextView keeps the "\n" of setText and getText returns the text as
+        // stored (no conversion either way, Text.setText / Text.getText) : the text comes back unchanged, a Cocoa SWT
+        // bug against the Javadoc of Text.DELIMITER ("when text is queried ... delimited using this delimiter")
         checks.add(SwtChecks.expect("Text MULTI : getText with Text.DELIMITER", true,
-                () -> w.multi.getText().equals(MULTI.replace("\n", Text.DELIMITER))));
+                () -> w.multi.getText().equals(SwtMode.isMac() ? MULTI : MULTI.replace("\n", Text.DELIMITER))));
         checks.add(SwtChecks.expect("Text WRAP : text unchanged, lines wrapped", "true true", () -> {
             String text = w.wrap.getText();
             // getLineCount counts the wrapped lines on Windows (EM_GETLINECOUNT) ; on Cocoa the paragraphs of the

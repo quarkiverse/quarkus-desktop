@@ -978,8 +978,11 @@ public class SwtAdvancedGraphicsPage implements SwtPage {
                         flat.dispose();
                     }
                 })));
+        // macOS : Path.contains tests the area with NSBezierPath.containsPoint, under the winding rule of the path
+        // (never set : non-zero) and not the fill rule of the GC given "to use when testing for containment" ("TODO -
+        // see windows" in Path.contains) : the center of the pentagram is inside, a Cocoa SWT bug
         checks.add(contains(display, "Path.contains : center of the pentagram, FILL_EVEN_ODD", SWT.FILL_EVEN_ODD,
-                false));
+                SwtMode.pick(true, false, false)));
         checks.add(contains(display, "Path.contains : center of the pentagram, FILL_WINDING", SWT.FILL_WINDING,
                 true));
         checks.add(SwtChecks.expect("Path.contains, addRectangle(10, 20, 30, 40), line width 6 : outline at (10,"
@@ -1010,7 +1013,11 @@ public class SwtAdvancedGraphicsPage implements SwtPage {
                     t.transform(point);
                     return SwtChecks.num(point[0]) + "," + SwtChecks.num(point[1]);
                 })));
-        checks.add(SwtChecks.expect("Transform : shear(0.5, 0)", "1.000 0.000 0.500 1.000 0.000 0.000",
+        // macOS : Transform.shear puts shearX in m12 and shearY in m21 of the NSAffineTransformStruct, where
+        // x' = m11 x + m21 y + tX and y' = m12 x + m22 y + tY : shear(0.5, 0) shears vertically (the shear(0.6, 0)
+        // tile too), a Cocoa SWT bug against the Javadoc of Transform.shear ("the shear factor in the X direction")
+        checks.add(SwtChecks.expect("Transform : shear(0.5, 0)", SwtMode.pick("1.000 0.500 0.000 1.000 0.000 0.000",
+                "1.000 0.000 0.500 1.000 0.000 0.000", "1.000 0.000 0.500 1.000 0.000 0.000"),
                 () -> onTransform(display, t -> t.shear(0.5f, 0), SwtAdvancedGraphicsPage::elements)));
         checks.add(SwtChecks.expect("Transform : translate(10, 0).multiply(scale(2, 2))",
                 "2.000 0.000 0.000 2.000 10.000 0.000", () -> onTransform(display, t -> t.translate(10, 0), t -> {

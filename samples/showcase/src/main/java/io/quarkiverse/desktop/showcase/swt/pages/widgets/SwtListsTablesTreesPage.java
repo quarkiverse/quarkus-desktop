@@ -523,8 +523,12 @@ public class SwtListsTablesTreesPage implements SwtPage {
         checks.add(SwtChecks.expect("virtual Table : getTopIndex() after setTopIndex(50000), once settled",
                 VIRTUAL_TOP + " " + VIRTUAL_TOP, () -> s.scrolledTop + " " + virtual.getTopIndex()));
         checks.add(Check.info("virtual Table : rows materialized after the scroll", ranges(scrolled)));
+        // macOS 10.11 and later : the visible rect of the NSTableView starts under its header (Table.getClientArea,
+        // getTopIndex, setTopIndex), so AppKit also paints, and SetData materializes, the rows behind the header,
+        // just above the top index (49998 and 49999 for a 28 point header)
+        int underHeader = SwtMode.isMac() ? Math.ceilDiv(virtual.getHeaderHeight(), virtual.getItemHeight()) : 0;
         checks.add(SwtChecks.expect("virtual Table : after the scroll : only the rows shown from row 50000", true,
-                () -> !scrolled.isEmpty() && scrolled.getFirst() >= VIRTUAL_TOP
+                () -> !scrolled.isEmpty() && scrolled.getFirst() >= VIRTUAL_TOP - underHeader
                         && scrolled.getLast() <= VIRTUAL_TOP + visible + 1));
         checks.add(SwtChecks.expect("virtual Table : getItem(99999).getText(1) fires SetData", "Item 99999 true",
                 () -> virtual.getItem(LAZY_INDEX).getText(1) + " " + s.materialized.contains(LAZY_INDEX)));
