@@ -22,6 +22,7 @@ import io.quarkiverse.desktop.swt.QuitRequest;
 import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.SwtStartupEvent;
 import io.quarkus.runtime.ApplicationLifecycleManager;
+import io.quarkus.runtime.ImageMode;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.Quarkus;
 
@@ -55,6 +56,13 @@ public class SwtUi implements SwtLifecycle {
      * the {@code Display} : a task queuing itself again would run for ever.
      */
     static final int DRAIN_LIMIT = 10_000;
+
+    /**
+     * Run time system property set to {@code true} by the Desktop AWT extension once it keeps the first thread of a
+     * macOS native executable in the Cocoa event loop, and runs the application on a new thread named {@code main}
+     * ({@code MacMainThread.PARKED}, of that extension, which this extension does not depend on).
+     */
+    static final String MAIN_THREAD_PARKED = "io.quarkiverse.desktop.main-thread-parked";
 
     /**
      * A task for the user interface thread that is told when it will not run, once queued : the user interface stopped,
@@ -372,12 +380,41 @@ public class SwtUi implements SwtLifecycle {
     }
 
     private static String hint(Throwable e) {
+        return hint(e, System.getProperty("os.name", ""), ImageMode.current() == ImageMode.NATIVE_RUN,
+                System.getProperty(MAIN_THREAD_PARKED));
+    }
+
+    /**
+     * The hint of the error logged when the {@code Display} cannot be created.
+     *
+     * @param osName the name of the operating system ({@code os.name})
+     * @param nativeExecutable whether the application runs as a native executable, where the options of the JVM do not
+     *        apply
+     * @param mainThreadParked the value of {@link #MAIN_THREAD_PARKED} : {@code true} when the Desktop AWT extension
+     *        keeps the first thread of the native executable in the Cocoa event loop, {@code null} otherwise
+     */
+    static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
         if (e instanceof UnsatisfiedLinkError) {
             return " (SWT could not load its native libraries : the SWT jar of the application must be the one of this"
-                    + " operating system and architecture, " + System.getProperty("os.name") + " "
-                    + System.getProperty("os.arch") + ", org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>)";
+                    + " operating system and architecture, " + osName + " " + System.getProperty("os.arch")
+                    + ", org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>)";
         }
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = osName.toLowerCase();
+        if (os.contains("mac") && nativeExecutable && "true".equals(mainThreadParked)) {
+            // the Desktop AWT extension parked the first thread, and the main of another extension (Picocli...) runs
+            // the application on a new thread, named main too
+            return " (on macOS, the Display is created on the first thread of the process : the Desktop AWT extension"
+                    + " keeps that thread for the Cocoa event loop and runs the application on another thread, build"
+                    + " the native executable with quarkus.desktop.awt.macos.park-main-thread=false, and"
+                    + " SwtLifecycle.run() must run on the first thread of the process)";
+        }
+        if (os.contains("mac") && nativeExecutable) {
+            // main runs on the first thread of a native executable, unless it is built with -H:+RunMainInNewThread,
+            // which runs it on a new thread, named main too
+            return " (on macOS, the Display is created on the first thread of the process : the native executable must"
+                    + " not be built with -H:+RunMainInNewThread, which runs main on another thread, and"
+                    + " SwtLifecycle.run() must run on the first thread of the process)";
+        }
         if (os.contains("mac")) {
             return " (on macOS, the Display is created on the first thread of the process : start the JVM with"
                     + " -XstartOnFirstThread, run SwtLifecycle.run() on the main thread, and use the application, not"
