@@ -226,9 +226,14 @@ When an observer throws (an exception or an error, such as the `LinkageError` of
 metadata), the error is logged and, in production and in a `@QuarkusMainTest`, the application stops with exit code 1,
 instead of running without a shell. When the `Display` cannot be created, the error is logged, with a hint on Linux
 (GTK 3 and a display), on macOS (the first thread of the process) and when the native libraries of SWT do not load
-(an `UnsatisfiedLinkError`: the SWT jar of another operating system or architecture), without one otherwise on
-Windows; in production and in a `@QuarkusMainTest`, the application stops with exit code 1. In dev mode and in a
-`@QuarkusTest`, the errors are only logged.
+(the SWT jar of another operating system or architecture, the hint names the jar to use, or the native libraries that
+an executable of another architecture left in `~/.swt/lib/<os>/<arch>`, which SWT never replaces: the hint names the
+directory to delete), without one otherwise on Windows; in production and in a `@QuarkusMainTest`, the application
+stops with exit code 1. In dev mode and in a `@QuarkusTest`, the errors are only logged. In JVM mode, the extension
+compares the `SWT-OS` and `SWT-Arch` attributes of the manifest of the SWT jar with the JVM before it creates the
+`Display`, and reports a manifest without them (an uber-jar, see <<limitations>>): SWT would exit the JVM itself (exit
+code 1), with its own message only ("Libraries for platform <ws> cannot be loaded because of incompatible
+environment"). In a native executable, the error is an `UnsatisfiedLinkError`.
 
 The build logs a warning for an `@ObservesAsync` observer of `SwtStartupEvent`, which is never notified. In tests, the
 user interface does not run unless it is enabled (see <<testing>>).
@@ -297,7 +302,8 @@ command). This is not verified.
 The application stops (`Quarkus.asyncExit()`) when its last visible shell is closed or hidden, once a first shell
 opened, as the Desktop AWT extension does with its windows. Closing a shell disposes it (the default of SWT), and a
 hidden shell (`setVisible(false)`) counts as closed. The shells are counted in a later task, so a listener may dispose a
-shell and open another one. The application also stops when it disposes the `Display` itself.
+shell and open another one. The application also stops when it disposes the `Display` itself: the event loop ends and
+stops it (the shells disposed with the `Display` are not counted as closed).
 
 Whatever stops the application (`Quarkus.asyncExit()`, the last shell closed, a quit request, a signal such as Ctrl+C
 or `SIGTERM`, a dev mode restart, the end of a `@QuarkusTest`), the user interface stops *before* the `ShutdownEvent`
@@ -698,8 +704,10 @@ An exception or an error that escapes a listener, a timer, a task (`Display.asyn
 `io.quarkiverse.desktop.swt.ui-thread` category, with the name of the thread, and the event loop keeps running. The
 extension sets the runtime exception handler and the error handler of the `Display` for it
 (`Display.setRuntimeExceptionHandler`, `Display.setErrorHandler`): an application may replace them in a
-`SwtStartupEvent` observer. A `@RunOnUiThread` method called on the user interface thread runs inline: its exception
-goes to the caller instead.
+`SwtStartupEvent` observer. The event loop also gives them the exceptions of the code that SWT runs without them (on
+macOS, a timer that fires while the event loop sleeps), and logs the exception when a handler throws (a handler
+rethrowing it, as the default ones of SWT, is then called twice for the exceptions that SWT gave it). A `@RunOnUiThread`
+method called on the user interface thread runs inline: its exception goes to the caller instead.
 
 [source,properties]
 ----
@@ -1219,6 +1227,9 @@ not embedded in the executable.
 * The `Browser` widget (Edge WebView2 on Windows, WebKitGTK on Linux) and `GLCanvas` are not verified, neither in JVM
 mode nor in native executables (the extension registers the callbacks of Edge WebView2).
 * JFace and the Eclipse Rich Client Platform are not covered: the extension supports plain SWT.
+* An uber-jar (`quarkus.package.jar.type=uber-jar`) drops the manifest of the SWT jar, and SWT would then exit the JVM:
+it loads its native libraries only from a jar whose manifest declares `SWT-OS` and `SWT-Arch`. The extension reports it
+and stops the application first (see <<startup>>). Use the default fast-jar packaging.
 * macOS is not verified on a Mac yet, and dev mode does not run the user interface there (see <<macos>>).
 * Classes that the application or its libraries load by name need their own native image metadata, for instance with
 `@RegisterForReflection`. Please report the features of SWT that fail in a native executable. The native image tracing

@@ -1,5 +1,8 @@
 package io.quarkiverse.desktop.swt.runtime;
 
+import java.io.IOException;
+import java.net.JarURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -7,6 +10,7 @@ import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.jar.Attributes;
 
 import jakarta.enterprise.event.Event;
 import jakarta.inject.Inject;
@@ -63,6 +67,25 @@ public class SwtUi implements SwtLifecycle {
      * ({@code MacMainThread.PARKED}, of that extension, which this extension does not depend on).
      */
     static final String MAIN_THREAD_PARKED = "io.quarkiverse.desktop.main-thread-parked";
+
+    /**
+     * Every SWT jar has this class : SWT reads the manifest of the jar it comes from before it loads its native
+     * libraries ({@code org.eclipse.swt.internal.Library.isLoadable()}).
+     */
+    static final String SWT_LIBRARY_CLASS = "org/eclipse/swt/internal/Library.class";
+
+    /**
+     * The attributes of the manifest of an SWT jar that SWT compares with {@code os.name} and {@code os.arch}.
+     */
+    static final String SWT_OS = "SWT-OS";
+
+    static final String SWT_ARCH = "SWT-Arch";
+
+    /**
+     * The start of the message of the errors of {@link #checkSwtJar(String, String)} : the hint of the other
+     * {@code UnsatisfiedLinkError}s also names the native libraries that SWT extracted before.
+     */
+    static final String SWT_JAR_ERROR = "The SWT jar ";
 
     /**
      * A task for the user interface thread that is told when it will not run, once queued : the user interface stopped,
@@ -146,6 +169,17 @@ public class SwtUi implements SwtLifecycle {
     private volatile boolean stopRequested;
 
     private final CountDownLatch stopped = new CountDownLatch(1);
+
+    /**
+     * How long {@link #stop()} waits for the user interface thread : {@link #STOP_TIMEOUT_MILLIS}, shorter in tests.
+     */
+    long stopTimeoutMillis = STOP_TIMEOUT_MILLIS;
+
+    /**
+     * Whether a {@link #stop()} already waited for the user interface thread, or found it exiting the JVM : the next
+     * one does not wait again.
+     */
+    private volatile boolean stopWaited;
 
     private LaunchMode launchMode = LaunchMode.NORMAL;
 
@@ -346,6 +380,10 @@ public class SwtUi implements SwtLifecycle {
      */
     private Display createDisplay() {
         try {
+            if (ImageMode.current() != ImageMode.NATIVE_RUN) {
+                // before the first use of Display, whose static initializer loads the native libraries of SWT
+                checkSwtJar(System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+            }
             applicationName.filter(name -> !name.isBlank()).ifPresent(Display::setAppName);
             applicationVersion.filter(version -> !version.isBlank()).ifPresent(Display::setAppVersion);
             Display created = new Display();
@@ -395,9 +433,27 @@ public class SwtUi implements SwtLifecycle {
      */
     static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
         if (e instanceof UnsatisfiedLinkError) {
-            return " (SWT could not load its native libraries : the SWT jar of the application must be the one of this"
-                    + " operating system and architecture, " + osName + " " + System.getProperty("os.arch")
-                    + ", org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>)";
+            String osArch = System.getProperty("os.arch", "");
+            String message = e.getMessage() == null ? "" : e.getMessage();
+            String jar = "the SWT jar of the application must be the one of this operating system and architecture, "
+                    + osName + " " + osArch + ", " + swtJar(osName, osArch);
+            String cache = "delete ~/.swt/lib/" + swtOs(osName) + "/" + swtArch(osArch) + ", where an executable of"
+                    + " another architecture may have left its libraries (SWT never replaces them)";
+            if (message.startsWith(SWT_JAR_ERROR) && message.contains(" has no ")) {
+                // checkSwtJar : the manifest of the SWT jar is gone, not the jar
+                return " (SWT could not load its native libraries : the manifest of the SWT jar is missing, use the"
+                        + " default fast-jar packaging)";
+            }
+            if (message.startsWith(SWT_JAR_ERROR)) {
+                // checkSwtJar : the SWT jar of another platform
+                return " (SWT could not load its native libraries : " + jar + ")";
+            }
+            if (!nativeExecutable) {
+                // checkSwtJar passed : the jar is right, but SWT extracts its native libraries once per version and
+                // loads the ones it finds
+                return " (SWT could not load its native libraries : " + cache + ")";
+            }
+            return " (SWT could not load its native libraries : " + jar + ", or " + cache + ")";
         }
         String os = osName.toLowerCase();
         if (os.contains("mac") && nativeExecutable && "true".equals(mainThreadParked)) {
@@ -424,6 +480,125 @@ public class SwtUi implements SwtLifecycle {
             return " (on Linux, SWT needs GTK 3 and a display : X11, XWayland or Wayland, DISPLAY or WAYLAND_DISPLAY)";
         }
         return "";
+    }
+
+    /**
+     * Checks the SWT jar before SWT does : when the jar is the one of another operating system or architecture
+     * ({@link #isLoadable}), SWT exits the JVM ({@code System.exit(1)}) while the {@code Display} is created, with its
+     * own message only. JVM mode only : in a native executable, whose {@code Library.class} is not in a jar, SWT loads
+     * the native libraries of the executable, and fails with an {@code UnsatisfiedLinkError} when they are of another
+     * platform.
+     *
+     * @param osName {@code os.name}
+     * @param osArch {@code os.arch}
+     * @throws UnsatisfiedLinkError when SWT would exit : the native libraries of SWT do not load, logged with the hint
+     */
+    static void checkSwtJar(String osName, String osArch) {
+        // the manifest that SWT reads (Library.isLoadable())
+        URL library = Display.class.getResource("/" + SWT_LIBRARY_CLASS);
+        if (library == null || !library.getProtocol().equals("jar")) {
+            // SWT does not check its jar either (a development environment of SWT)
+            return;
+        }
+        Attributes attributes;
+        URL jar;
+        try {
+            if (!(library.openConnection() instanceof JarURLConnection connection)) {
+                return;
+            }
+            attributes = connection.getMainAttributes();
+            jar = connection.getJarFileURL();
+        } catch (IOException e) {
+            // SWT cannot read it either : it exits with its own message
+            return;
+        }
+        if (attributes != null) {
+            checkSwtJar(jar, attributes, osName, osArch);
+        }
+    }
+
+    /**
+     * Checks the main attributes of the manifest of the SWT jar ({@link #checkSwtJar(String, String)}).
+     *
+     * @param jar the SWT jar
+     * @throws UnsatisfiedLinkError when SWT would exit : the jar is the one of another operating system or
+     *         architecture, or its manifest has no {@code SWT-OS} or no {@code SWT-Arch} attribute (an uber-jar keeps its
+     *         own manifest only)
+     */
+    static void checkSwtJar(URL jar, Attributes attributes, String osName, String osArch) {
+        if (isLoadable(attributes, osName, osArch)) {
+            return;
+        }
+        String os = attributes.getValue(SWT_OS);
+        String arch = attributes.getValue(SWT_ARCH);
+        if (os == null || arch == null) {
+            boolean neither = os == null && arch == null;
+            String missing = neither ? SWT_OS + " and " + SWT_ARCH + " attributes"
+                    : (os == null ? SWT_OS : SWT_ARCH) + " attribute";
+            throw new UnsatisfiedLinkError(SWT_JAR_ERROR + jar + " has no " + missing + " in its manifest : SWT would"
+                    + " exit the JVM (System.exit(1)) without " + (neither ? "them" : "it") + " (an uber-jar drops the"
+                    + " manifests of its dependencies : use the default fast-jar packaging)");
+        }
+        throw new UnsatisfiedLinkError(SWT_JAR_ERROR + jar + " declares, in its manifest, " + SWT_OS + " " + os + " and "
+                + SWT_ARCH + " " + arch + ", not " + swtOs(osName) + " and " + swtArch(osArch) + " : SWT would exit"
+                + " the JVM (System.exit(1)) instead of loading its native libraries");
+    }
+
+    /**
+     * Whether SWT loads its native libraries from its jar in JVM mode : {@code org.eclipse.swt.internal.Library}
+     * compares the {@code SWT-OS} and {@code SWT-Arch} attributes of the manifest of the jar with the operating system
+     * and the architecture of the JVM, as it names them, and exits the JVM when they differ
+     * ({@code Platform.exitIfNotLoadable()}). It does not compare {@code SWT-WS}, which follows from the operating
+     * system.
+     *
+     * @param attributes the main attributes of the manifest of the SWT jar
+     * @param osName {@code os.name}
+     * @param osArch {@code os.arch}
+     */
+    static boolean isLoadable(Attributes attributes, String osName, String osArch) {
+        return swtOs(osName).equals(attributes.getValue(SWT_OS))
+                && swtArch(osArch).equals(attributes.getValue(SWT_ARCH));
+    }
+
+    /**
+     * The SWT jar of an operating system and an architecture ({@code os.name}, {@code os.arch}) :
+     * {@code org.eclipse.platform:org.eclipse.swt.cocoa.macosx.aarch64}...
+     */
+    static String swtJar(String osName, String osArch) {
+        String os = swtOs(osName);
+        String ws = switch (os) {
+            case "win32" -> "win32";
+            case "macosx" -> "cocoa";
+            case "linux" -> "gtk";
+            default -> null;
+        };
+        return "org.eclipse.platform:org.eclipse.swt."
+                + (ws != null ? ws + "." + os + "." + swtArch(osArch) : "<ws>.<os>.<arch>");
+    }
+
+    /**
+     * The operating system as SWT names it ({@code SWT-OS}, {@code org.eclipse.swt.internal.Library.os()}) :
+     * {@code win32}, {@code macosx}, {@code linux}, or {@code os.name}.
+     */
+    static String swtOs(String osName) {
+        if (osName.equals("Linux")) {
+            return "linux";
+        }
+        if (osName.equals("Mac OS X")) {
+            return "macosx";
+        }
+        if (osName.startsWith("Win")) {
+            return "win32";
+        }
+        return osName;
+    }
+
+    /**
+     * The architecture as SWT names it ({@code SWT-Arch}, {@code org.eclipse.swt.internal.Library.arch()}) :
+     * {@code x86_64} for {@code amd64}, {@code os.arch} otherwise ({@code aarch64}, {@code x86_64}...).
+     */
+    static String swtArch(String osArch) {
+        return osArch.equals("amd64") ? "x86_64" : osArch;
     }
 
     /**
@@ -458,23 +633,56 @@ public class SwtUi implements SwtLifecycle {
      */
     private void loop(Display created) {
         while (!stopRequested && !created.isDisposed()) {
-            try {
-                if (!created.readAndDispatch()) {
-                    created.sleep();
-                }
-            } catch (SWTException e) {
-                if (created.isDisposed()) {
-                    break;
-                }
-                UI_THREAD_LOGGER.error("Uncaught exception in the event loop", e);
-            } catch (RuntimeException | Error e) {
-                UI_THREAD_LOGGER.error("Uncaught exception in the event loop", e);
-            }
+            dispatch(created);
         }
         if (!stopRequested) {
             // the application disposed the Display itself : without its user interface, it stops
             LOGGER.debug("The Display is disposed : the application stops");
             Quarkus.asyncExit();
+        }
+    }
+
+    /**
+     * Runs the next event or task of the event loop, or sleeps until there is one. An exception or an error that
+     * escapes {@code readAndDispatch()} goes to the handlers of the {@code Display} ({@link #uncaught}).
+     */
+    static void dispatch(Display created) {
+        try {
+            if (!created.readAndDispatch()) {
+                created.sleep();
+            }
+        } catch (SWTException e) {
+            // the Display disposed by the application ends the event loop
+            if (!created.isDisposed()) {
+                uncaught(created, e);
+            }
+        } catch (RuntimeException | Error e) {
+            uncaught(created, e);
+        }
+    }
+
+    /**
+     * An exception or an error that escaped {@code readAndDispatch()} : given to the runtime exception handler or the
+     * error handler of the {@code Display} (the ones of the extension, which log it, or the ones of the application),
+     * as SWT does with the exceptions of the listeners and of the tasks, so that every uncaught exception of the user
+     * interface thread is reported the same way. SWT runs some code without them : on macOS, a timer that fired while
+     * the event loop slept runs in {@code readAndDispatch()} ({@code Display.runTimers()}).
+     * <p>
+     * A handler that throws does not end the event loop : the exception is logged. A handler rethrowing the exceptions
+     * (as the default ones of SWT) is called twice for those of the listeners and of the tasks : by SWT, then here.
+     */
+    static void uncaught(Display created, Throwable e) {
+        try {
+            if (e instanceof Error error) {
+                created.getErrorHandler().accept(error);
+            } else {
+                created.getRuntimeExceptionHandler().accept((RuntimeException) e);
+            }
+        } catch (RuntimeException | Error failure) {
+            UI_THREAD_LOGGER.error("Uncaught exception in the event loop", e);
+            if (failure != e) {
+                UI_THREAD_LOGGER.error("The handler of the uncaught exceptions of the Display failed", failure);
+            }
         }
     }
 
@@ -527,7 +735,7 @@ public class SwtUi implements SwtLifecycle {
                     return;
                 }
             } catch (RuntimeException | Error e) {
-                UI_THREAD_LOGGER.error("Uncaught exception in the event loop", e);
+                uncaught(created, e);
             }
         }
     }
@@ -615,7 +823,8 @@ public class SwtUi implements SwtLifecycle {
      * When the application stops, before the {@code ShutdownEvent} observers : ends the event loop and waits for the user
      * interface thread to dispose the {@code Display} (the shutdown of a signal, of dev mode or of a test runs on another
      * thread while the event loop runs). When the user interface did not start, it never will : the queued tasks are
-     * rejected. Called twice when the application started (see {@code DesktopSwtRecorder}).
+     * rejected. Called twice when the application started (see {@code DesktopSwtRecorder}) : it waits once, the second
+     * call does not wait again for a user interface thread that did not stop within the time-out.
      */
     void stop() {
         List<Runnable> rejected = List.of();
@@ -629,16 +838,17 @@ public class SwtUi implements SwtLifecycle {
         reject(rejected, "The application stopped before the user interface ran");
         requestStop();
         Thread thread = uiThread;
-        if (thread != null && thread != Thread.currentThread()) {
+        if (thread != null && thread != Thread.currentThread() && !stopWaited) {
+            stopWaited = true;
             if (isExiting(thread)) {
                 // it waits for the shutdown, the event loop does not run : the Display is not disposed
                 LOGGER.debugf("The user interface thread %s called System.exit() : the application stops without"
                         + " disposing the Display", thread.getName());
             } else {
                 try {
-                    if (!stopped.await(STOP_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)) {
+                    if (!stopped.await(stopTimeoutMillis, TimeUnit.MILLISECONDS)) {
                         LOGGER.warnf("The user interface thread %s did not stop within %d ms : the application stops"
-                                + " without disposing the Display", thread.getName(), STOP_TIMEOUT_MILLIS);
+                                + " without disposing the Display", thread.getName(), stopTimeoutMillis);
                     }
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();

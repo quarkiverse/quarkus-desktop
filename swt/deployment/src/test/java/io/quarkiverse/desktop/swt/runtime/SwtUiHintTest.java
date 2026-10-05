@@ -62,9 +62,34 @@ class SwtUiHintTest {
             assertEquals("", SwtUi.hint(FAILURE, "Windows 11", nativeExecutable, null));
             // the SWT jar of another platform, on every platform
             String library = SwtUi.hint(new UnsatisfiedLinkError(), "Mac OS X", nativeExecutable, "true");
-            assertTrue(library.contains("SWT could not load its native libraries") && library.contains("Mac OS X "),
-                    library);
+            assertTrue(library.startsWith(" (SWT could not load its native libraries : "), library);
             assertFalse(library.contains("first thread"), library);
+            // the native libraries that an executable of another architecture extracted, which SWT loads
+            String cache = "delete ~/.swt/lib/macosx/" + SwtUi.swtArch(System.getProperty("os.arch")) + ", where an"
+                    + " executable of another architecture may have left its libraries (SWT never replaces them)";
+            assertTrue(library.contains(cache), library);
+            // and the jar to use in a native executable ; in JVM mode the jar was checked before (SwtUi.checkSwtJar)
+            assertEquals(nativeExecutable, library.contains("Mac OS X ") && library.contains(
+                    "org.eclipse.platform:org.eclipse.swt.cocoa.macosx." + SwtUi.swtArch(System.getProperty("os.arch"))),
+                    library);
+            String loading = SwtUi.hint(new UnsatisfiedLinkError("Can't load library: /home/user/.swt/lib/linux/x86_64/"
+                    + "libswt-pi3-gtk-4971r6.so"), "Linux", nativeExecutable, null);
+            assertTrue(loading.contains("delete ~/.swt/lib/linux/" + SwtUi.swtArch(System.getProperty("os.arch"))
+                    + ", where"), loading);
+            // in JVM mode the jar was checked before : only the cache
+            assertEquals(nativeExecutable, loading.contains("org.eclipse.platform:"), loading);
+            // not when the SWT jar is the cause (SwtUi.checkSwtJar)
+            String jar = SwtUi.hint(new UnsatisfiedLinkError(SwtUi.SWT_JAR_ERROR + "file:/app/lib/swt.jar has no"
+                    + " SWT-OS and SWT-Arch attributes in its manifest"), "Mac OS X", nativeExecutable, null);
+            assertTrue(jar.contains("the manifest of the SWT jar is missing, use the default fast-jar packaging"), jar);
+            assertFalse(jar.contains("~/.swt/lib"), jar);
+            assertFalse(jar.contains("org.eclipse.platform:"), jar);
+            // the SWT jar of another platform (SwtUi.checkSwtJar) : the jar to use, not the cache
+            String other = SwtUi.hint(new UnsatisfiedLinkError(SwtUi.SWT_JAR_ERROR + "file:/app/lib/swt.jar declares,"
+                    + " in its manifest, SWT-OS macosx and SWT-Arch x86_64, not macosx and aarch64"), "Mac OS X",
+                    nativeExecutable, null);
+            assertTrue(other.contains("the SWT jar of the application must be the one of"), other);
+            assertFalse(other.contains("~/.swt/lib"), other);
         }
     }
 }

@@ -19,6 +19,10 @@ import org.jboss.logging.Logger;
  * It listens to the {@code SWT.Show} events of every widget (a filter of the {@code Display}), and to the
  * {@code SWT.Hide} and {@code SWT.Dispose} events of the shells only : a {@code SWT.Dispose} filter would be notified for
  * every widget and item disposed.
+ * <p>
+ * The shells disposed with the {@code Display}, when the application disposes it, are not counted : the event loop ends
+ * and stops the application then. SWT sends the {@code SWT.Dispose} event of the {@code Display} before it disposes the
+ * shells, and runs the tasks they queue while {@code isDisposed()} is still {@code false}.
  */
 final class LastShellExitPolicy {
 
@@ -38,6 +42,8 @@ final class LastShellExitPolicy {
 
     private final Listener closed = event -> recountLater();
 
+    private final Listener displayDisposed = event -> removed = true;
+
     private LastShellExitPolicy(Display display, Runnable exit) {
         this.display = display;
         this.exit = exit;
@@ -51,6 +57,7 @@ final class LastShellExitPolicy {
     static LastShellExitPolicy install(Display display, Runnable exit) {
         LastShellExitPolicy policy = new LastShellExitPolicy(display, exit);
         display.addFilter(SWT.Show, policy.shown);
+        display.addListener(SWT.Dispose, policy.displayDisposed);
         // the shells opened before
         for (Shell shell : display.getShells()) {
             if (!shell.isDisposed() && shell.isVisible()) {
@@ -70,6 +77,7 @@ final class LastShellExitPolicy {
             return;
         }
         display.removeFilter(SWT.Show, shown);
+        display.removeListener(SWT.Dispose, displayDisposed);
         for (Shell shell : display.getShells()) {
             if (!shell.isDisposed()) {
                 shell.removeListener(SWT.Hide, closed);
