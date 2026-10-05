@@ -515,7 +515,10 @@ final class SwtWidgetChecks {
                 for (int i = 0; i < 16; i++) {
                     new Label(scrolledContent, SWT.NONE).setText("Scrolled cell " + (i + 1));
                 }
-                scrolledContent.setSize(scrolledContent.computeSize(SWT.DEFAULT, SWT.DEFAULT));
+                // larger than the scrolled composite whatever the fonts and the scale : the origin set below is in the
+                // range of its scroll bars (the height of the labels alone may exceed its height by a few pixels only)
+                Point preferred = scrolledContent.computeSize(SWT.DEFAULT, SWT.DEFAULT);
+                scrolledContent.setSize(Math.max(preferred.x, 480), Math.max(preferred.y, 160));
                 scrolled.setContent(scrolledContent);
 
                 ViewForm viewForm = new ViewForm(content, SWT.BORDER | SWT.FLAT);

@@ -1,7 +1,6 @@
 package io.quarkiverse.desktop.swt.it;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -16,9 +15,8 @@ import org.eclipse.swt.graphics.ImageData;
 import org.eclipse.swt.graphics.ImageLoader;
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.Launch;
-import io.quarkus.test.junit.main.LaunchResult;
 import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
+import io.quarkus.test.junit.main.QuarkusMainLauncher;
 
 @QuarkusMainIntegrationTest
 public class SwtItIT extends SwtItTest {
@@ -28,10 +26,9 @@ public class SwtItIT extends SwtItTest {
      * must be the same.
      */
     @Test
-    @Launch({ "swt", DIRECTORY })
     @Override
-    public void swt(LaunchResult result) throws Exception {
-        super.swt(result);
+    public void swt(QuarkusMainLauncher launcher) throws Exception {
+        super.swt(launcher);
         List<String> compared = new ArrayList<>();
         try (DirectoryStream<Path> files = Files.newDirectoryStream(Path.of(DIRECTORY), "*-native.*")) {
             for (Path nativeFile : files) {
@@ -56,11 +53,8 @@ public class SwtItIT extends SwtItTest {
      * The application stops when its last shell closes (not in the JVM mode tests, where the policy is disabled).
      */
     @Test
-    @Launch("exit-policy")
-    public void exitPolicy(LaunchResult result) {
-        String output = result.getOutput();
-        assertEquals(0, result.exitCode(), output);
-        assertFalse(output.contains(" FAILED "), output);
+    public void exitPolicy(QuarkusMainLauncher launcher) {
+        String output = assertSucceeded(launcher.launch("exit-policy"));
         assertTrue(output.contains("RESULT lifecycle-run-returned OK disposed=true"), output);
     }
 
