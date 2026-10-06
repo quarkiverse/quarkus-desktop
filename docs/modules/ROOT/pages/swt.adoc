@@ -742,10 +742,12 @@ macOS, a timer that fires while the event loop sleeps), and logs the exception w
 rethrowing it, as the default ones of SWT, is then called twice for the exceptions that SWT gave it). A checked
 exception thrown without being declared (Kotlin, Groovy, Lombok `@SneakyThrows`), which SWT lets escape from the
 listeners and the timers, goes to the runtime exception handler wrapped in an `UndeclaredThrowableException`, and the
-event loop keeps running too. Once the `Display` is disposed, an exception that escapes the event loop is SWT's own (on
-Windows, the `WM_ENDSESSION` of the end of the session disposes it during `PeekMessage`, then SWT throws a
-`NullPointerException`, as without Quarkus): it is logged at the `DEBUG` level only, and the event loop ends. A
-`@RunOnUiThread` method called on the user interface thread runs inline: its exception goes to the caller instead.
+event loop keeps running too. Once the `Display` is disposed, an exception that SWT throws itself (the top frame of its
+stack trace in SWT: on Windows, the `WM_ENDSESSION` of the end of the session disposes it during `PeekMessage`, then
+SWT throws a `NullPointerException`, as without Quarkus) is logged at the `DEBUG` level only, and the event loop ends;
+an exception of the application (a listener or a timer that disposes the `Display`, then fails) still goes to the
+handlers. A `@RunOnUiThread` method called on the user interface thread runs inline: its exception goes to the caller
+instead.
 
 [source,properties]
 ----

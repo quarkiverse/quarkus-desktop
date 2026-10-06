@@ -693,17 +693,28 @@ public class SwtUi implements SwtLifecycle {
                 uncaught(created, e);
             }
         } catch (Throwable e) {
-            if (created.isDisposed()) {
+            if (created.isDisposed() && thrownBySwt(e)) {
                 // SWT itself, once the Display is disposed during readAndDispatch() : on Windows, the WM_ENDSESSION of
                 // the end of the session disposes it inside PeekMessage, and Display.filterMessage then throws a
-                // NullPointerException (plain SWT does too). The event loop ends anyway.
+                // NullPointerException (plain SWT does too) ; on macOS, Display.runTimers() goes on with the timers
+                // that the disposal released. The event loop ends anyway.
                 UI_THREAD_LOGGER.debug("Exception of SWT once the Display is disposed", e);
             } else {
                 // the exceptions and errors, and the checked exceptions thrown without being declared (Kotlin, Groovy,
-                // Lombok @SneakyThrows...), which SWT lets escape from the listeners and the timers
+                // Lombok @SneakyThrows...), which SWT lets escape from the listeners and the timers : also once the
+                // application disposed the Display in a listener or a timer, whose handlers still work
                 uncaught(created, e);
             }
         }
+    }
+
+    /**
+     * Whether SWT threw it itself : the top frame of its stack trace is in SWT. An exception of the application keeps
+     * the frame where the application threw it, also when SWT rethrows it ({@code ExceptionStash}).
+     */
+    static boolean thrownBySwt(Throwable e) {
+        StackTraceElement[] stack = e.getStackTrace();
+        return stack.length > 0 && stack[0].getClassName().startsWith("org.eclipse.swt.");
     }
 
     /**
