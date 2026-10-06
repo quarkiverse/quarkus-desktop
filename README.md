@@ -9,10 +9,9 @@ executables.
 
 - AWT and Swing: Windows x64, Linux x64 and arm64, and macOS on Apple silicon (JVM mode only on Windows arm64). Native
   executables for macOS need Quarkus 4.0 or later, whose quarkus-awt supports macOS
-  ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979); not released yet: until then, a
-  Quarkus `999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later.
+  ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), and GraalVM 25.1 or later.
 - SWT: Windows x64, Linux x64 and arm64, and macOS on Apple silicon, in JVM mode and as native executables (on Windows
-  arm64: JVM mode, and x64 native executables under emulation). On macOS, JVM mode needs `-XstartOnFirstThread`.
+  arm64: JVM mode only). On macOS, JVM mode needs `-XstartOnFirstThread`.
 
 | Extension | Coordinates | Description |
 |---|---|---|
