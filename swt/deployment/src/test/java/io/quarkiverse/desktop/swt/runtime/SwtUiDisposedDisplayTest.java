@@ -20,8 +20,10 @@ import org.junit.jupiter.api.Test;
  * An exception that escapes {@code readAndDispatch()} once the {@code Display} is disposed : SWT's own (on Windows,
  * {@code WM_ENDSESSION} disposes it inside {@code PeekMessage}, then {@code Display.filterMessage} throws a
  * {@code NullPointerException}) ends the event loop without being reported as an uncaught exception of the application,
- * while one of the application (a listener or a timer that disposes the {@code Display}, then fails) is still reported.
- * A {@code Display} of its own per test (its own JVM : forkCount 1, reuseForks false), created on the thread of the
+ * while one of the application (a listener or a timer that disposes the {@code Display}, then fails) is still reported :
+ * by the event loop of the extension when it escapes {@code readAndDispatch()} (macOS, Windows, and a checked exception
+ * everywhere), by SWT itself for the RuntimeExceptions and Errors of a timer on Linux. A {@code Display} of its own per
+ * test (its own JVM : forkCount 1, reuseForks false), created on the thread of the
  * test : the first thread of the process on macOS, where the tests run with {@code -XstartOnFirstThread}. Needs a
  * display.
  */
@@ -29,8 +31,9 @@ class SwtUiDisposedDisplayTest {
 
     @Test
     void exceptionOfSwtOnceTheDisplayIsDisposed() {
-        // the NullPointerException of Display.filterMessage, thrown where SWT throws it
-        NullPointerException swt = new NullPointerException("of SWT");
+        // thrown where SWT throws (Display.filterMessage). A checked exception, so that it escapes readAndDispatch() on
+        // every platform : GTK gives the RuntimeExceptions and Errors of a timer to the handlers itself (timerProc)
+        IOException swt = new IOException("of SWT");
         swt.setStackTrace(new StackTraceElement[] {
                 new StackTraceElement("org.eclipse.swt.widgets.Display", "filterMessage", "Display.java", 1) });
         List<Throwable> reported = disposeThenThrow(swt);
