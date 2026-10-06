@@ -14,9 +14,11 @@ import org.eclipse.swt.widgets.Event;
  * macOS is then cancelled (macOS reports that the application canceled it) : the user repeats it once the application
  * exited.
  * <p>
- * On macOS, a {@code SIGTERM} may fire it too : AppKit asks the application to terminate while the JVM stops it on other
- * threads, and the request is fired when the event loop handles it first. The application stops whatever the observers
- * answer, and an observer blocking the user interface thread (a modal dialog) delays the exit by the stop time-out.
+ * On macOS, a {@code SIGTERM} or a {@code SIGINT} (Ctrl+C) may fire it too, in JVM mode and in native executables : AppKit
+ * asks the application to terminate ({@code -[NSApplication terminate:]}, from the main run loop) while the JVM stops it
+ * on other threads, and the request is fired when the event loop handles it first (about one run in ten). The
+ * application stops whatever the observers answer, and an observer blocking the user interface thread (a modal dialog)
+ * delays the exit by the stop time-out.
  * <p>
  * Closing the shells is not a quit request : the last shell closing stops the application
  * ({@code quarkus.desktop.swt.exit-on-last-shell-closed}), add a {@code SWT.Close} listener to a shell to ask for

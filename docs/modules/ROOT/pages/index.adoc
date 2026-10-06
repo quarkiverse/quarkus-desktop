@@ -180,10 +180,10 @@ xref:awt.adoc#limitations[Limitations]). It also has a Docker image for the Linu
 macOS on a Mac.
 
 The showcase also has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt`
-compares its JVM mode and native runs (they match on macOS 27.0, and matched on Windows 11 before the pages got their
-macOS values). The integration tests of the Desktop SWT extension compare the rendering of JVM mode and native
-executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode tests, and so
-this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
+compares its JVM mode and native runs (they match on Windows 11, on Linux x64 in Docker and on macOS 27.0, also with
+exact reachability metadata). The integration tests of the Desktop SWT extension compare the rendering of JVM mode and
+native executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode tests,
+and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
 
 [[configuration]]
 == Configuration

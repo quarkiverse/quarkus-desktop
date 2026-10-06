@@ -331,9 +331,12 @@ once it returns to the event loop: nothing waits, and a user interface thread th
 running (a signal then stops it, with the time-out above). `System.exit()` called on the user interface thread stops
 the application without disposing the `Display` either, and without waiting: call `Quarkus.asyncExit()` instead. After
 a stop that timed out or a `System.exit()`, the calls of the `ShutdownEvent` observers are rejected at once too, as
-after any stop, and the tasks already handed to the `Display` never run. The shells
-are not disposed then: their `SWT.Dispose` listeners do not run, and the `@Dependent` beans of `WidgetBeans` are
-destroyed by the container at the end of the shutdown, after the `ShutdownEvent` observers, on the shutdown thread.
+after any stop. The tasks already handed to the `Display` and the shells are left as they are: after `System.exit()`
+for good, after a time-out until the user interface thread returns to the event loop, if it does before the process
+ends (in dev mode and in tests, where the process goes on), and then at the same time as the `ShutdownEvent`
+observers. Until then the shells are not disposed: their `SWT.Dispose` listeners do not run, and the `@Dependent` beans
+of `WidgetBeans` are destroyed by the container at the end of the shutdown, after the `ShutdownEvent` observers, on the
+shutdown thread.
 Their `@PreDestroy` methods run there and must not use the widgets: they are not disposed, and a widget (or the
 `Display`) called from another thread throws an `SWTException`. Check `UiThread.isUiThread()` (`isDisposed()` is not
 enough, see <<widget-beans>>).
@@ -425,18 +428,23 @@ unsaved changes never loses them. `request.event()` is the `SWT.Close` event of 
 once for `Display.close()`, and for the end of the session only once it ends (`WM_ENDSESSION` on Windows, the
 `EndSession` of the session manager on Linux), not when it is queried (`WM_QUERYENDSESSION`, `QueryEndSession`, when
 the request is fired): another application may still refuse the end of the session, and this one then keeps running.
-When an observer cancels the request, the end of the session does not go on: cancel only when the user asked to.
+When an observer cancels the request, the end of the session does not go on: cancel only when the user asked to. Only
+what runs while SWT disposes the `Display` (the `SWT.Dispose` listeners, the `@PreDestroy` methods of the widget beans)
+is sure to run before the session ends: the `ShutdownEvent` observers run once SWT answered the end of the session,
+and a real logout may end the process before they are done (not verified).
 * *macOS*: the extension always answers "cancel" to AppKit (`doit = false`), and stops the application itself when the
 request is not cancelled: SWT would otherwise dispose the `Display` and let AppKit exit the process without the shutdown
 of Quarkus (the `ShutdownEvent` observers and `@PreDestroy` methods would not run). A logout, a restart or a shutdown of
 the Mac is then cancelled by the system (it reports that the application canceled logout) while the application stops,
 as with the Desktop AWT extension in dev mode (see xref:cdi.adoc#desktop-events[Application menu, Finder and Dock
 events]): the user repeats it.
-* *macOS, `SIGTERM`*: a `SIGTERM` also makes AppKit ask the application to terminate, so the `QuitRequest` observers
-may be called while the application stops anyway (in JVM mode it happened in 3 of 5 runs, in native executables in
-none of 3: likely a race). Cancelling the request has no effect then. An observer must not block the user interface thread (a
-modal dialog), or the exit waits for the stop time-out, 10 seconds, after which the application stops without
-disposing the `Display` (see <<exit>>).
+* *macOS, signals*: a `SIGTERM` or a `SIGINT` (Ctrl+C) may also make AppKit ask the application to terminate
+(`-[NSApplication terminate:]`, run from the main run loop), in JVM mode and in native executables, so the
+`QuitRequest` observers may be called while the application stops anyway. It is a race with the shutdown of Quarkus,
+seen in about one run in ten (in JVM mode, 4 of 34 runs with `SIGTERM` and 3 of 28 with `SIGINT`; in native
+executables, 1 of 19 and 3 of 17). Cancelling the request has no effect then. An observer must not block the user
+interface thread (a modal dialog), or the exit waits for the stop time-out, 10 seconds, after which the application
+stops without disposing the `Display` (see <<exit>>).
 
 A cancelled `Display.close()` is verified on Windows, Linux and macOS (see <<verification>>), and so are, in JVM
 mode and as native executables, a `Display.close()` that is not cancelled (the observers run once, the application
@@ -445,10 +453,11 @@ cancelled and the application keeps running). On Windows, the end of the session
 Windows sends (`WM_QUERYENDSESSION`, then `WM_ENDSESSION`) sent to the application, without logging out: the query
 alone leaves the application running, `WM_ENDSESSION` then stops it with exit code 0, an end of the session refused by
 another application (`WM_ENDSESSION` with `FALSE`) leaves it running, and an observer that cancels makes the query
-answer that the session may not end. On macOS, a quit Apple Event sent to an application
-bundle (`tell application id "..." to quit`) is verified too: the application stops through Quarkus with exit code 0,
-and the sender of the Apple Event gets "User canceled" (-128). Not verified: Cmd-Q and Quit in the application menu
-and the Dock (they need a user at the Mac), and a real end of the session (a logout) on every platform.
+answer that the session may not end. On macOS, Cmd-Q, Quit in the application menu, a quit Apple Event sent to an
+application bundle (`tell application id "..." to quit`) and a quit request cancelled then repeated are verified too,
+in JVM mode and as native executables: the observers run once per request, the application stops through Quarkus
+with exit code 0, and the sender of the Apple Event gets "User canceled" (-128). Not verified: Quit in the Dock, and a
+real end of the session (a logout) on every platform.
 
 [[ui-thread]]
 == The user interface thread
@@ -975,11 +984,12 @@ parked for AWT (`quarkus.desktop.awt.macos.park-main-thread` is ignored): SWT ow
 * The name of the application in the menu bar and the Dock is `quarkus.desktop.swt.application-name`, given to
 `Display.setAppName` before the `Display` is created (see <<configuration>>).
 * Cmd-Q, Quit in the application menu and in the Dock, a logout and a shutdown fire `QuitRequest` and stop the
-application through Quarkus, and so may a `SIGTERM` (see <<quit-requests>>). The other items of the application menu
-(About, Preferences) are SWT menu items (`Display.getSystemMenu()`), and the files opened with the application are
-`SWT.OpenDocument` events of the `Display` (see <<startup>>), not CDI events. The URLs opened with the application (a
-URL scheme of the bundle) never reach `SWT.OpenUrl` with SWT 3.132.0 and 3.135.0: SWT registers its delegate method as
-`application:openUrls:`, while AppKit calls `application:openURLs:` (a bug of SWT).
+application through Quarkus, and so may a `SIGTERM` or a `SIGINT` (see <<quit-requests>>). The other items of the
+application menu (About, Settings) are SWT menu items (`Display.getSystemMenu()`, `SWT.ID_ABOUT` and
+`SWT.ID_PREFERENCES`: verified on macOS), and the files opened with the application are `SWT.OpenDocument` events of
+the `Display` (see <<startup>>), not CDI events. The URLs opened with the application (a URL scheme of the bundle) never
+reach `SWT.OpenUrl` with SWT 3.132.0 and 3.135.0: SWT registers its delegate method as `application:openUrls:`, while
+AppKit calls `application:openURLs:` (a bug of SWT).
 * An application bundle that signs its content keeps the native libraries of SWT next to the executable
 (`quarkus.desktop.swt.native-libraries=next-to-executable`, see <<native-libraries>>).
 +
@@ -988,7 +998,8 @@ about 35 seconds at its first log record: the logging of Quarkus resolves the ho
 (`io.smallrye.common.net.HostName`, `InetAddress.getLocalHost`, an mDNS lookup of `<name>.local`), and the Local Network
 privacy of macOS holds the query of an ad hoc signed bundle (it stays pending, and macOS may ask the user to allow it).
 `-Djboss.qualified.host.name=<name>`, in the launcher script of the bundle or as an argument of the executable, avoids
-the lookup: the executable then starts in milliseconds. The bundles running the application in JVM mode did not wait.
+the lookup: the executable then starts in milliseconds. The bundles running the application in JVM mode did not wait,
+and the wait was only seen with the screen locked: with the screen unlocked, the same native bundle started at once.
 
 The native executable declares the minimum macOS version and the SDK version of the `java` launcher of the JDK used for
 the native build (`otool -l` shows them in `LC_BUILD_VERSION`, for instance `minos 11.0` and `sdk 14.5`): it starts on
@@ -1376,15 +1387,18 @@ SWT jar of another architecture;
 native executables built with exact reachability metadata, a native executable on Wayland (a headless Weston), and a
 native executable built in a container from macOS (see <<container-builds>>).
 
-The continuous integration runs them on Windows and Linux, in JVM mode and as native executables, and in JVM mode on
-macOS. Its native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the
-native executable with JVM mode.
+The continuous integration runs them on Windows and Linux, in JVM mode and as native executables, and on macOS in JVM
+mode and as native executables (a job of its own, also with exact reachability metadata, that builds the SWT modules
+alone: the AWT and Swing native executables of macOS need Quarkus 4.0, see xref:awt.adoc#macos[macOS]). Its native
+jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the native executable
+with JVM mode.
 
 Not verified: macOS on Intel Macs, a Retina display and the dark appearance (every macOS run used a display at scale
-1, in the light appearance), the name of the application in the menu bar and the Dock as shown on screen (only as
-reported by `lsappinfo`), the About and Settings items of the application menu, Windows arm64, Cmd-Q and Quit in the
-application menu and the Dock, a real end of the session (a logout) on every platform, the Linux session manager
-(`QueryEndSession`, `EndSession`), AWT (rather than Swing) with SWT, and Quarkus FX.
+1, in the light appearance), the name of the application in the Dock as shown on screen (only as reported by
+`lsappinfo`, the menu bar is verified on screen), Quit in the Dock, Windows arm64, on Linux arm64 dev mode, the
+`Browser` widget and `GLCanvas`, Picocli, Swing with SWT and quit requests, a real end of the session (a logout) on
+every platform, the Linux session manager (`QueryEndSession`, `EndSession`), AWT (rather than Swing) with SWT, and
+Quarkus FX.
 
 The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] has an SWT
 variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt` compares its JVM mode and
