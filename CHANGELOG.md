@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+## 0.2.1 - 2026-10-06
+
+- Publishes the changes of 0.2.0, which did not reach Maven Central (its javadoc jars were missing).
+
 ## 0.2.0 - 2026-10-06
 
 ### Added
