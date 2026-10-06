@@ -453,11 +453,11 @@ cancelled and the application keeps running). On Windows, the end of the session
 Windows sends (`WM_QUERYENDSESSION`, then `WM_ENDSESSION`) sent to the application, without logging out: the query
 alone leaves the application running, `WM_ENDSESSION` then stops it with exit code 0, an end of the session refused by
 another application (`WM_ENDSESSION` with `FALSE`) leaves it running, and an observer that cancels makes the query
-answer that the session may not end. On macOS, Cmd-Q, Quit in the application menu, a quit Apple Event sent to an
-application bundle (`tell application id "..." to quit`) and a quit request cancelled then repeated are verified too,
-in JVM mode and as native executables: the observers run once per request, the application stops through Quarkus
-with exit code 0, and the sender of the Apple Event gets "User canceled" (-128). Not verified: Quit in the Dock, and a
-real end of the session (a logout) on every platform.
+answer that the session may not end. On macOS, Cmd-Q, Quit in the application menu and in the Dock, a quit Apple
+Event sent to an application bundle (`tell application id "..." to quit`) and a quit request cancelled then repeated
+are verified too, in JVM mode and as native executables: the observers run once per request, the application stops
+through Quarkus with exit code 0, and the sender of the Apple Event gets "User canceled" (-128). Not verified: a real
+end of the session (a logout) on every platform.
 
 [[ui-thread]]
 == The user interface thread
@@ -1395,7 +1395,7 @@ with JVM mode.
 
 Not verified: macOS on Intel Macs, a Retina display and the dark appearance (every macOS run used a display at scale
 1, in the light appearance), the name of the application in the Dock as shown on screen (only as reported by
-`lsappinfo`, the menu bar is verified on screen), Quit in the Dock, Windows arm64, on Linux arm64 dev mode, the
+`lsappinfo`, the menu bar is verified on screen), Windows arm64, on Linux arm64 dev mode, the
 `Browser` widget and `GLCanvas`, Picocli, Swing with SWT and quit requests, a real end of the session (a logout) on
 every platform, the Linux session manager (`QueryEndSession`, `EndSession`), AWT (rather than Swing) with SWT, and
 Quarkus FX.
