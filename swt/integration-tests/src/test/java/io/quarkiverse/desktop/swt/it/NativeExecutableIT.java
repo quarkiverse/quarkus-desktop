@@ -87,12 +87,17 @@ public class NativeExecutableIT {
         for (String directory : path == null ? new String[0] : path.split(java.io.File.pathSeparator)) {
             Path candidate = directory.isBlank() ? null : Path.of(directory, "native-image");
             if (candidate != null && Files.isRegularFile(candidate)) {
-                // GraalVM links <home>/bin/native-image to <home>/lib/svm/bin/native-image
-                for (Path home = candidate.toRealPath().getParent(); home != null; home = home.getParent()) {
+                // the first native-image of the PATH, the one Quarkus runs : GraalVM links <home>/bin/native-image to
+                // <home>/lib/svm/bin/native-image, the home is at most 3 directories above the real bin directory,
+                // else the parent of that bin directory (DesktopSwtProcessor.JDK_HOME_DEPTH)
+                Path bin = candidate.toRealPath().getParent();
+                Path home = bin;
+                for (int i = 0; home != null && i <= 3; i++, home = home.getParent()) {
                     if (Files.isRegularFile(home.resolve("release"))) {
                         return home;
                     }
                 }
+                return bin.getParent();
             }
         }
         return Path.of(javaHome);

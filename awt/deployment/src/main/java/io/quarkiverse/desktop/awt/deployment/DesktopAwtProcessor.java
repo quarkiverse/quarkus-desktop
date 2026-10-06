@@ -761,13 +761,67 @@ class DesktopAwtProcessor {
     }
 
     /**
-     * The home of the JDK used by the native build : the GraalVM home, the Java home configured for native builds, or the
-     * home of the JDK running the build.
+     * The home of the JDK used by the native build : the one of the {@code native-image} that Quarkus runs, chosen as
+     * Quarkus chooses it (NativeImageBuildStep) : the GraalVM home, then the Java home configured for native builds,
+     * when it has {@code bin/native-image}, else the {@code native-image} of the {@code PATH}, else the home of the JDK
+     * running the build. The Desktop SWT extension chooses it the same way (DesktopSwtProcessor.builderJdkHome) : with
+     * both extensions, this one writes the build version of macOS executables.
      */
     static Path builderJdkHome(NativeConfig nativeConfig) {
-        return nativeConfig.graalvmHome().filter(home -> !home.isBlank()).map(Path::of).filter(Files::isDirectory)
-                .or(() -> Optional.ofNullable(nativeConfig.javaHome()).map(File::toPath).filter(Files::isDirectory))
-                .orElse(Path.of(System.getProperty("java.home")));
+        return builderJdkHome(nativeConfig.graalvmHome(), nativeConfig.javaHome(), System.getenv("PATH"),
+                OS.current() == OS.WINDOWS, Path.of(System.getProperty("java.home")));
+    }
+
+    static Path builderJdkHome(Optional<String> graalvmHome, File javaHome, String path, boolean windows,
+            Path fallback) {
+        String executable = windows ? "native-image.cmd" : "native-image";
+        return Stream.of(graalvmHome.filter(home -> !home.isBlank()).map(Path::of),
+                Optional.ofNullable(javaHome).map(File::toPath))
+                .flatMap(Optional::stream)
+                .filter(home -> Files.isRegularFile(home.resolve("bin").resolve(executable)))
+                .findFirst()
+                .or(() -> onPath(executable, path))
+                .orElse(fallback);
+    }
+
+    /**
+     * How many directories above the {@code bin} directory of the real {@code native-image} the JDK home may be :
+     * {@code <home>/lib/svm/bin/native-image}.
+     */
+    private static final int JDK_HOME_DEPTH = 3;
+
+    /**
+     * The JDK home of an executable of the {@code PATH}, links resolved : the closest directory above it with the
+     * {@code release} file of a JDK (GraalVM links {@code <home>/bin/native-image} to {@code <home>/lib/svm/bin/native-image}
+     * on Linux and macOS), else the parent of its {@code bin} directory.
+     */
+    private static Optional<Path> onPath(String executable, String path) {
+        if (path == null) {
+            return Optional.empty();
+        }
+        for (String directory : path.split(File.pathSeparator)) {
+            if (directory.isBlank()) {
+                continue;
+            }
+            try {
+                Path candidate = Path.of(directory, executable);
+                if (Files.isRegularFile(candidate)) {
+                    Path bin = candidate.toRealPath().getParent();
+                    Path home = bin;
+                    for (int i = 0; home != null && i <= JDK_HOME_DEPTH; i++, home = home.getParent()) {
+                        if (Files.isRegularFile(home.resolve("release"))) {
+                            return Optional.of(home);
+                        }
+                    }
+                    if (bin != null && bin.getParent() != null) {
+                        return Optional.of(bin.getParent());
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                LOGGER.debugf(e, "Unable to resolve %s in %s", executable, directory);
+            }
+        }
+        return Optional.empty();
     }
 
     /**

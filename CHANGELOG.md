@@ -38,6 +38,9 @@ All notable changes to this project will be documented in this file.
 
 - The Desktop AWT extension does not park the first thread of macOS native executables when the
   application has an SWT user interface: SWT runs its event loop there (verified on macOS).
+- The Desktop AWT extension takes the files of the JDK of the native build (the fonts, the Visual
+  C++ runtime, the build version of macOS executables) from the JDK whose `native-image` Quarkus
+  runs, also when it is found on the `PATH`, as the Desktop SWT extension does.
 
 ## 0.1.0 - 2026-09-29
 
