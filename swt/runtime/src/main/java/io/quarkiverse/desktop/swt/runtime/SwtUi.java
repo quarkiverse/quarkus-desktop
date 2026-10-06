@@ -420,11 +420,17 @@ public class SwtUi implements SwtLifecycle {
 
     private static String hint(Throwable e) {
         return hint(e, System.getProperty("os.name", ""), ImageMode.current() == ImageMode.NATIVE_RUN,
-                System.getProperty(MAIN_THREAD_PARKED), System.getProperty(DesktopSwtRecorder.SWT_LIBRARY_PATH));
+                System.getProperty(MAIN_THREAD_PARKED), System.getProperty(DesktopSwtRecorder.SWT_LIBRARY_PATH),
+                DesktopSwtRecorder.librariesNextToExecutable);
     }
 
     static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
-        return hint(e, osName, nativeExecutable, mainThreadParked, null);
+        return hint(e, osName, nativeExecutable, mainThreadParked, null, null);
+    }
+
+    static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked,
+            String libraryPath) {
+        return hint(e, osName, nativeExecutable, mainThreadParked, libraryPath, null);
     }
 
     /**
@@ -437,9 +443,12 @@ public class SwtUi implements SwtLifecycle {
      *        keeps the first thread of the native executable in the Cocoa event loop, {@code null} otherwise
      * @param libraryPath the value of {@code swt.library.path} : where SWT extracts its native libraries instead of
      *        {@code ~/.swt/lib}, {@code null} when it is not set
+     * @param nextToExecutable the directory of the native executable when the extension set {@code swt.library.path}
+     *        to it ({@code quarkus.desktop.swt.native-libraries=next-to-executable}), {@code null} otherwise : the
+     *        libraries that the native build copied there, not a cache
      */
     static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked,
-            String libraryPath) {
+            String libraryPath, String nextToExecutable) {
         if (e instanceof UnsatisfiedLinkError) {
             String osArch = System.getProperty("os.arch", "");
             String message = e.getMessage() == null ? "" : e.getMessage();
@@ -464,6 +473,13 @@ public class SwtUi implements SwtLifecycle {
             if (message.startsWith(SWT_JAR_ERROR)) {
                 // checkSwtJar : the SWT jar of another platform
                 return " (SWT could not load its native libraries : " + jar + ")";
+            }
+            if (nextToExecutable != null) {
+                // the libraries of the build, which also checked the SWT jar : nothing to delete there (on macOS, an
+                // application bundle may refuse a library that is not signed with the executable)
+                return " (SWT could not load its native libraries next to the executable, in " + nextToExecutable
+                        + " : they must be the ones that its native build copied there, and on macOS signed with the"
+                        + " executable)";
             }
             if (!nativeExecutable) {
                 // checkSwtJar passed : the jar is right, but SWT extracts its native libraries once per version and

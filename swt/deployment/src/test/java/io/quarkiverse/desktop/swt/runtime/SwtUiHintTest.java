@@ -103,6 +103,15 @@ class SwtUiHintTest {
                     "Linux", nativeExecutable, null, "/opt/app");
             assertTrue(path.contains("delete the SWT libraries of /opt/app (swt.library.path), where"), path);
             assertFalse(path.contains("~/.swt/lib"), path);
+            // the libraries that the native build copied next to the executable (next-to-executable), which the
+            // extension gave to swt.library.path : not a cache to delete, nor the jar, which the native build checked
+            String next = SwtUi.hint(new UnsatisfiedLinkError("Can't load library: /Applications/A.app/Contents/MacOS/"
+                    + "libswt-cocoa-4971r15.jnilib"), "Mac OS X", nativeExecutable, null,
+                    "/Applications/A.app/Contents/MacOS", "/Applications/A.app/Contents/MacOS");
+            assertTrue(next.contains("next to the executable, in /Applications/A.app/Contents/MacOS : they must be the"
+                    + " ones that its native build copied there, and on macOS signed with the executable"), next);
+            assertFalse(next.contains("delete"), next);
+            assertFalse(next.contains("org.eclipse.platform:"), next);
         }
     }
 

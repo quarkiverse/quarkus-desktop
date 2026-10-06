@@ -26,6 +26,12 @@ public class DesktopSwtRecorder {
      */
     static final String SWT_LIBRARY_PATH = "swt.library.path";
 
+    /**
+     * The directory of the native executable when {@link #useLibrariesNextToExecutable} set {@code swt.library.path} to
+     * it, {@code null} otherwise : the hint of a failed start does not take these libraries for a cache.
+     */
+    static volatile String librariesNextToExecutable;
+
     private final RuntimeValue<DesktopSwtRuntimeConfig> config;
 
     public DesktopSwtRecorder(RuntimeValue<DesktopSwtRuntimeConfig> config) {
@@ -113,6 +119,7 @@ public class DesktopSwtRecorder {
                 .map(Path::getParent);
         if (directory.isPresent() && Files.isRegularFile(directory.get().resolve(library))) {
             System.setProperty(SWT_LIBRARY_PATH, directory.get().toString());
+            librariesNextToExecutable = directory.get().toString();
         } else {
             LOGGER.warnf("The native library %s of SWT is not next to the native executable (%s) : SWT looks for it in"
                     + " java.library.path and in ~/.swt", library, directory.map(Path::toString).orElse("unknown"));
