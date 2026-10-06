@@ -61,8 +61,11 @@ The API is in the `io.quarkiverse.desktop.swt` package:
 SWT is a jar per platform. The extension depends on `org.eclipse.platform:org.eclipse.swt`, whose jar is empty: its pom
 has profiles, activated by the operating system and the architecture of the build, that add the SWT jar of the platform,
 `org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>` (for instance `org.eclipse.swt.win32.win32.x86_64`,
-`org.eclipse.swt.gtk.linux.x86_64`, `org.eclipse.swt.gtk.linux.aarch64` or `org.eclipse.swt.cocoa.macosx.aarch64`).
-Maven applies them: nothing else is needed.
+`org.eclipse.swt.win32.win32.aarch64`, `org.eclipse.swt.gtk.linux.x86_64`, `org.eclipse.swt.gtk.linux.aarch64` or
+`org.eclipse.swt.cocoa.macosx.aarch64`). Maven applies them: nothing else is needed. The architecture of the build is
+the one of the JVM running Maven, not of the machine: on Windows on arm64, an arm64 JDK gets
+`org.eclipse.swt.win32.win32.aarch64`, and an x64 JDK, which runs under the x64 emulation of Windows,
+`org.eclipse.swt.win32.win32.x86_64`. Run the application with a JVM of the same architecture (see <<startup>>).
 
 Gradle does not apply these profiles: add the SWT jar of the platform yourself, with the SWT version of the extension
 (3.132.0, see <<swt-versions>>), for instance chosen from the operating system and the architecture of the build:
@@ -939,8 +942,9 @@ there, before the user interface thread runs
 <<windows>>).
 
 |Windows arm64
-|Not verified (the SWT jar exists)
-|No: GraalVM has no native image builder for Windows on arm64.
+|Yes, verified (Windows 11 in Parallels Desktop on an Apple silicon Mac, with arm64 JDKs 17 and 25)
+|No arm64 executable: GraalVM has no native image builder for Windows on arm64. An x64 executable, built with an x64
+GraalVM under the x64 emulation of Windows, runs there under emulation, verified (see <<windows>>).
 
 |Linux x64
 |Yes, verified (Ubuntu 24.04 in Docker, GTK 3, X11 under Xvfb, and Wayland, a headless Weston)
@@ -1023,6 +1027,14 @@ application must be the one of that platform (see <<container-builds>>).
 
 The native build needs Visual Studio (the {cpp} build tools), as any Quarkus native build on Windows, and must run on
 Windows: a container build produces a Linux executable.
+
+On Windows on arm64, GraalVM has no native image builder: an x64 GraalVM builds an x64 executable, under the x64
+emulation of Windows, and the executable runs under emulation too. Run Maven itself with that GraalVM (`JAVA_HOME` and
+`GRAALVM_HOME`), so that the profiles of `org.eclipse.swt` add `org.eclipse.swt.win32.win32.x86_64`, and the {cpp}
+build tools for x64 (`vcvarsall.bat arm64_amd64`, the arm64 compiler for x64, is enough). With an arm64 JDK running
+Maven, the profiles add the `aarch64` jar and the native build fails (see <<container-builds>>); adding the `x86_64` jar
+as a dependency without excluding the `aarch64` one does not help, the build then fails with both jars (excluding it as
+for a container build is not verified). Verified with the integration tests of the extension on Windows 11 arm64.
 
 Unlike AWT, the executable needs no application manifest and no Visual {cpp} runtime: SWT activates the visual styles of
 Windows and the DPI awareness itself, and its native libraries only link system libraries of Windows.
@@ -1176,7 +1188,7 @@ native libraries (for instance `4971r15`), and then fails to load them.
 
 The extension computes the JNI metadata of native executables from the SWT jar of the application (see
 <<how-it-works>>): it follows the SWT version. The extension is verified with SWT 3.132.0, and with SWT 3.135.0 on
-Linux x64 and macOS, in JVM mode and as native executables (see <<verification>>).
+Linux x64 and macOS, in JVM mode and as native executables, and on Windows arm64 in JVM mode (see <<verification>>).
 
 [[dev-mode]]
 == Dev mode
@@ -1184,15 +1196,15 @@ Linux x64 and macOS, in JVM mode and as native executables (see <<verification>>
 `./mvnw quarkus:dev` runs the application in dev mode on Windows and Linux: a restart runs the application again in the
 same JVM, on its new main thread, and the user interface with it, once the previous `Display` is disposed.
 `SwtStartupEvent` is fired again, to the new beans, which open the shells again. Verified on Windows and on Linux x64
-(under Xvfb): `[s]` disposes the shells (their `SWT.Dispose` listeners and the `@PreDestroy` methods of the widget
-beans run), runs the `ShutdownEvent` observers, disposes the `Display`, then starts the application again with the
-code changed meanwhile, and `[q]` quits. On Linux, GTK logs a `Gdk-CRITICAL` message about
-`gdk_threads_set_lock_functions` at each restart: SWT sets the lock functions of GDK each time it creates a `Display`,
-GTK takes them once per process, and nothing else changes. Dev mode does not run the
-user interface on macOS, where SWT needs the first thread of the process: dev mode runs the application on another
-thread (the `Display` cannot be created, an error is logged). Verified on macOS: the error is logged with its hint, dev
-mode keeps running, and `q` quits it; `-Djvm.args=-XstartOnFirstThread` changes nothing, since dev mode runs the
-application on its `Quarkus Main Thread`, not on the first thread.
+(under Xvfb), and on Windows arm64 with an arm64 JDK (without widget beans): `[s]` disposes the shells (their
+`SWT.Dispose` listeners and the `@PreDestroy` methods of the widget beans run), runs the `ShutdownEvent` observers,
+disposes the `Display`, then starts the application again with the code changed meanwhile, and `[q]` quits. On Linux,
+GTK logs a `Gdk-CRITICAL` message about `gdk_threads_set_lock_functions` at each restart: SWT sets the lock functions
+of GDK each time it creates a `Display`, GTK takes them once per process, and nothing else changes. Dev mode does not
+run the user interface on macOS, where SWT needs the first thread of the process: dev mode runs the application on
+another thread (the `Display` cannot be created, an error is logged). Verified on macOS: the error is logged with its
+hint, dev mode keeps running, and `q` quits it; `-Djvm.args=-XstartOnFirstThread` changes nothing, since dev mode runs
+the application on its `Quarkus Main Thread`, not on the first thread.
 
 *What a restart disposes*: the user interface stops as for any other stop, before the `ShutdownEvent` observers (see
 <<exit>>): the shells are disposed, and the `@Dependent` beans of `WidgetBeans` with them, the tasks already handed to
@@ -1271,6 +1283,11 @@ and allows one `Display` at a time. With Surefire, one JVM per test class:
     </configuration>
 </plugin>
 ----
+
+After running Maven with a JDK of another architecture (an x64 and an arm64 JDK on Windows on arm64, and likely an
+x86_64 JDK under Rosetta on macOS), build with `clean`: the Quarkus tests reuse the application model that a previous
+build resolved (`target/quarkus/bootstrap`), with the SWT jar of the other architecture, and the `Display` cannot be
+created (verified on Windows arm64, where deleting `target/quarkus/bootstrap` fixes it too).
 
 *Presenters*: make them depend on view interfaces rather than on the classes that create the widgets, and test them
 with `@QuarkusComponentTest` (`quarkus-junit-component`), which mocks the views, without display. A component test runs
@@ -1361,7 +1378,9 @@ The tests of the deployment module check the build, and the user interface in te
 `@QuarkusTest`): among others, the shutdown order when the test ends, and the rejection of the tasks queued for a user
 interface that never runs.
 
-They were run locally, with GraalVM for JDK 25:
+They were run locally, with GraalVM for JDK 25 (on Windows arm64, which has no GraalVM of its architecture, with the
+arm64 builds of OpenJDK 17 and 25 of Microsoft, and, under emulation, an x64 Oracle JDK 25 and an x64 GraalVM CE for
+JDK 25):
 
 * on Windows 11 x64, in JVM mode and as native executables, also built with exact reachability metadata
 (`-Dquarkus.native.additional-build-args=--exact-reachability-metadata`), with SWT 3.132.0, together with the cycles of
@@ -1385,17 +1404,33 @@ bundle, `SWT.OpenDocument`, the `Browser` widget (WebKit) and `GLCanvas`, Picocl
 SWT jar of another architecture;
 * on Linux arm64, Ubuntu 24.04 in Docker on that Mac, the deployment tests and the integration tests in JVM mode and as
 native executables built with exact reachability metadata, a native executable on Wayland (a headless Weston), and a
-native executable built in a container from macOS (see <<container-builds>>).
+native executable built in a container from macOS (see <<container-builds>>);
+* on Windows 11 arm64, in Parallels Desktop on an Apple silicon Mac (a display at 200 %), with the arm64 builds of
+OpenJDK 17 and 25 of Microsoft, which get `org.eclipse.swt.win32.win32.aarch64`: the deployment tests and the
+integration tests in JVM mode, also against the packaged jar, with SWT 3.132.0, and 3.135.0 on Java 25, together with
+two JVM runs of the SWT variant of the showcase (they match, with 4 checks failing in both runs on that display, see
+the showcase README), plus a probe application in JVM mode on Java 25: quit requests (a `Display.close()` cancelled or
+not), the end of the session (`WM_QUERYENDSESSION` and `WM_ENDSESSION` sent to the application, cancelled or not), the
+`Browser` widget (Edge WebView2, also with `SWT.EDGE`) and `GLCanvas`, the SWT_AWT bridge, Picocli, Swing with SWT,
+the exit policy, dev mode, and the SWT jar of another architecture (an x64 JVM, under emulation, with the `aarch64`
+jar, and an arm64 JVM with the `x86_64` jar). With an x64 Oracle JDK 25 under emulation (the `x86_64` jar), the
+deployment tests and the integration tests in JVM mode, also against the packaged jar, with SWT 3.132.0, and the probes
+of quit requests, the end of the session, `Browser`, `GLCanvas`, the SWT_AWT bridge and the exit policy, pass too, and
+so do the integration tests with an x64 native executable, built with an x64 GraalVM under emulation (see <<windows>>),
+without the comparison with JVM mode (`-Dnative.surefire.skip`).
 
-The continuous integration runs them on Windows and Linux, in JVM mode and as native executables, and on macOS in JVM
-mode and as native executables (a job of its own, also with exact reachability metadata, that builds the SWT modules
-alone: the AWT and Swing native executables of macOS need Quarkus 4.0, see xref:awt.adoc#macos[macOS]). Its native
-jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the native executable
-with JVM mode.
+The continuous integration runs them on Windows x64 and Linux, in JVM mode and as native executables, and on macOS in
+JVM mode and as native executables (a job of its own, also with exact reachability metadata, that builds the SWT
+modules alone: the AWT and Swing native executables of macOS need Quarkus 4.0, see xref:awt.adoc#macos[macOS]). Its
+native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the native
+executable with JVM mode.
 
 Not verified: macOS on Intel Macs, a Retina display and the dark appearance (every macOS run used a display at scale
 1, in the light appearance), the name of the application in the Dock as shown on screen (only as reported by
-`lsappinfo`, the menu bar is verified on screen), Windows arm64, on Linux arm64 dev mode, the
+`lsappinfo`, the menu bar is verified on screen), Windows arm64 on a physical machine (only in a virtual machine) and
+with a display at 100 %, on Windows arm64 the probe application, dev mode and the showcase on Java 17, the x64 native
+executables there beyond the integration tests (with exact reachability metadata, the probe application, their
+rendering compared with JVM mode), on Linux arm64 dev mode, the
 `Browser` widget and `GLCanvas`, Picocli, Swing with SWT and quit requests, a real end of the session (a logout) on
 every platform, the Linux session manager (`QueryEndSession`, `EndSession`), AWT (rather than Swing) with SWT, and
 Quarkus FX.

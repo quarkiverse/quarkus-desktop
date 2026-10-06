@@ -489,8 +489,20 @@ public final class SwtChecks {
     private void pumpFor(long millis) {
         long end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(millis);
         boolean[] woken = new boolean[1];
-        display.timerExec((int) millis, () -> woken[0] = true);
-        while (!woken[0] || System.nanoTime() < end) {
+        // Windows may run a timer before its delay, as measured by System.nanoTime (seen on Windows 11 arm64) : the
+        // timer is armed again until the duration elapsed, the event loop would otherwise sleep without any timer to
+        // wake it up
+        Runnable[] timer = new Runnable[1];
+        timer[0] = () -> {
+            long left = end - System.nanoTime();
+            if (left > 0) {
+                display.timerExec((int) TimeUnit.NANOSECONDS.toMillis(left) + 1, timer[0]);
+            } else {
+                woken[0] = true;
+            }
+        };
+        display.timerExec((int) millis, timer[0]);
+        while (!woken[0]) {
             if (!display.readAndDispatch()) {
                 display.sleep();
             }
