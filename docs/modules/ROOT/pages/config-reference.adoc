@@ -9,3 +9,7 @@ include::includes/quarkus-desktop-awt.adoc[leveloffset=+1, opts=optional]
 == Desktop Swing
 
 include::includes/quarkus-desktop-swing.adoc[leveloffset=+1, opts=optional]
+
+== Desktop SWT
+
+include::includes/quarkus-desktop-swt.adoc[leveloffset=+1, opts=optional]

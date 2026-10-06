@@ -18,6 +18,11 @@ public final class DesktopCapabilities {
      */
     public static final String SWING = "io.quarkiverse.desktop.swing";
 
+    /**
+     * Provided by {@code io.quarkiverse.desktop:quarkus-desktop-swt}, which does not require {@link #AWT}.
+     */
+    public static final String SWT = "io.quarkiverse.desktop.swt";
+
     private DesktopCapabilities() {
         // Constants
     }

@@ -1,0 +1,141 @@
+[.configuration-legend]
+icon:lock[title=Fixed at build time] Configuration property fixed at build time - All other configuration properties are overridable at runtime
+[.configuration-reference.searchable, cols="80,.^10,.^10"]
+|===
+
+h|[.header-title]##Configuration property##
+h|Type
+h|Default
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-swt_quarkus-desktop-swt-native-libraries]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-native-libraries[`+++quarkus.desktop.swt.native-libraries+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.native-libraries+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Where the native executable finds the native libraries of SWT (`swt-win32-<version>.dll`, `libswt-gtk-<version>.so`, `libswt-cocoa-<version>.jnilib`...).
+
+`embedded` : the libraries are resources of the native executable, a single file. SWT extracts them on the first run, as it does in JVM mode, into `~/.swt/lib/<os>/<arch>` (or into `swt.library.path` when this system property is set). `next-to-executable` : the libraries are copied next to the native executable when it is built, and the executable loads them from its directory : nothing is written to the home directory, and the libraries can be signed with the executable (a macOS application bundle). They are then distributed with the executable.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_NATIVE_LIBRARIES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_NATIVE_LIBRARIES+++`
+endif::add-copy-button-to-env-var[]
+--
+a|`embedded`, `next-to-executable`
+|`+++embedded+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-swt_quarkus-desktop-swt-windows-subsystem]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-windows-subsystem[`+++quarkus.desktop.swt.windows.subsystem+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.windows.subsystem+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The subsystem of the native executable : `console` (the default of native executables), or `windows` for a user interface application without a console window, as with `javaw`. A `windows` executable has no standard output and error streams when it is not started from a console : log to a file (`quarkus.log.file.enabled`).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_WINDOWS_SUBSYSTEM+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_WINDOWS_SUBSYSTEM+++`
+endif::add-copy-button-to-env-var[]
+--
+a|`console`, `windows`
+|`+++console+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-swt_quarkus-desktop-swt-macos-jdk-build-version]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-macos-jdk-build-version[`+++quarkus.desktop.swt.macos.jdk-build-version+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.macos.jdk-build-version+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the native executable declares the minimum macOS version and the SDK version of the `java` launcher of the JDK that builds it (its `LC_BUILD_VERSION` load command), as a JVM application does.
+
+macOS does not start an executable on a version older than its minimum version, and AppKit chooses the look of the windows and controls (the height of the title bars, the size of the controls, the background color of the widgets for instance) from its SDK version : the executable starts on the macOS versions that the JDK supports, and looks as in JVM mode. When disabled, the linker writes the version of the SDK of the Xcode tools as both : the executable then only starts on that macOS version and later, and gets the look of that version. With the Desktop AWT extension, `quarkus.desktop.awt.macos.jdk-build-version` applies instead : that extension writes the versions.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_MACOS_JDK_BUILD_VERSION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_MACOS_JDK_BUILD_VERSION+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a| [[quarkus-desktop-swt_quarkus-desktop-swt-startup-event-enabled]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-startup-event-enabled[`+++quarkus.desktop.swt.startup-event.enabled+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.startup-event.enabled+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the user interface runs. By default it does, except in tests (`@QuarkusTest` and `@QuarkusMainTest`, where it would open the shells of the application) : set `%test.quarkus.desktop.swt.startup-event.enabled=true` for user interface tests. A `@QuarkusTest` then runs it on a thread of the extension (except on macOS, where it needs the first thread of the process), a `@QuarkusMainTest` on the thread running the main, as in production. In tests, `quarkus.arc.test.disable-application-lifecycle-observers=true` disables it too. When it does not run, `SwtLifecycle.run()` returns at once (an application without `@QuarkusMain` then stops at once), and the tasks for the user interface thread are rejected.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_STARTUP_EVENT_ENABLED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_STARTUP_EVENT_ENABLED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|
+
+a| [[quarkus-desktop-swt_quarkus-desktop-swt-exit-on-last-shell-closed]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-exit-on-last-shell-closed[`+++quarkus.desktop.swt.exit-on-last-shell-closed+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.exit-on-last-shell-closed+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the application stops (`Quarkus.asyncExit()`) when its last visible shell is closed or hidden, once a first shell opened. Never in tests. Disable it for an application that stays alive without shells (a tray icon, the macOS convention), or that closes a shell before opening the next one (a splash screen closed before the main shell opens).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_EXIT_ON_LAST_SHELL_CLOSED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_EXIT_ON_LAST_SHELL_CLOSED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a| [[quarkus-desktop-swt_quarkus-desktop-swt-application-name]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-application-name[`+++quarkus.desktop.swt.application-name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.application-name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the application, given to SWT (`Display.setAppName`) before the `Display` is created : the name of the application menu and of the Dock on macOS, the program name and the `WM_CLASS` of the windows on Linux (matched with the `.desktop` file of the application), the application identifier of the taskbar on Windows. Defaults to `quarkus.application.name`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_APPLICATION_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_APPLICATION_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+|===
+

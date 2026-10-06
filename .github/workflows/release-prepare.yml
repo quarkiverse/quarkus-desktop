@@ -21,5 +21,5 @@ jobs:
     uses: quarkiverse/.github/.github/workflows/prepare-release.yml@main
     secrets: inherit
     with:
-      # the tests run by release:prepare need a display (AWT and Swing GUI tests)
+      # the tests run by release:prepare need a display (AWT, Swing and SWT GUI tests)
       maven_executable: xvfb-run -a ./mvnw

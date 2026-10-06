@@ -62,7 +62,14 @@ jobs:
           java-version: ${{ matrix.java-version }}
           cache: 'maven'
 
-      # AWT and Swing tests need a display : a virtual X display on Linux
+      # SWT needs GTK 3 on Linux
+      - name: Install the GTK 3 runtime libraries
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libgtk-3-0t64
+
+      # AWT, Swing and SWT tests need a display : a virtual X display on Linux
       - name: Build with Maven (virtual X display)
         if: startsWith(matrix.os, 'ubuntu')
         run: xvfb-run -a ./mvnw -B -ntp clean install -Dno-format 2>&1 | tee maven.log
@@ -78,8 +85,9 @@ jobs:
         run: java .github/scripts/ReportFailures.java maven.log
 
   native:
-    # No macOS native job yet : macOS native executables need Quarkus 4.0 or later (the quarkus-awt with macOS support of
-    # https://github.com/quarkusio/quarkus/pull/56979, not released yet) and GraalVM 25.1 or later
+    # No macOS here : the AWT and Swing native executables of macOS need Quarkus 4.0 or later (the quarkus-awt with macOS
+    # support of https://github.com/quarkusio/quarkus/pull/56979, not released yet) and GraalVM 25.1 or later. The SWT
+    # ones do not use quarkus-awt : the native-macos-swt job builds them
     # exact : the integration tests built with --exact-reachability-metadata, in the default configuration of the
     # extensions (they fail on the first lookup missing from the metadata)
     name: Native${{ matrix.exact && ' (exact)' || '' }} on ${{ matrix.os }}
@@ -109,7 +117,7 @@ jobs:
           cache: 'maven'
 
       # The AWT libraries of the native executable are linked dynamically : running it needs the X11, font, sound,
-      # printing and GTK runtime libraries of the host, and a (virtual) X display
+      # printing and GTK runtime libraries of the host, and a (virtual) X display (SWT loads GTK 3 too)
       - name: Install native build and run prerequisites
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -125,6 +133,38 @@ jobs:
       - name: Build native executables and run the integration tests
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
         run: ./mvnw -B -ntp clean install -Dnative -Dno-format -Dnative.surefire.skip $EXACT_ARGS 2>&1 | tee maven.log
+
+      - name: Report the failures
+        if: failure()
+        run: java .github/scripts/ReportFailures.java maven.log
+
+  native-macos-swt:
+    # The SWT modules alone (the native job explains why the AWT and Swing ones cannot run on macOS yet). macOS runs the
+    # event loop of an SWT native executable on the first thread of the process, and NativeExecutableIT compares the
+    # minimum macOS version and the SDK version of the executable with the java launcher of this GraalVM (otool -l)
+    name: Native SWT${{ matrix.exact && ' (exact)' || '' }} on macos-latest
+    # a hung native executable or GUI test : about 10 minutes otherwise
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        exact: [ false, true ]
+    runs-on: macos-latest
+    env:
+      EXACT_ARGS: ${{ matrix.exact && '-Dquarkus.native.additional-build-args=--exact-reachability-metadata' || '' }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up GraalVM for JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: 'maven'
+
+      - name: Build the SWT native executables and run the integration tests
+        run: ./mvnw -B -ntp clean install -Dnative -Dno-format -Dnative.surefire.skip -pl swt/integration-tests -am $EXACT_ARGS 2>&1 | tee maven.log
 
       - name: Report the failures
         if: failure()

@@ -15,13 +15,16 @@ import java.util.Properties;
  * (summary.txt, index.html), build logs in comparison/logs-&lt;label&gt;.
  * <p>
  * usage: java tools/Cycle.java &lt;label&gt; [--trace] [--exact] [--require-focus] [--jvm-only] [--skip-jvm]
- * [--skip-native-build] [--offline] [--awt-only] [--hidpi] [--pipeline=gdi|opengl|x11] [--pages=ids] [--categories=names] [--maven-args=a,b]
- * [--native-args=a,b] [-- snapshot options...]
+ * [--skip-native-build] [--offline] [--awt-only|--swt] [--hidpi] [--pipeline=gdi|opengl|x11] [--pages=ids]
+ * [--categories=names] [--maven-args=a,b] [--native-args=a,b] [-- snapshot options...]
  * <p>
- * --awt-only builds and runs the AWT only variant (mvn -Dawt-only, target/awt-only). --hidpi runs both snapshot runs
- * without the -Dsun.java2d.uiScale=1 default (DPI awareness check). --pipeline runs both snapshot runs with another
- * Java2D pipeline (see tools/Snapshot.java : gdi, opengl, x11). --maven-args is a comma separated list of extra
- * Maven arguments for both builds. --native-args is a comma separated list of native-image options, e.g.
+ * --awt-only builds and runs the AWT only variant (mvn -Dawt-only, target/awt-only). --swt builds and runs the SWT
+ * variant (mvn -Dswt, target/swt : an SWT main window and the SWT pages, see tools/Snapshot.java), not with --awt-only,
+ * --pipeline or --trace (tools/MetadataDiff.java compares with the lists of the AWT and Swing extensions). --hidpi runs
+ * both snapshot runs without the -Dsun.java2d.uiScale=1 default, or the -Dswt.autoScale=100 one with --swt (DPI
+ * awareness check). --pipeline runs both snapshot runs with another Java2D pipeline (see tools/Snapshot.java : gdi,
+ * opengl, x11). --maven-args is a comma separated list of extra Maven arguments for both builds. --native-args is a
+ * comma separated list of native-image options, e.g.
  * --native-args=-H:+PrintClassInitialization. --exact builds with --exact-reachability-metadata and runs the native
  * executable with -XX:MissingRegistrationReportingMode=Warn : the reflection, JNI and resource accesses missing from the
  * metadata are reported in the native run.log instead of failing silently or at the first one. --require-focus fails
@@ -48,15 +51,17 @@ import java.util.Properties;
  * macOS (GraalVM 25.1 or later, and Quarkus built from the pull request "Enable quarkus-awt on macOS",
  * https://github.com/quarkusio/quarkus/pull/56979 : {@code --maven-args=-Dquarkus.platform.version=999-SNAPSHOT}) : after the native build,
  * comparison/logs-&lt;label&gt;/native-artifacts.txt lists the libraries next to the executable, its linked libraries
- * ({@code otool -L}), its run paths and its signature ; the cycle stops when a library that AWT needs is missing.
+ * ({@code otool -L}), its run paths and its signature ; the cycle stops when a library that AWT needs is missing (not
+ * checked with --swt).
  */
 public class Cycle {
 
     public static void main(String[] args) throws Exception {
         if (args.length == 0 || args[0].startsWith("--")) {
             System.err.println("usage: java tools/Cycle.java <label> [--trace] [--exact] [--require-focus] [--jvm-only] [--skip-jvm] "
-                    + "[--skip-native-build] [--offline] [--awt-only] [--hidpi] [--pipeline=gdi|opengl|x11] [--pages=ids] "
-                    + "[--categories=names] [--maven-args=a,b] [--native-args=a,b] [-- snapshot options...]");
+                    + "[--skip-native-build] [--offline] [--awt-only|--swt] [--hidpi] [--pipeline=gdi|opengl|x11] "
+                    + "[--pages=ids] [--categories=names] [--maven-args=a,b] [--native-args=a,b] "
+                    + "[-- snapshot options...]");
             System.exit(2);
         }
         String label = args[0];
@@ -94,6 +99,8 @@ public class Cycle {
                 jvmOnly = true;
             } else if (arg.equals("--awt-only")) {
                 snapshot.awtOnly = true;
+            } else if (arg.equals("--swt")) {
+                snapshot.swt = true;
             } else if (arg.equals("--hidpi")) {
                 snapshot.hidpi = true;
             } else if (arg.startsWith("--pipeline=")) {
@@ -117,11 +124,18 @@ public class Cycle {
                     + "--skip-native-build or --native-args");
             System.exit(2);
         }
-        if (snapshot.awtOnly) {
-            mavenArgs.add("-Dawt-only");
+        Snapshot.checkVariant(snapshot);
+        if (snapshot.swt && trace) {
+            System.err.println("--trace compares the metadata of the run with the lists of the AWT and Swing "
+                    + "extensions (tools/MetadataDiff.java) : not with --swt");
+            System.exit(2);
         }
+        if (Snapshot.mavenProperty(snapshot) != null) {
+            mavenArgs.add(Snapshot.mavenProperty(snapshot));
+        }
+        Path target = Snapshot.targetDir(snapshot);
         if (skipNativeBuild && !jvmOnly) {
-            checkNativeBuild(Snapshot.targetDir(snapshot.awtOnly), exact);
+            checkNativeBuild(target, exact);
         }
 
         Path logs = Path.of("comparison", "logs-" + label);
@@ -197,8 +211,8 @@ public class Cycle {
             }
             Snapshot.lines(log).stream().filter(l -> l.contains("Finished generating") || l.contains("Peak RSS"))
                     .forEach(System.out::println);
-            writeNativeBuild(Snapshot.targetDir(snapshot.awtOnly), exact, nativeArgs, mavenArgs);
-            if (Snapshot.isMac() && !macArtifacts(Snapshot.targetDir(snapshot.awtOnly), logs, snapshot.awtOnly)) {
+            writeNativeBuild(target, exact, nativeArgs, mavenArgs);
+            if (Snapshot.isMac() && !macArtifacts(target, logs, snapshot)) {
                 System.exit(1);
             }
         }
@@ -245,7 +259,8 @@ public class Cycle {
     }
 
     /**
-     * The description of the native build of a cycle, next to the executable (target/ or target/awt-only/).
+     * The description of the native build of a cycle, next to the executable (target/, target/awt-only/ or
+     * target/swt/).
      */
     static final String NATIVE_BUILD = "cycle-native-build.properties";
 
@@ -340,9 +355,10 @@ public class Cycle {
 
     /**
      * macOS : writes native-artifacts.txt (libraries, otool -L, run paths, signature) ; {@code false} when a library that
-     * AWT needs is missing.
+     * AWT needs is missing (the SWT variant has no AWT : its libraries are not checked).
      */
-    static boolean macArtifacts(Path target, Path logs, boolean awtOnly) throws IOException, InterruptedException {
+    static boolean macArtifacts(Path target, Path logs, Snapshot.Options variant) throws IOException,
+            InterruptedException {
         Path runner = Snapshot.nativeExecutable(target);
         Path out = logs.resolve("native-artifacts.txt");
         List<String> lines = new ArrayList<>();
@@ -363,13 +379,17 @@ public class Cycle {
         lines.addAll(command("codesign", "-dv", runner.toString()));
         lines.addAll(command("xattr", "-l", runner.toString()));
         Files.write(out, lines);
+        if (variant.swt) {
+            step("native artifacts : " + out);
+            return true;
+        }
         List<String> missing = MAC_LIBRARIES.stream().filter(l -> !Files.isRegularFile(target.resolve(l))).toList();
         if (!missing.isEmpty()) {
             step("native build : " + missing + " missing next to " + runner + " (GraalVM 25.1 or later copies them), see "
                     + out);
             return false;
         }
-        if (!awtOnly && !Files.isRegularFile(target.resolve("libosxui.dylib"))) {
+        if (!variant.awtOnly && !Files.isRegularFile(target.resolve("libosxui.dylib"))) {
             step("WARNING : libosxui.dylib (Aqua look and feel) missing next to " + runner);
         }
         step("native artifacts : " + out);

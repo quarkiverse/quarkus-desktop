@@ -46,6 +46,7 @@ import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
@@ -185,6 +186,11 @@ class DesktopAwtProcessor {
      * The {@code QuarkusApplication} of the Quarkus FX launcher, which runs JavaFX on the first thread itself.
      */
     static final String QUARKUS_FX_APPLICATION = "io.quarkiverse.fx.QuarkusFxApplication";
+
+    /**
+     * The main of the applications with an SWT user interface (Desktop SWT extension).
+     */
+    static final String SWT_APPLICATION = "io.quarkiverse.desktop.swt.runtime.SwtApplication";
 
     /**
      * The interceptor binding that dev mode adds to the beans for the monitoring of ArC.
@@ -755,13 +761,67 @@ class DesktopAwtProcessor {
     }
 
     /**
-     * The home of the JDK used by the native build : the GraalVM home, the Java home configured for native builds, or the
-     * home of the JDK running the build.
+     * The home of the JDK used by the native build : the one of the {@code native-image} that Quarkus runs, chosen as
+     * Quarkus chooses it (NativeImageBuildStep) : the GraalVM home, then the Java home configured for native builds,
+     * when it has {@code bin/native-image}, else the {@code native-image} of the {@code PATH}, else the home of the JDK
+     * running the build. The Desktop SWT extension chooses it the same way (DesktopSwtProcessor.builderJdkHome) : with
+     * both extensions, this one writes the build version of macOS executables.
      */
     static Path builderJdkHome(NativeConfig nativeConfig) {
-        return nativeConfig.graalvmHome().filter(home -> !home.isBlank()).map(Path::of).filter(Files::isDirectory)
-                .or(() -> Optional.ofNullable(nativeConfig.javaHome()).map(File::toPath).filter(Files::isDirectory))
-                .orElse(Path.of(System.getProperty("java.home")));
+        return builderJdkHome(nativeConfig.graalvmHome(), nativeConfig.javaHome(), System.getenv("PATH"),
+                OS.current() == OS.WINDOWS, Path.of(System.getProperty("java.home")));
+    }
+
+    static Path builderJdkHome(Optional<String> graalvmHome, File javaHome, String path, boolean windows,
+            Path fallback) {
+        String executable = windows ? "native-image.cmd" : "native-image";
+        return Stream.of(graalvmHome.filter(home -> !home.isBlank()).map(Path::of),
+                Optional.ofNullable(javaHome).map(File::toPath))
+                .flatMap(Optional::stream)
+                .filter(home -> Files.isRegularFile(home.resolve("bin").resolve(executable)))
+                .findFirst()
+                .or(() -> onPath(executable, path))
+                .orElse(fallback);
+    }
+
+    /**
+     * How many directories above the {@code bin} directory of the real {@code native-image} the JDK home may be :
+     * {@code <home>/lib/svm/bin/native-image}.
+     */
+    private static final int JDK_HOME_DEPTH = 3;
+
+    /**
+     * The JDK home of an executable of the {@code PATH}, links resolved : the closest directory above it with the
+     * {@code release} file of a JDK (GraalVM links {@code <home>/bin/native-image} to {@code <home>/lib/svm/bin/native-image}
+     * on Linux and macOS), else the parent of its {@code bin} directory.
+     */
+    private static Optional<Path> onPath(String executable, String path) {
+        if (path == null) {
+            return Optional.empty();
+        }
+        for (String directory : path.split(File.pathSeparator)) {
+            if (directory.isBlank()) {
+                continue;
+            }
+            try {
+                Path candidate = Path.of(directory, executable);
+                if (Files.isRegularFile(candidate)) {
+                    Path bin = candidate.toRealPath().getParent();
+                    Path home = bin;
+                    for (int i = 0; home != null && i <= JDK_HOME_DEPTH; i++, home = home.getParent()) {
+                        if (Files.isRegularFile(home.resolve("release"))) {
+                            return Optional.of(home);
+                        }
+                    }
+                    if (bin != null && bin.getParent() != null) {
+                        return Optional.of(bin.getParent());
+                    }
+                }
+            } catch (IOException | RuntimeException e) {
+                LOGGER.debugf(e, "Unable to resolve %s in %s", executable, directory);
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -826,30 +886,46 @@ class DesktopAwtProcessor {
 
     /**
      * Keeps the first thread of macOS native executables in the Cocoa event loop (see
-     * {@code io.quarkiverse.desktop.awt.runtime.macos.MacMainThread}).
+     * {@code io.quarkiverse.desktop.awt.runtime.macos.MacMainThread}), unless the application has an SWT user interface
+     * (the Desktop SWT extension then provides the main of the application) : SWT creates its {@code Display} and runs the
+     * Cocoa event loop on the first thread itself.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     void macosMainThread(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config, NativeConfig nativeConfig,
-            Optional<QuarkusApplicationClassBuildItem> quarkusApplication,
+            Optional<QuarkusApplicationClassBuildItem> quarkusApplication, Capabilities capabilities,
             BuildProducer<NativeImageSystemPropertyBuildItem> builderProperties) {
         if (!platform.isMac()) {
             return;
         }
         DesktopAwtConfig.Macos macos = config.macos();
+        // an SWT user interface (an SwtStartupEvent observer) : the Desktop SWT extension provides the main, even with a
+        // @QuarkusMain of the application, which then calls SwtLifecycle.run() on the first thread
+        boolean swt = capabilities.isPresent(DesktopCapabilities.SWT) && quarkusApplication
+                .map(item -> SWT_APPLICATION.equals(item.getClassName())).orElse(false);
+        boolean park = macos.parkMainThread() && !swt;
+        if (swt && macos.parkMainThread()) {
+            LOGGER.debug("The application has an SWT user interface : the first thread runs the SWT event loop, it is not"
+                    + " parked");
+        }
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(ParkMainThreadEnabled.PROPERTY,
-                String.valueOf(macos.parkMainThread())));
+                String.valueOf(park)));
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(MacMainThread.STACK_SIZE_PROPERTY,
                 String.valueOf(macos.mainThreadStackSize().asLongValue())));
         builderProperties.produce(new NativeImageSystemPropertyBuildItem(MacMainThread.EXIT_HALT_TIMEOUT_PROPERTY,
                 String.valueOf(macos.exitHaltTimeout().toMillis())));
         boolean fxLauncher = quarkusApplication.map(item -> QUARKUS_FX_APPLICATION.equals(item.getClassName()))
                 .orElse(false);
-        if (!macos.parkMainThread() && !fxLauncher) {
+        if (!park && !fxLauncher && !swt) {
             if (isPresent(QUARKUS_FX_APPLICATION, Thread.currentThread().getContextClassLoader())) {
                 // a @QuarkusMain of the application that delegates to QuarkusFxApplication, which then runs the Cocoa
                 // event loop on the first thread itself
                 LOGGER.debug("quarkus.desktop.awt.macos.park-main-thread=false with Quarkus FX : the first thread must call"
                         + " QuarkusFxApplication.run");
+            } else if (capabilities.isPresent(DesktopCapabilities.SWT)) {
+                // the main of another extension (Picocli...) that runs SwtLifecycle.run(), and with it the Cocoa event
+                // loop, on the first thread
+                LOGGER.debug("quarkus.desktop.awt.macos.park-main-thread=false with Desktop SWT : the first thread must"
+                        + " run SwtLifecycle.run()");
             } else {
                 LOGGER.warn("quarkus.desktop.awt.macos.park-main-thread=false : no thread runs the Cocoa event loop, an AWT"
                         + " or Swing user interface hangs at its first window");
@@ -861,7 +937,7 @@ class DesktopAwtProcessor {
             LOGGER.warn("-H:+RunMainInNewThread moves main off the first thread of the process : an AWT or Swing user"
                     + " interface hangs on macOS");
         }
-        if (macos.parkMainThread()) {
+        if (park) {
             checkQuarkusRun(Thread.currentThread().getContextClassLoader());
         }
     }

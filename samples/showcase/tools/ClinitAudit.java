@@ -49,6 +49,9 @@ import java.util.stream.Stream;
  * superclass chain (GraalVM initializes a subclass of a run time initialized class at run time). With the CSV of
  * {@code -H:+PrintClassInitialization}, only the classes really initialized at build time in the image are reported.
  * Uses the class file API of JDK 24+ (no library needed).
+ * <p>
+ * The SWT variant of the showcase ({@code --swt}) is refused : its classes are those of the SWT jar, outside the JDK
+ * desktop modules scanned here, and quarkus-desktop-swt has lists of its own.
  */
 public class ClinitAudit {
 
@@ -86,6 +89,10 @@ public class ClinitAudit {
         for (String arg : args) {
             if (arg.equals("--awt-only")) {
                 awtOnly = true;
+            } else if (arg.equals("--swt")) {
+                System.err.println("--swt : not supported, this tool audits the JDK desktop modules with the lists of "
+                        + "quarkus-desktop-awt and quarkus-desktop-swing (the SWT variant has no AWT)");
+                System.exit(2);
             } else if (arg.startsWith("--version=")) {
                 version = arg.substring("--version=".length());
             } else if (arg.startsWith("--quarkus-version=")) {

@@ -6,18 +6,21 @@ include::./includes/attributes.adoc[]
 
 :extension-status: experimental
 
-Quarkus Desktop brings AWT and Swing desktop (GUI) applications to Quarkus, in JVM mode and as GraalVM native
+Quarkus Desktop brings AWT, Swing and SWT desktop (GUI) applications to Quarkus, in JVM mode and as GraalVM native
 executables.
 
 The Quarkus core extension `io.quarkus:quarkus-awt` supports headless Java2D, ImageIO and fonts, which server side
-applications need. The Quarkus Desktop extensions build on it (they include it) and add what GUI applications need:
-windows, printing, data transfer, input methods, sound, accessibility, and Swing.
+applications need. The Desktop AWT and Desktop Swing extensions build on it (they include it) and add what GUI
+applications need: windows, printing, data transfer, input methods, sound, accessibility, and Swing. The Desktop SWT
+extension brings https://eclipse.dev/eclipse/swt/[Eclipse SWT] applications, with the native widgets of Windows, GTK and
+macOS: it does not need AWT.
 
 TIP: This documentation is a work in progress.
 
 == Installation
 
-Add one of the extensions to your build file. `quarkus-desktop-swing` includes `quarkus-desktop-awt`.
+Add one of the extensions to your build file. `quarkus-desktop-swing` includes `quarkus-desktop-awt`;
+`quarkus-desktop-swt` does not depend on them.
 
 === AWT
 
@@ -55,7 +58,35 @@ implementation("io.quarkiverse.desktop:quarkus-desktop-awt:{project-version}")
 implementation("io.quarkiverse.desktop:quarkus-desktop-swing:{project-version}")
 ----
 
+=== SWT
+
+.Maven
+[source,xml,subs=attributes+]
+----
+<dependency>
+    <groupId>io.quarkiverse.desktop</groupId>
+    <artifactId>quarkus-desktop-swt</artifactId>
+    <version>{project-version}</version>
+</dependency>
+----
+
+Maven adds the SWT jar of the platform of the build (`org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>`) through
+the profiles of the `org.eclipse.platform:org.eclipse.swt` pom. Gradle does not apply them: add the SWT jar of the
+platform yourself, for instance on Windows x64:
+
+.Gradle
+[source,gradle,subs=attributes+]
+----
+implementation("io.quarkiverse.desktop:quarkus-desktop-swt:{project-version}")
+implementation("org.eclipse.platform:org.eclipse.swt.win32.win32.x86_64:3.132.0")
+----
+
+See xref:swt.adoc#installation[Installation] for a Gradle build that chooses the jar from the platform of the build,
+and xref:swt.adoc#swt-versions[SWT versions] for other SWT releases.
+
 == Supported platforms
+
+AWT and Swing applications:
 
 [cols="1,1,3"]
 |===
@@ -92,13 +123,48 @@ Verified on both architectures with the showcase (native builds and runs).
 Native executables need GraalVM for JDK 25 and Quarkus {quarkus-version} or later (on macOS: GraalVM 25.1 or later, and
 Quarkus 4.0 or later).
 
+SWT applications (see xref:swt.adoc#platforms[Platforms] of Desktop SWT):
+
+[cols="1,1,3"]
+|===
+|Platform |JVM mode |Native executable
+
+|Windows x64
+|Yes
+|Yes: a native build on Windows, with Visual Studio (see xref:swt.adoc#windows[Windows]). Verified locally with the
+integration tests of the extension on Windows 11, also with exact reachability metadata: the native executable renders
+the same pixels as JVM mode, as in the cycles of the SWT variant of the showcase.
+
+|Linux x64 and arm64
+|Yes
+|Yes: a native build on Linux or in a container, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]). Verified the
+same way, with exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb, and Wayland, a headless
+Weston), together with the cycles of the SWT variant of the showcase on x64. On arm64, a native executable built in a
+container from macOS ran too.
+
+|macOS (Apple silicon)
+|With `-XstartOnFirstThread`
+|Yes: the event loop runs on the first thread of the process (see xref:swt.adoc#macos[macOS]). Verified the same way,
+with exact reachability metadata, on macOS 27.0, together with the cycles of the SWT variant of the showcase.
+
+|Windows arm64
+|Not verified
+|No: GraalVM has no native image builder for Windows on arm64.
+|===
+
+The SWT native executables are verified with GraalVM for JDK 25, with SWT 3.132.0 (and 3.135.0 on Linux x64 and macOS),
+see xref:swt.adoc#verification[Verification] of Desktop SWT.
+
 == Guides
 
 * xref:awt.adoc[Desktop AWT]: how the extensions work, writing a desktop application, and building native executables.
 * xref:swing.adoc[Desktop Swing]: look and feels, text, Synth, and what Swing applications need in native executables.
-* xref:cdi.adoc[Application model and CDI]: windows as CDI beans, the startup and the exit of the user interface, the
-event dispatch thread (`EdtExecutor`, `Edt`, `@RunOnEdt`), the application menu, Finder and Dock events of macOS, dev
-mode and tests.
+* xref:swt.adoc[Desktop SWT]: SWT applications in JVM mode and as native executables, and their application model: the
+startup and the exit of the user interface, the user interface thread (`UiThreadExecutor`, `UiThread`,
+`@RunOnUiThread`), `WidgetBeans`, quit requests, dev mode and tests.
+* xref:cdi.adoc[Application model and CDI] (AWT and Swing): windows as CDI beans, the startup and the exit of the user
+interface, the event dispatch thread (`EdtExecutor`, `Edt`, `@RunOnEdt`), the application menu, Finder and Dock events
+of macOS, dev mode and tests.
 
 [[verification]]
 == Verification
@@ -113,13 +179,20 @@ except the page that shows where a native executable legitimately differs (its k
 xref:awt.adoc#limitations[Limitations]). It also has a Docker image for the Linux runs, and the steps to verify
 macOS on a Mac.
 
+The showcase also has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt`
+compares its JVM mode and native runs (they match on Windows 11, on Linux x64 in Docker and on macOS 27.0, also with
+exact reachability metadata). The integration tests of the Desktop SWT extension compare the rendering of JVM mode and
+native executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode tests,
+and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
+
 [[configuration]]
 == Configuration
 
 The properties are fixed when the native executable is built and only apply to native executables (JVM mode uses the
 `java` launcher and the JDK as they are), except the run time properties of the application model
-(`quarkus.desktop.awt.startup-event.*`, `quarkus.desktop.awt.exit-on-last-window-closed`) and
-`quarkus.desktop.swing.look-and-feel`, which also apply in JVM mode.
+(`quarkus.desktop.awt.startup-event.*`, `quarkus.desktop.awt.exit-on-last-window-closed`, and for SWT
+`quarkus.desktop.swt.startup-event.enabled`, `quarkus.desktop.swt.exit-on-last-shell-closed` and
+`quarkus.desktop.swt.application-name`) and `quarkus.desktop.swing.look-and-feel`, which also apply in JVM mode.
 
 [cols="2,1,4"]
 |===
@@ -174,7 +247,8 @@ xref:awt.adoc#exact-reachability-metadata[Exact reachability metadata].
 
 |`quarkus.desktop.awt.macos.park-main-thread`
 |`true`
-|macOS: the first thread runs the Cocoa event loop, the application runs on a new thread named `main`.
+|macOS: the first thread runs the Cocoa event loop, the application runs on a new thread named `main`. Ignored when
+the application has an SWT user interface, see xref:swt.adoc#awt-and-swt[Using AWT or Swing with SWT].
 
 |`quarkus.desktop.awt.macos.main-thread-stack-size`
 |`8M`
@@ -210,6 +284,34 @@ xref:swing.adoc#look-and-feel[Look and feel].
 |`false`
 |The bean properties of the Swing classes for the JavaBeans API (3 to 4 MB), see
 xref:swing.adoc#java-beans[JavaBeans].
+
+|`quarkus.desktop.swt.startup-event.enabled`
+|`true`, `false` in tests
+|Whether the SWT user interface runs (`SwtStartupEvent`), see xref:swt.adoc#testing[Testing].
+
+|`quarkus.desktop.swt.exit-on-last-shell-closed`
+|`true`
+|The application stops when its last visible shell closes, see xref:swt.adoc#exit[Closing shells and exit].
+
+|`quarkus.desktop.swt.application-name`
+|`quarkus.application.name` of the build
+|The name of the application given to SWT (`Display.setAppName`): the menu bar and the Dock on macOS, the `WM_CLASS` of
+the windows on Linux. Overriding `quarkus.application.name` at run time does not change it, see
+xref:swt.adoc#configuration[Configuration] of Desktop SWT.
+
+|`quarkus.desktop.swt.native-libraries`
+|`embedded`
+|The native libraries of SWT: embedded in the executable (SWT extracts them on the first run), or
+`next-to-executable`, see xref:swt.adoc#native-libraries[Native libraries].
+
+|`quarkus.desktop.swt.windows.subsystem`
+|`console`
+|Windows: `windows` for an SWT application without console window (as `javaw`).
+
+|`quarkus.desktop.swt.macos.jdk-build-version`
+|`true`
+|macOS: the executable declares the minimum macOS version and SDK version of the `java` launcher of the JDK (the look
+of the windows depends on them). Ignored with the Desktop AWT extension, see xref:swt.adoc#macos[macOS].
 |===
 
 See xref:config-reference.adoc[the configuration reference] for the details.

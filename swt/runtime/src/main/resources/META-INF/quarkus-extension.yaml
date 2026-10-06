@@ -1,0 +1,17 @@
+name: "Desktop SWT"
+description: "Build SWT desktop (GUI) applications: the native widgets of Windows, GTK and macOS, graphics, images, printing, in JVM mode and as native executables"
+artifact: ${project.groupId}:${project.artifactId}:${project.version}
+metadata:
+  short-name: "desktop-swt"
+  keywords:
+    - "desktop"
+    - "swt"
+    - "eclipse"
+    - "gui"
+    - "native"
+  guide: "https://docs.quarkiverse.io/quarkus-desktop/dev/index.html"
+  categories:
+    - "miscellaneous"
+  status: "experimental"
+  config:
+    - "quarkus.desktop.swt."

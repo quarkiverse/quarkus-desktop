@@ -13,11 +13,12 @@
     <version>999-SNAPSHOT</version>
     <packaging>pom</packaging>
     <name>Quarkus Desktop - Parent</name>
-    <description>Quarkus extensions for AWT and Swing desktop (GUI) applications, in JVM mode and as GraalVM native executables</description>
+    <description>Quarkus extensions for AWT, Swing and SWT desktop (GUI) applications, in JVM mode and as GraalVM native executables</description>
 
     <modules>
         <module>awt</module>
         <module>swing</module>
+        <module>swt</module>
     </modules>
 
     <scm>
@@ -30,6 +31,10 @@
     <properties>
         <quarkus.version>3.40.0</quarkus.version>
         <maven.compiler.release>17</maven.compiler.release>
+        <!-- The last SWT release that runs on Java 17 (SWT 3.133.0 and later need Java 21) : an application on Java 21 or
+             later can depend on a later SWT release. Not swt.version : SWT reads a system property of that name (the
+             version of its native libraries), which Maven passes to the tests -->
+        <version.swt>3.132.0</version.swt>
     </properties>
 
     <dependencyManagement>
@@ -40,6 +45,13 @@
                 <version>${quarkus.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+            <!-- The SWT host bundle : the profiles of its pom add the SWT jar of the operating system and architecture of
+                 the build (org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>) -->
+            <dependency>
+                <groupId>org.eclipse.platform</groupId>
+                <artifactId>org.eclipse.swt</artifactId>
+                <version>${version.swt}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

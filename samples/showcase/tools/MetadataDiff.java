@@ -51,6 +51,9 @@ import java.util.stream.Stream;
  * The constants of the extension code are read too : the classes registered for serialization ({@code *SERIALIZABLE*})
  * and the resource bundles that the JDK looks up but does not have ({@code ABSENT_RESOURCE_BUNDLES}).
  * <p>
+ * The SWT variant of the showcase ({@code --swt}) is refused : its accesses are those of the SWT jar, outside this
+ * universe, and quarkus-desktop-swt has lists of its own.
+ * <p>
  * Output (Markdown, on stdout) : the agent-recorded accesses (JNI, reflection, resources, resource bundles,
  * serialization, dynamic proxies) that the lists do not cover, grouped by kind ; names also found in the constant pool
  * of quarkus-awt's {@code AwtProcessor} (registered by io.quarkus:quarkus-awt, heuristic) ; platform entries not used by
@@ -103,6 +106,11 @@ public class MetadataDiff {
             String arg = args[i];
             if (arg.equals("--awt-only")) {
                 awtOnly = true;
+            } else if (arg.equals("--swt")) {
+                System.err.println("--swt : not supported, this tool compares the accesses to the JDK desktop modules "
+                        + "with the lists of quarkus-desktop-awt and quarkus-desktop-swing (the SWT variant has no "
+                        + "AWT)");
+                System.exit(2);
             } else if (arg.equals("--no-java-beans")) {
                 javaBeans = false;
             } else if (arg.startsWith("--version=")) {
