@@ -11,8 +11,8 @@ executables.
   executables for macOS need Quarkus 4.0 or later, whose quarkus-awt supports macOS
   ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979); not released yet: until then, a
   Quarkus `999-SNAPSHOT` built from `main`), and GraalVM 25.1 or later.
-- SWT: Windows x64, Linux x64 and arm64, and macOS on Apple silicon, in JVM mode and as native executables. On macOS,
-  JVM mode needs `-XstartOnFirstThread`.
+- SWT: Windows x64, Linux x64 and arm64, and macOS on Apple silicon, in JVM mode and as native executables (on Windows
+  arm64: JVM mode, and x64 native executables under emulation). On macOS, JVM mode needs `-XstartOnFirstThread`.
 
 | Extension | Coordinates | Description |
 |---|---|---|
@@ -78,7 +78,7 @@ dependencies {
 
 SWT 3.132.0 is the last SWT release that runs on Java 17; an application on Java 21 or later can declare a later version
 of `org.eclipse.platform:org.eclipse.swt` (never with a `swt.version` property: SWT reads a system property of that
-name). SWT 3.135.0 is verified on Linux x64 and macOS.
+name). SWT 3.135.0 is verified on Linux x64 and macOS, and on Windows arm64 in JVM mode.
 
 ## Application model and CDI
 
@@ -270,7 +270,7 @@ SWT:
 | Windows x64 | yes | yes (native build on Windows with Visual Studio; no manifest nor Visual C++ runtime needed; verified on Windows 11) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb, and Wayland) |
 | macOS on Apple silicon | yes, with `-XstartOnFirstThread` | yes (the event loop runs on the first thread of the process; verified on macOS 27.0) |
-| Windows arm64 | not verified | no (no GraalVM native image builder for Windows on arm64) |
+| Windows arm64 | yes (verified on Windows 11 with arm64 JDKs 17 and 25) | no arm64 executable (no GraalVM native image builder for Windows on arm64); an x64 executable built with an x64 GraalVM runs under emulation |
 
 ## Showcase
 

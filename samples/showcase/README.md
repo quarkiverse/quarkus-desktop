@@ -16,7 +16,9 @@ This directory is a Maven project of its own, not a module of the extension buil
   [Quarkus native prerequisites](https://quarkus.io/guides/building-native-image).
 - quarkus-desktop `999-SNAPSHOT` in the local Maven repository: run `./mvnw install -DskipTests` at the root of this
   repository (`../..`) first.
-- Windows arm64: JVM mode only (GraalVM has no native image builder there).
+- Windows arm64: JVM mode only (GraalVM has no native image builder there): `tools/Cycle.java <label> --jvm-only`, run
+  with the `java` of an arm64 JDK 25 (the tools build and run with the JDK that runs them: an x64 JDK gets the x64 SWT
+  jar, and runs it under the x64 emulation of Windows).
 - macOS native executables of the AWT and Swing variants: Quarkus 4.0 or later (until its release, a Quarkus
   `999-SNAPSHOT` built from `main`, used with `-Dquarkus.platform.version=999-SNAPSHOT`) and GraalVM 25.1 or later (the
   SWT variant does not need Quarkus 4.0). The Robot pages (`-Dshowcase.robot=true`) need the Screen Recording and
@@ -97,8 +99,13 @@ page must be identical, except the expected differences of `swt-native-limits`. 
 `-XstartOnFirstThread` to the JVM runs on macOS. `--swt` is not compatible with `--awt-only`, `--pipeline` and
 `--trace`.
 
-The cycles of the SWT variant match, with `--exact` too, on Windows 11, on macOS 27.0 (Apple silicon), and on Linux x64
-in Docker (the image above, `docker/linux`), with no failed check. Where SWT behaves differently on a platform
+The cycles of the SWT variant match, with `--exact` too, on Windows 11 x64, on macOS 27.0 (Apple silicon), and on Linux
+x64 in Docker (the image above, `docker/linux`), with no failed check. On Windows 11 arm64 (a virtual machine with a
+display at 200 %), the two JVM runs of `--jvm-only` match too, but 4 checks of `swt-graphics-shapes`,
+`swt-graphics-advanced` and `swt-text-fonts` fail in both runs, on arm64 and with an x64 JDK alike, probably because of
+the scale (not verified at 100 %); with `--hidpi`, 5 other checks, of `swt-containers`, `swt-graphics-shapes` and
+`swt-images`, fail instead. The verdict counts them as pages with the same errors in both runs, not as a mismatch: read
+that count too. Where SWT behaves differently on a platform
 (`Text.DELIMITER` and `Path.contains` with `SWT.FILL_EVEN_ODD` on Cocoa, `Transform.shear` on Cocoa and GTK, the client
 area of a `Group` or a `TabFolder`, the rows of a virtual `Table` and the toolbars that cannot wrap on GTK, the glyph
 metrics of Core Text...), the checks of the pages expect the value of that platform, with a comment naming the cause.

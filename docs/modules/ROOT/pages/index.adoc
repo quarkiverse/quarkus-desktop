@@ -148,8 +148,11 @@ container from macOS ran too.
 with exact reachability metadata, on macOS 27.0, together with the cycles of the SWT variant of the showcase.
 
 |Windows arm64
-|Not verified
-|No: GraalVM has no native image builder for Windows on arm64.
+|Yes
+|No arm64 executable: GraalVM has no native image builder for Windows on arm64. An x64 executable, built with an x64
+GraalVM under the x64 emulation of Windows, runs there under emulation (see xref:swt.adoc#windows[Windows]). JVM mode
+is verified with the integration tests of the extension (arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0) and the SWT
+variant of the showcase (two JVM runs compared).
 |===
 
 The SWT native executables are verified with GraalVM for JDK 25, with SWT 3.132.0 (and 3.135.0 on Linux x64 and macOS),
@@ -180,10 +183,12 @@ xref:awt.adoc#limitations[Limitations]). It also has a Docker image for the Linu
 macOS on a Mac.
 
 The showcase also has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt`
-compares its JVM mode and native runs (they match on Windows 11, on Linux x64 in Docker and on macOS 27.0, also with
-exact reachability metadata). The integration tests of the Desktop SWT extension compare the rendering of JVM mode and
-native executables too, when they run locally: the native jobs of the continuous integration skip the JVM mode tests,
-and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop SWT).
+compares its JVM mode and native runs (they match on Windows 11 x64, on Linux x64 in Docker and on macOS 27.0, also with
+exact reachability metadata; on Windows 11 arm64, `--jvm-only` compares two JVM runs, which match, with 4 checks failing
+in both runs on a display at 200 %, see the showcase README). The integration tests of the Desktop SWT extension
+compare the rendering of JVM mode and native executables too, when they run locally: the native jobs of the continuous
+integration skip the JVM mode tests, and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop
+SWT).
 
 [[configuration]]
 == Configuration

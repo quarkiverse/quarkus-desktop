@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
+  native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
+
+### Fixed
+
+- The SWT integration tests could stall for minutes when Windows ran a timer of the event loop before its delay
+  (`SwtChecks.pumpFor` then slept without any timer left): it now arms the timer again until the delay elapsed. Seen on
+  Windows 11 arm64, where `SwtItIT` took 260 s with SWT 3.135.0 and 413 s with an x64 JDK, and 11 s and 17 s with the
+  fix.
+
 ## 0.2.1 - 2026-10-06
 
 - Publishes the changes of 0.2.0, which did not reach Maven Central (its javadoc jars were missing).
