@@ -152,7 +152,11 @@ class DesktopSwtCdiProcessor {
     /**
      * The main of a user interface application without a {@code @QuarkusMain} : runs the user interface on the main
      * thread. Quarkus only uses it when the application has no {@code @QuarkusMain}. Overridable : the main of another
-     * extension (Picocli, Quarkus FX...) replaces it, and the application then calls {@code SwtLifecycle.run()} itself.
+     * extension (Picocli...) replaces it, and the application then calls {@code SwtLifecycle.run()} itself.
+     * <p>
+     * Quarkus FX does not provide its main when {@code SwtLifecycle} is on the class path : this one runs the user
+     * interface, and JavaFX runs embedded in SWT ({@code javafx.embed.swt.FXCanvas}). The earlier versions of Quarkus
+     * FX declare an overridable main too, and Quarkus rejects the two producers ({@code ChainBuildException}).
      */
     @BuildStep
     @Overridable

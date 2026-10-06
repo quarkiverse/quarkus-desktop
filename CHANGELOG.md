@@ -15,6 +15,9 @@ All notable changes to this project will be documented in this file.
   (`SwtChecks.pumpFor` then slept without any timer left): it now arms the timer again until the delay elapsed. Seen on
   Windows 11 arm64, where `SwtItIT` took 260 s with SWT 3.135.0 and 413 s with an x64 JDK, and 11 s and 17 s with the
   fix.
+- The Desktop SWT documentation said that the main of Quarkus FX replaces the one of the extension: Quarkus rejected the
+  two overridable producers (`ChainBuildException`). Quarkus FX, from the version that supports SWT, leaves the main to
+  the extension and embeds JavaFX with `FXCanvas` (see Using JavaFX with SWT).
 
 ## 0.2.1 - 2026-10-06
 
