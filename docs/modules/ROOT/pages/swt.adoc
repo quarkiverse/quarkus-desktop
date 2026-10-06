@@ -13,7 +13,7 @@ reach the user interface thread from any thread (`CompletableFuture`, Mutiny, CD
 
 It does not include `quarkus-desktop-awt` (nor the Quarkus core extension `quarkus-awt`): SWT draws with the toolkit of
 the platform. It covers plain SWT: JFace and the Eclipse Rich Client Platform are not covered. An application may use
-AWT or Swing with SWT, see <<awt-and-swt>>.
+AWT or Swing with SWT, see <<awt-and-swt>>, and embed JavaFX with Quarkus FX, see <<javafx-and-swt>>.
 
 The API is in the `io.quarkiverse.desktop.swt` package:
 
@@ -300,10 +300,11 @@ none of them, nor any `QuarkusApplication` implementation of the index, mentions
 user interface would never start. It is a heuristic: it looks for a reference to `SwtLifecycle`, not for a call to
 `run()`.
 
-With another extension that provides the main of the application (Picocli, Quarkus FX), its main replaces the one of
-this extension: the application calls `SwtLifecycle.run()` itself, on the main thread (for instance from the Picocli
-command). Verified with Picocli on Windows, Linux x64 and macOS, in JVM mode and as a native executable; not verified
-with Quarkus FX.
+With another extension that provides the main of the application (Picocli), its main replaces the one of this
+extension: the application calls `SwtLifecycle.run()` itself, on the main thread (for instance from the Picocli
+command). Verified with Picocli on Windows, Linux x64 and macOS, in JVM mode and as a native executable. Quarkus FX
+does not replace it: the main of this extension runs the user interface, and JavaFX runs embedded in SWT (see
+<<javafx-and-swt>>).
 
 [[exit]]
 == Closing shells and exit
@@ -1305,8 +1306,8 @@ its own user interface thread, with its own API: the event dispatch thread of AW
 (`SwtStartupEvent`, `UiThreadExecutor`, `@RunOnUiThread`). On Windows and Linux, the two threads run side by side. On
 macOS, SWT owns the first thread of the process: when the application has an SWT user interface (a `SwtStartupEvent`
 observer: the Desktop SWT extension then provides the main), the Desktop AWT extension does not park the first thread
-for AWT in native executables. When another extension provides the main
-(Picocli, Quarkus FX), the Desktop AWT extension cannot tell: set `quarkus.desktop.awt.macos.park-main-thread=false`.
+for AWT in native executables. When another extension provides the main (Picocli), the Desktop AWT extension cannot
+tell: set `quarkus.desktop.awt.macos.park-main-thread=false`.
 
 * Each exit policy counts the windows of its own toolkit (the AWT one the AWT windows of an application observing
 `DesktopStartupEvent`, the SWT one the shells), but either one stops the whole application: closing the last SWT shell
@@ -1329,6 +1330,21 @@ and the SDK version of the executable, and `quarkus.desktop.awt.macos.jdk-build-
 
 The SWT_AWT bridge (`org.eclipse.swt.awt.SWT_AWT`, AWT components in SWT shells) is not supported in native executables
 (see <<limitations>>).
+
+[[javafx-and-swt]]
+== Using JavaFX with SWT
+
+With https://github.com/quarkiverse/quarkus-fx[Quarkus FX], JavaFX runs embedded in SWT, in `javafx.embed.swt.FXCanvas`
+widgets: Quarkus FX does not provide its main when `io.quarkiverse.desktop.swt.SwtLifecycle` is on the class path, and
+the user interface is the SWT one, run by the main of this extension (or by a `@QuarkusMain` that calls
+`SwtLifecycle.run()`, see <<quarkus-main>>). The first `FXCanvas` starts JavaFX on the user interface thread of SWT,
+which becomes the JavaFX application thread. Quarkus FX also turns off the implicit exit of JavaFX, and registers the
+`FXCanvas` interop for native executables. See
+https://docs.quarkiverse.io/quarkus-fx/dev/index.html#swt[JavaFX embedded in SWT] in the Quarkus FX documentation.
+
+This needs a version of Quarkus FX that includes this support. Earlier versions provide their main too, as an
+overridable producer of `QuarkusApplicationClassBuildItem` like this extension, and Quarkus rejects the application
+(`ChainBuildException`: "Multiple overridable producers").
 
 [[limitations]]
 == Limitations
@@ -1433,7 +1449,7 @@ executables there beyond the integration tests (with exact reachability metadata
 rendering compared with JVM mode), on Linux arm64 dev mode, the
 `Browser` widget and `GLCanvas`, Picocli, Swing with SWT and quit requests, a real end of the session (a logout) on
 every platform, the Linux session manager (`QueryEndSession`, `EndSession`), AWT (rather than Swing) with SWT, and
-Quarkus FX.
+Quarkus FX (JavaFX embedded in SWT, see <<javafx-and-swt>>).
 
 The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] has an SWT
 variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt` compares its JVM mode and
