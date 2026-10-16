@@ -58,7 +58,7 @@ Replace the version placeholder with the latest release from
 
 SWT is a jar per platform (`org.eclipse.platform:org.eclipse.swt.<ws>.<os>.<arch>`). With Maven, the profiles of the
 `org.eclipse.platform:org.eclipse.swt` pom add the jar of the platform of the build. Gradle does not apply them: add the
-SWT jar of the platform yourself, with the SWT version of the extension (3.132.0), for instance in `build.gradle.kts`:
+SWT jar of the platform yourself, with the SWT version of the extension (3.135.0), for instance in `build.gradle.kts`:
 
 ```kotlin
 val os = System.getProperty("os.name").lowercase()
@@ -71,13 +71,13 @@ val swtPlatform = when {
 
 dependencies {
     implementation("io.quarkiverse.desktop:quarkus-desktop-swt:$quarkusDesktopVersion")
-    implementation("org.eclipse.platform:org.eclipse.swt.$swtPlatform:3.132.0")
+    implementation("org.eclipse.platform:org.eclipse.swt.$swtPlatform:3.135.0")
 }
 ```
 
-SWT 3.132.0 is the last SWT release that runs on Java 17; an application on Java 21 or later can declare a later version
-of `org.eclipse.platform:org.eclipse.swt` (never with a `swt.version` property: SWT reads a system property of that
-name). SWT 3.135.0 is verified on Linux x64 and macOS, and on Windows arm64 in JVM mode.
+An application can declare another version of `org.eclipse.platform:org.eclipse.swt` (never with a `swt.version`
+property: SWT reads a system property of that name). SWT 3.135.0 is verified on Linux x64 and macOS, and on Windows arm64
+in JVM mode.
 
 ## Application model and CDI
 

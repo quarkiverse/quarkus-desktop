@@ -19,29 +19,25 @@ import javax.swing.WindowConstants;
 
 import org.jboss.logging.Logger;
 
-import io.quarkus.runtime.RuntimeValue;
-import io.quarkus.runtime.ShutdownContext;
-import io.quarkus.runtime.annotations.Recorder;
+import io.quarkus.core.StartContext;
 
 /**
- * Run time support of the Desktop Swing extension.
+ * Run time support of the Desktop Swing extension : what its services do when the application starts and stops.
  */
-@Recorder
-public class DesktopSwingRecorder {
+public final class DesktopSwingSupport {
 
-    private static final Logger LOGGER = Logger.getLogger(DesktopSwingRecorder.class);
+    private static final Logger LOGGER = Logger.getLogger(DesktopSwingSupport.class);
 
-    private final RuntimeValue<DesktopSwingConfig> config;
-
-    public DesktopSwingRecorder(RuntimeValue<DesktopSwingConfig> config) {
-        this.config = config;
+    private DesktopSwingSupport() {
     }
 
     /**
      * Sets the configured look and feel ({@code quarkus.desktop.swing.look-and-feel}), on the event dispatch thread.
+     *
+     * @param config the run time configuration of the extension
      */
-    public void setLookAndFeel() {
-        Optional<String> lookAndFeel = config.getValue().lookAndFeel().map(String::trim).filter(s -> !s.isEmpty());
+    public static void setLookAndFeel(DesktopSwingConfig config) {
+        Optional<String> lookAndFeel = config.lookAndFeel().map(String::trim).filter(s -> !s.isEmpty());
         if (lookAndFeel.isEmpty()) {
             return;
         }
@@ -75,8 +71,10 @@ public class DesktopSwingRecorder {
     /**
      * Warns about the frames that close with {@code EXIT_ON_CLOSE}, in dev mode : closing one calls {@code System.exit} on
      * the event dispatch thread, which ends dev mode instead of stopping the application.
+     *
+     * @param context the start context of the service, which removes the listener when it stops
      */
-    public void warnExitOnClose(ShutdownContext shutdownContext) {
+    public static void warnExitOnClose(StartContext context) {
         if (GraphicsEnvironment.isHeadless()) {
             return;
         }
@@ -92,7 +90,7 @@ public class DesktopSwingRecorder {
             }
         };
         Toolkit.getDefaultToolkit().addAWTEventListener(listener, AWTEvent.WINDOW_EVENT_MASK);
-        shutdownContext.addShutdownTask(() -> Toolkit.getDefaultToolkit().removeAWTEventListener(listener));
+        context.onStop(() -> Toolkit.getDefaultToolkit().removeAWTEventListener(listener));
     }
 
     static boolean isJdkClass(String className) {

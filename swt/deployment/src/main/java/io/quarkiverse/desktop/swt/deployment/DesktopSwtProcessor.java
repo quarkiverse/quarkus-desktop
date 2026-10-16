@@ -22,15 +22,14 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
-import io.quarkiverse.desktop.swt.runtime.DesktopSwtRecorder;
+import io.quarkiverse.desktop.swt.runtime.DesktopSwtSupport;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
-import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Produce;
-import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
@@ -544,14 +543,19 @@ class DesktopSwtProcessor {
      * them.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
-    @Record(ExecutionTime.RUNTIME_INIT)
     ServiceStartBuildItem useLibrariesNextToExecutable(SwtPlatformBuildItem platform, DesktopSwtConfig config,
-            DesktopSwtRecorder recorder) {
+            ServiceRegistrar serviceRegistrar) {
         if (config.nativeLibraries() != NativeLibraries.NEXT_TO_EXECUTABLE) {
             return null;
         }
-        mainNativeLibrary(nativeLibraries(platform.getJar().getContentTree()), platform.getWindowingSystem())
-                .ifPresent(recorder::useLibrariesNextToExecutable);
+        Optional<String> library = mainNativeLibrary(nativeLibraries(platform.getJar().getContentTree()),
+                platform.getWindowingSystem());
+        if (library.isPresent()) {
+            String name = library.get();
+            serviceRegistrar
+                    .forService("io.quarkiverse.desktop.swt.native-libraries")
+                    .onStart(ctx -> DesktopSwtSupport.useLibrariesNextToExecutable(name));
+        }
         return new ServiceStartBuildItem(FEATURE + "-native-libraries");
     }
 

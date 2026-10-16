@@ -11,7 +11,7 @@ import org.jboss.jandex.MethodInfo;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.awt.deployment.AwtJavaBeansClassesBuildItem;
-import io.quarkiverse.desktop.awt.deployment.DesktopAwtRuntimeInitBuildItem;
+import io.quarkiverse.desktop.awt.deployment.DesktopAwtServices;
 import io.quarkiverse.desktop.awt.deployment.DesktopTargetPlatformBuildItem;
 import io.quarkiverse.desktop.awt.deployment.DesktopUiBuildItem;
 import io.quarkiverse.desktop.awt.deployment.MemberEntry;
@@ -21,18 +21,17 @@ import io.quarkiverse.desktop.awt.deployment.ReflectivePublicMembersBuildItem;
 import io.quarkiverse.desktop.awt.deployment.ResourceGlobs;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig;
 import io.quarkiverse.desktop.swing.runtime.DesktopSwingBuildTimeConfig.IncludedLookAndFeel;
-import io.quarkiverse.desktop.swing.runtime.DesktopSwingRecorder;
+import io.quarkiverse.desktop.swing.runtime.DesktopSwingConfig;
+import io.quarkiverse.desktop.swing.runtime.DesktopSwingSupport;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.ApplicationArchive;
 import io.quarkus.deployment.IsDevelopment;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
-import io.quarkus.deployment.annotations.ExecutionTime;
-import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationArchivesBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
-import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessFieldBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessMethodBuildItem;
@@ -369,10 +368,12 @@ class DesktopSwingProcessor {
      * executables is ready (setting a look and feel initializes the fonts).
      */
     @BuildStep
-    @Record(ExecutionTime.RUNTIME_INIT)
-    ServiceStartBuildItem lookAndFeel(DesktopSwingRecorder recorder,
-            List<DesktopAwtRuntimeInitBuildItem> awtRuntimeInit) {
-        recorder.setLookAndFeel();
+    ServiceStartBuildItem lookAndFeel(ServiceRegistrar serviceRegistrar) {
+        serviceRegistrar
+                .forService("io.quarkiverse.desktop.swing.look-and-feel")
+                .after(DesktopAwtServices.RUNTIME_HOME)
+                .require(DesktopSwingConfig.class)
+                .onStart((ctx, config) -> DesktopSwingSupport.setLookAndFeel(config));
         return new ServiceStartBuildItem(FEATURE);
     }
 
@@ -383,11 +384,11 @@ class DesktopSwingProcessor {
      * with a user interface (observing {@code DesktopStartupEvent}) : the listener starts the AWT toolkit.
      */
     @BuildStep(onlyIf = IsDevelopment.class)
-    @Record(ExecutionTime.RUNTIME_INIT)
-    void warnExitOnClose(Optional<DesktopUiBuildItem> userInterface, DesktopSwingRecorder recorder,
-            ShutdownContextBuildItem shutdownContext) {
+    void warnExitOnClose(Optional<DesktopUiBuildItem> userInterface, ServiceRegistrar serviceRegistrar) {
         if (userInterface.isPresent()) {
-            recorder.warnExitOnClose(shutdownContext);
+            serviceRegistrar
+                    .forService("io.quarkiverse.desktop.swing.exit-on-close-warning")
+                    .onStart(ctx -> DesktopSwingSupport.warnExitOnClose(ctx));
         }
     }
 

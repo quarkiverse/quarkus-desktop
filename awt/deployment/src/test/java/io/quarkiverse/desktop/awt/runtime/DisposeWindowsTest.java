@@ -48,11 +48,11 @@ class DisposeWindowsTest {
             }
         });
         assertTrue(blocked.await(10, TimeUnit.SECONDS));
-        Thread shutdown = new Thread(() -> DesktopAwtRecorder.disposeWindows(null), "shutdown");
+        Thread shutdown = new Thread(() -> DesktopAwtSupport.disposeWindows(null), "shutdown");
         shutdown.setDaemon(true);
         shutdown.start();
         try {
-            shutdown.join((DesktopAwtRecorder.DISPOSE_TIMEOUT_SECONDS + 5) * 1000);
+            shutdown.join((DesktopAwtSupport.DISPOSE_TIMEOUT_SECONDS + 5) * 1000);
             assertFalse(shutdown.isAlive(), "the shutdown waits for the blocked event dispatch thread");
         } finally {
             release.countDown();
@@ -79,10 +79,10 @@ class DisposeWindowsTest {
             dev.set(frame("dev", closed));
         });
         try {
-            DesktopAwtRecorder.disposeWindows(Set.of(test.get()));
+            DesktopAwtSupport.disposeWindows(Set.of(test.get()));
             assertEquals(List.of("test"), closed);
             EventQueue.invokeAndWait(() -> assertTrue(dev.get().isDisplayable()));
-            DesktopAwtRecorder.disposeWindows(null);
+            DesktopAwtSupport.disposeWindows(null);
             assertEquals(List.of("test", "dev"), closed);
         } finally {
             EventQueue.invokeAndWait(() -> dev.get().dispose());

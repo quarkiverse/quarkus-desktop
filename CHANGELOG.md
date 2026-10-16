@@ -9,6 +9,19 @@ All notable changes to this project will be documented in this file.
 - Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
   native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
 
+### Changed
+
+- Quarkus 4: the extensions are built with Quarkus `999-SNAPSHOT` (Quarkus `main`, until a Quarkus 4.0 release has the
+  services API) and need Java 21 or later. Their build steps register services (`ServiceRegistrar`) instead of
+  recording bytecode: the run time code of the former recorders is in `DesktopAwtSupport`, `DesktopLifecycleSupport`,
+  `DesktopSwingSupport` and `DesktopSwtSupport`.
+- Desktop SWT depends on SWT 3.135.0 (3.132.0 before, the last SWT release that runs on Java 17).
+
+### Removed
+
+- `DesktopAwtRuntimeInitBuildItem`: a service that uses AWT when the application starts is ordered after the service
+  `DesktopAwtServices.RUNTIME_HOME` instead.
+
 ### Fixed
 
 - The SWT integration tests could stall for minutes when Windows ran a timer of the event loop before its delay

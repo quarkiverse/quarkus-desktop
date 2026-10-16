@@ -6,31 +6,30 @@ import java.util.List;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.awt.runtime.DesktopAwtRuntimeConfig.Mode;
-import io.quarkus.arc.Arc;
+import io.quarkus.arc.runtime.BeanContainer;
+import io.quarkus.core.StartContext;
 import io.quarkus.runtime.LaunchMode;
-import io.quarkus.runtime.RuntimeValue;
-import io.quarkus.runtime.ShutdownContext;
-import io.quarkus.runtime.annotations.Recorder;
 
 /**
  * Run time support of the user interface of an application observing {@code DesktopStartupEvent}.
  */
-@Recorder
-public class DesktopLifecycleRecorder {
+public final class DesktopLifecycleSupport {
 
-    private static final Logger LOGGER = Logger.getLogger(DesktopLifecycleRecorder.class);
+    private static final Logger LOGGER = Logger.getLogger(DesktopLifecycleSupport.class);
 
-    private final RuntimeValue<DesktopAwtRuntimeConfig> config;
-
-    public DesktopLifecycleRecorder(RuntimeValue<DesktopAwtRuntimeConfig> config) {
-        this.config = config;
+    private DesktopLifecycleSupport() {
     }
 
     /**
      * Starts the user interface once the application started (after the {@code StartupEvent} observers) : fires
      * {@code DesktopStartupEvent} on the event dispatch thread, or lets the application fire it
-     * ({@code DesktopLifecycle.start()}).
+     * ({@code DesktopLifecycle.start()}). The service stops it before the {@code ShutdownEvent} observers.
      *
+     * @param context the start context of the service
+     * @param beans the CDI container
+     * @param config the run time configuration of the extension
+     * @param uncaughtExceptions the logging of the uncaught exceptions, which outlives the other services of the
+     *        extension
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
      * @param quarkusFx whether Quarkus FX is present (JavaFX then decides when the application stops, and handles the
      *        events of the application menu)
@@ -38,10 +37,10 @@ public class DesktopLifecycleRecorder {
      *        application : the handlers of {@code java.awt.Desktop} are those of the dev mode application
      * @param desktopEvents the class names of the {@code java.awt.Desktop} events that the application observes
      */
-    public void startUserInterface(ShutdownContext shutdown, LaunchMode launchMode, boolean lifecycleObserversDisabled,
+    public static void startUserInterface(StartContext context, BeanContainer beans, DesktopAwtRuntimeConfig config,
+            UncaughtExceptionLogging uncaughtExceptions, LaunchMode launchMode, boolean lifecycleObserversDisabled,
             boolean quarkusFx, boolean auxiliary, List<String> desktopEvents) {
-        DesktopAwtRuntimeConfig config = this.config.getValue();
-        DesktopUi ui = Arc.container().instance(DesktopUi.class).get();
+        DesktopUi ui = beans.beanInstance(DesktopUi.class);
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
         if (!enabled || launchMode == LaunchMode.TEST && lifecycleObserversDisabled) {
             LOGGER.debug("DesktopStartupEvent is disabled");
@@ -59,14 +58,11 @@ public class DesktopLifecycleRecorder {
             }
             return;
         }
-        UncaughtExceptionLogger uncaughtExceptions = UncaughtExceptionLogger.install();
-        if (uncaughtExceptions != null && launchMode != LaunchMode.NORMAL) {
-            // after the other shutdown tasks, whose exceptions on the event dispatch thread are logged too
-            shutdown.addLastShutdownTask(uncaughtExceptions::remove);
-        }
+        // removed after the other stop handlers, whose exceptions on the event dispatch thread are logged too
+        uncaughtExceptions.install(launchMode != LaunchMode.NORMAL);
         ui.enable(launchMode, config.exitOnLastWindowClosed() && launchMode != LaunchMode.TEST && !quarkusFx,
                 !quarkusFx && !auxiliary, desktopEvents);
-        shutdown.addShutdownTask(ui::stop);
+        context.onStop(ui::stop);
         if (auto) {
             ui.start();
         }

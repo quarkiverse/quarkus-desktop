@@ -63,28 +63,18 @@ class AwtClassesAndResourcesTest {
             Map.entry("SERVICE_PROVIDERS", NAME_ENTRY));
 
     /**
-     * The entries that the JDK has only since a version later than 17, the oldest JDK of the JVM mode : the lists are
+     * The entries that the JDK has only since a version later than 21, the oldest JDK of the JVM mode : the lists are
      * written for JDK 25, the JDK of the GraalVM versions that build native executables, and the tests also run with
      * older JDKs. An entry is checked when the JDK running the tests has it.
      */
     static final Map<String, Integer> SINCE_JDK = Map.ofEntries(
-            // the var handles of the native memory accesses (Foreign Function and Memory API), the sequenced collections
-            Map.entry("java.lang.invoke.VarHandleSegmentAsBytes", 21),
+            // the var handles of the native memory accesses (Foreign Function and Memory API)
             Map.entry("java.lang.invoke.VarHandleSegmentAsCharsAligned", 25),
             Map.entry("java.lang.invoke.VarHandleSegmentAsDoublesAligned", 25),
             Map.entry("java.lang.invoke.VarHandleSegmentAsFloatsAligned", 25),
             Map.entry("java.lang.invoke.VarHandleSegmentAsIntsAligned", 25),
             Map.entry("java.lang.invoke.VarHandleSegmentAsLongsAligned", 25),
             Map.entry("java.lang.invoke.VarHandleSegmentAsShortsAligned", 25),
-            Map.entry("java.util.SequencedCollection", 21),
-            Map.entry("java.util.SequencedMap", 21),
-            // macOS accessibility
-            Map.entry("sun.lwawt.macosx.CAccessibility#getAccessibleActionCount("
-                    + "javax.accessibility.AccessibleAction,java.awt.Component)", 21),
-            Map.entry("sun.lwawt.macosx.CAccessibility#getAccessibleComboboxValue("
-                    + "javax.accessibility.Accessible,java.awt.Component)", 21),
-            Map.entry("sun.lwawt.macosx.CAccessibility#getAccessibleCurrentAccessible("
-                    + "javax.accessibility.Accessible,java.awt.Component)", 21),
             // macOS printing : the output bin, the exception that ends the print loop
             Map.entry("sun.lwawt.macosx.CPrinterJob#getOutputBin()", 23),
             Map.entry("sun.lwawt.macosx.CPrinterJob#setOutputBin(java.lang.String)", 23),
@@ -262,7 +252,7 @@ class AwtClassesAndResourcesTest {
      * Whether the JDK running the tests has the entry (see {@link #SINCE_JDK}).
      */
     static boolean inRunningJdk(String entry) {
-        return SINCE_JDK.getOrDefault(entry, 17) <= Runtime.version().feature();
+        return SINCE_JDK.getOrDefault(entry, 21) <= Runtime.version().feature();
     }
 
     /**

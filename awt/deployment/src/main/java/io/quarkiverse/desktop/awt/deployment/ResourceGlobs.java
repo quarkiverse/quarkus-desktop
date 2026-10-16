@@ -1,7 +1,5 @@
 package io.quarkiverse.desktop.awt.deployment;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -16,10 +14,9 @@ import io.quarkus.deployment.builditem.nativeimage.NativeImageResourcePatternsBu
  * the JDK (the icons of the look and feels, the cursors, the print dialog icons...), which the JDK loads with
  * {@code Class.getResourceAsStream} from its own classes.
  * <p>
- * Quarkus 3.40 writes the resources in the legacy format, where a glob matches the resources of the class path and of
- * every module. Later versions write the reachability metadata format, where a glob without a module only matches the
- * resources of the class path, and have {@code NativeImageResourcePatternsBuildItem.Builder.module(String)} : the globs
- * are then registered in each module of the JDK that has their directory, and on the class path when no module has it.
+ * Quarkus writes the resources in the reachability metadata format, where a glob without a module only matches the
+ * resources of the class path : the globs are registered in each module of the JDK that has their directory
+ * ({@code NativeImageResourcePatternsBuildItem.Builder.module(String)}), and on the class path when no module has it.
  * Used by the Desktop AWT and Desktop Swing extensions.
  */
 public final class ResourceGlobs {
@@ -29,12 +26,6 @@ public final class ResourceGlobs {
      */
     static final String CLASS_PATH = "";
 
-    /**
-     * {@code NativeImageResourcePatternsBuildItem.Builder.module(String)} of the Quarkus versions after 3.40, or
-     * {@code null}.
-     */
-    private static final Method MODULE = moduleMethod();
-
     private ResourceGlobs() {
     }
 
@@ -43,23 +34,11 @@ public final class ResourceGlobs {
      */
     public static List<NativeImageResourcePatternsBuildItem> patterns(Collection<String> globs) {
         List<NativeImageResourcePatternsBuildItem> items = new ArrayList<>();
-        if (globs.isEmpty()) {
-            return items;
-        }
-        if (MODULE == null) {
-            // legacy format : a glob matches every module
-            items.add(NativeImageResourcePatternsBuildItem.builder().includeGlobs(globs).build());
-            return items;
-        }
         for (Map.Entry<String, Set<String>> entry : byModule(globs).entrySet()) {
             NativeImageResourcePatternsBuildItem.Builder builder = NativeImageResourcePatternsBuildItem.builder()
                     .includeGlobs(entry.getValue());
             if (!entry.getKey().equals(CLASS_PATH)) {
-                try {
-                    MODULE.invoke(builder, entry.getKey());
-                } catch (IllegalAccessException | InvocationTargetException e) {
-                    throw new IllegalStateException("Unable to register the resources of the module " + entry.getKey(), e);
-                }
+                builder.module(entry.getKey());
             }
             items.add(builder.build());
         }
@@ -78,20 +57,5 @@ public final class ResourceGlobs {
             }
         }
         return byModule;
-    }
-
-    /**
-     * Whether the Quarkus version of the build registers module resources ({@code Builder.module(String)}).
-     */
-    static boolean moduleResources() {
-        return MODULE != null;
-    }
-
-    private static Method moduleMethod() {
-        try {
-            return NativeImageResourcePatternsBuildItem.Builder.class.getMethod("module", String.class);
-        } catch (NoSuchMethodException e) {
-            return null;
-        }
     }
 }

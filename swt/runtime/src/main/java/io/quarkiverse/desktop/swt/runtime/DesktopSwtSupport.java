@@ -6,20 +6,18 @@ import java.util.Optional;
 
 import org.jboss.logging.Logger;
 
-import io.quarkus.arc.Arc;
+import io.quarkus.arc.runtime.BeanContainer;
+import io.quarkus.core.StartContext;
 import io.quarkus.runtime.ApplicationLifecycleManager;
 import io.quarkus.runtime.LaunchMode;
-import io.quarkus.runtime.RuntimeValue;
-import io.quarkus.runtime.ShutdownContext;
-import io.quarkus.runtime.annotations.Recorder;
 
 /**
- * Run time support of the user interface, and of the native libraries of SWT in native executables.
+ * Run time support of the user interface, and of the native libraries of SWT in native executables : what the services
+ * of the extension do when the application starts and stops.
  */
-@Recorder
-public class DesktopSwtRecorder {
+public final class DesktopSwtSupport {
 
-    private static final Logger LOGGER = Logger.getLogger(DesktopSwtRecorder.class);
+    private static final Logger LOGGER = Logger.getLogger(DesktopSwtSupport.class);
 
     /**
      * The system property where SWT looks for its native libraries before extracting them.
@@ -32,24 +30,26 @@ public class DesktopSwtRecorder {
      */
     static volatile String librariesNextToExecutable;
 
-    private final RuntimeValue<DesktopSwtRuntimeConfig> config;
-
-    public DesktopSwtRecorder(RuntimeValue<DesktopSwtRuntimeConfig> config) {
-        this.config = config;
+    private DesktopSwtSupport() {
     }
 
     /**
      * Configures the user interface ({@code SwtLifecycle.run()}, {@code UiThread}...), before the {@code StartupEvent}
-     * observers : the tasks they queue for the user interface thread run once it started.
+     * observers : the tasks they queue for the user interface thread run once it started. The service stops the user
+     * interface after the {@code ShutdownEvent} observers, when the start fails before the user interface started : the
+     * queued tasks are rejected.
      *
+     * @param context the start context of the service
+     * @param beans the CDI container
+     * @param config the run time configuration of the extension
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
      * @param applicationName {@code quarkus.application.name}
      * @param applicationVersion {@code quarkus.application.version}
      */
-    public void configureUserInterface(ShutdownContext shutdown, LaunchMode launchMode,
-            boolean lifecycleObserversDisabled, String applicationName, String applicationVersion) {
-        DesktopSwtRuntimeConfig config = this.config.getValue();
-        SwtUi ui = Arc.container().instance(SwtUi.class).get();
+    public static void configureUserInterface(StartContext context, BeanContainer beans, DesktopSwtRuntimeConfig config,
+            LaunchMode launchMode, boolean lifecycleObserversDisabled, String applicationName,
+            String applicationVersion) {
+        SwtUi ui = beans.beanInstance(SwtUi.class);
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
         if (!enabled || launchMode == LaunchMode.TEST && lifecycleObserversDisabled) {
             LOGGER.debug("The user interface is disabled");
@@ -63,17 +63,25 @@ public class DesktopSwtRecorder {
         ui.configure(launchMode, mainRuns, config.exitOnLastShellClosed() && launchMode != LaunchMode.TEST,
                 config.applicationName().or(() -> Optional.ofNullable(applicationName)),
                 Optional.ofNullable(applicationVersion));
-        // when the start fails before stopUserInterfaceFirst : the queued tasks are rejected
-        shutdown.addShutdownTask(ui::stop);
+        // when the start fails before the user interface service : the queued tasks are rejected
+        context.onStop(ui::stop);
     }
 
     /**
-     * Ends the user interface when the application stops, before the {@code ShutdownEvent} observers : registered once
-     * the application started, after the task firing {@code ShutdownEvent} (the shutdown tasks run in the reverse order).
+     * Once the application started (after the {@code StartupEvent} observers) : the service ends the user interface when
+     * the application stops, before the {@code ShutdownEvent} observers, and in tests, runs it on a thread of the
+     * extension.
+     *
+     * @param context the start context of the service
+     * @param beans the CDI container
+     * @param runInTests whether the application has a user interface and runs in a test
      */
-    public void stopUserInterfaceFirst(ShutdownContext shutdown) {
-        SwtUi ui = Arc.container().instance(SwtUi.class).get();
-        shutdown.addShutdownTask(ui::stop);
+    public static void startUserInterface(StartContext context, BeanContainer beans, boolean runInTests) {
+        SwtUi ui = beans.beanInstance(SwtUi.class);
+        context.onStop(ui::stop);
+        if (runInTests) {
+            runUserInterfaceInTests(ui);
+        }
     }
 
     /**
@@ -82,12 +90,11 @@ public class DesktopSwtRecorder {
      * the main). Not on macOS, where the {@code Display} needs the first thread of the process : the user interface is
      * disabled there.
      */
-    public void runUserInterfaceInTests() {
+    private static void runUserInterfaceInTests(SwtUi ui) {
         if (ApplicationLifecycleManager.getCurrentApplication() != null) {
             LOGGER.debug("The main of the application runs the user interface");
             return;
         }
-        SwtUi ui = Arc.container().instance(SwtUi.class).get();
         if (!ui.isReady()) {
             // disabled (the default in tests), or already stopping
             return;
@@ -111,7 +118,7 @@ public class DesktopSwtRecorder {
      *
      * @param library the file name of the main native library of SWT ({@code swt-win32-4974r10.dll}...)
      */
-    public void useLibrariesNextToExecutable(String library) {
+    public static void useLibrariesNextToExecutable(String library) {
         if (System.getProperty(SWT_LIBRARY_PATH) != null) {
             return;
         }
