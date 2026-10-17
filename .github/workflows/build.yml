@@ -94,9 +94,9 @@ jobs:
         uses: quarkusio/install-quarkus-snapshots-action/cleanup@main
 
   native:
-    # No macOS here : the AWT and Swing native executables of macOS need Quarkus 4.0 or later (the quarkus-awt with macOS
-    # support of https://github.com/quarkusio/quarkus/pull/56979, not released yet) and GraalVM 25.1 or later. The SWT
-    # ones do not use quarkus-awt : the native-macos-swt job builds them
+    # No macOS here : the AWT and Swing native executables of macOS need Quarkus 4.0.0.Beta1 or later, whose quarkus-awt
+    # supports macOS, and GraalVM 25.1 or later. The SWT ones do not use quarkus-awt : the native-macos-swt job
+    # builds them
     # exact : the integration tests built with --exact-reachability-metadata, in the default configuration of the
     # extensions (they fail on the first lookup missing from the metadata)
     name: Native${{ matrix.exact && ' (exact)' || '' }} on ${{ matrix.os }}

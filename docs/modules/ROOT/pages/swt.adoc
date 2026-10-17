@@ -1436,9 +1436,9 @@ without the comparison with JVM mode (`-Dnative.surefire.skip`).
 
 The continuous integration runs them on Windows x64 and Linux, in JVM mode and as native executables, and on macOS in
 JVM mode and as native executables (a job of its own, also with exact reachability metadata, that builds the SWT
-modules alone: the AWT and Swing native executables of macOS need Quarkus 4.0, see xref:awt.adoc#macos[macOS]). Its
-native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not compare the rendering of the native
-executable with JVM mode.
+modules alone: the AWT and Swing native executables of macOS need Quarkus 4.0.0.Beta1 or later and GraalVM 25.1 or
+later, see xref:awt.adoc#macos[macOS]). Its native jobs skip the JVM mode tests (`-Dnative.surefire.skip`): it does not
+compare the rendering of the native executable with JVM mode.
 
 Not verified: macOS on Intel Macs, a Retina display and the dark appearance (every macOS run used a display at scale
 1, in the light appearance), the name of the application in the Dock as shown on screen (only as reported by
