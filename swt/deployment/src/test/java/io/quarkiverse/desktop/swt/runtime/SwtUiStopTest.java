@@ -23,7 +23,7 @@ import io.quarkus.runtime.LaunchMode;
 
 /**
  * The shutdown waits once for a blocked user interface thread : {@code SwtUi.stop()} is called twice when the
- * application started (before and after the {@code ShutdownEvent} observers, see {@code DesktopSwtRecorder}), and the
+ * application started (before and after the {@code ShutdownEvent} observers, see {@code DesktopSwtSupport}), and the
  * second call does not wait again. The user interface runs on the thread of the test : the first thread of the process
  * on macOS, where the tests run with {@code -XstartOnFirstThread}. Needs a display.
  */

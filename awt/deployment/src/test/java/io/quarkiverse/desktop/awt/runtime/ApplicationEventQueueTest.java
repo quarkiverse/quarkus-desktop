@@ -11,7 +11,7 @@ import java.net.URLClassLoader;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkiverse.desktop.awt.runtime.DesktopAwtRecorder.ApplicationEventQueue;
+import io.quarkiverse.desktop.awt.runtime.DesktopAwtSupport.ApplicationEventQueue;
 
 /**
  * The event queue that dispatches the events with the class loader of the running application (dev and test modes) :

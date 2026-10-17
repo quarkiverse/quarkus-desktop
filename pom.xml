@@ -29,12 +29,11 @@
     </scm>
 
     <properties>
-        <quarkus.version>3.40.1</quarkus.version>
-        <maven.compiler.release>17</maven.compiler.release>
-        <!-- The last SWT release that runs on Java 17 (SWT 3.133.0 and later need Java 21) : an application on Java 21 or
-             later can depend on a later SWT release. Not swt.version : SWT reads a system property of that name (the
-             version of its native libraries), which Maven passes to the tests -->
-        <version.swt>3.132.0</version.swt>
+        <quarkus.version>999-SNAPSHOT</quarkus.version>
+        <maven.compiler.release>21</maven.compiler.release>
+        <!-- An application can depend on a later SWT release. Not swt.version : SWT reads a system property of that name
+             (the version of its native libraries), which Maven passes to the tests -->
+        <version.swt>3.135.0</version.swt>
     </properties>
 
     <dependencyManagement>

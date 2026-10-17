@@ -11,7 +11,7 @@ import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.hosted.RuntimeResourceAccess;
 import org.graalvm.nativeimage.hosted.RuntimeSystemProperties;
 
-import io.quarkiverse.desktop.awt.runtime.DesktopAwtRecorder;
+import io.quarkiverse.desktop.awt.runtime.DesktopAwtSupport;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 
 /**
@@ -85,11 +85,11 @@ public final class DesktopAwtFeature implements Feature {
     private static void macos() {
         // The Metal shader library, read from java.home/lib by sun.java2d.metal.MTLGraphicsConfig : without it, Java2D
         // silently falls back to OpenGL. The one of the JDK running the builder, whose libraries GraalVM copies next to
-        // the executable (the library varies between JDK builds). Extracted at startup by DesktopAwtRecorder.
+        // the executable (the library varies between JDK builds). Extracted at startup by DesktopAwtSupport.
         Path shaders = Path.of(System.getProperty("java.home"), "lib", "shaders.metallib");
         if (Files.isRegularFile(shaders)) {
             try {
-                RuntimeResourceAccess.addResource(DesktopAwtFeature.class.getModule(), DesktopAwtRecorder.METAL_SHADERS,
+                RuntimeResourceAccess.addResource(DesktopAwtFeature.class.getModule(), DesktopAwtSupport.METAL_SHADERS,
                         Files.readAllBytes(shaders));
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

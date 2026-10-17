@@ -32,14 +32,14 @@ import io.quarkiverse.desktop.swt.RunOnUiThread;
 import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.SwtStartupEvent;
 import io.quarkiverse.desktop.swt.UiThreadExecutor;
-import io.quarkiverse.desktop.swt.runtime.DesktopSwtRecorder;
+import io.quarkiverse.desktop.swt.runtime.DesktopSwtRuntimeConfig;
+import io.quarkiverse.desktop.swt.runtime.DesktopSwtSupport;
 import io.quarkiverse.desktop.swt.runtime.RunOnUiThreadInterceptor;
 import io.quarkiverse.desktop.swt.runtime.SwtApplication;
 import io.quarkiverse.desktop.swt.runtime.SwtUi;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ArcConfig;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
-import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
@@ -50,18 +50,16 @@ import io.quarkus.arc.processor.BuildExtension;
 import io.quarkus.arc.processor.BuiltinScope;
 import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
+import io.quarkus.arc.runtime.BeanContainer;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
-import io.quarkus.deployment.annotations.ExecutionTime;
 import io.quarkus.deployment.annotations.Overridable;
-import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
-import io.quarkus.deployment.builditem.ApplicationStartBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.LaunchModeBuildItem;
 import io.quarkus.deployment.builditem.QuarkusApplicationClassBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
-import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.runtime.LaunchMode;
 
 /**
@@ -105,6 +103,18 @@ class DesktopSwtCdiProcessor {
     private static final List<DotName> FAULT_TOLERANCE_THREADS = List.of(TIMEOUT,
             DotName.createSimple("org.eclipse.microprofile.faulttolerance.Asynchronous"),
             DotName.createSimple("io.smallrye.faulttolerance.api.AsynchronousNonBlocking"));
+
+    /**
+     * The ArC service firing {@code StartupEvent} when it starts, and {@code ShutdownEvent} when it stops : a service
+     * started after it starts after the {@code StartupEvent} observers, and stops before the {@code ShutdownEvent} ones.
+     */
+    private static final String ARC_STARTUP_EVENT = "io.quarkus.arc.startup-event";
+
+    /**
+     * The ArC service shutting the CDI container down when it stops : a service that uses beans when it stops starts
+     * after it, and so stops before it.
+     */
+    private static final String ARC_SHUTDOWN = "io.quarkus.arc.shutdown-gateway";
 
     /**
      * The name of {@code SwtLifecycle} in the constant pool of a class calling it.
@@ -228,16 +238,24 @@ class DesktopSwtCdiProcessor {
 
     /**
      * Configures the user interface before the {@code StartupEvent} observers (a {@code ServiceStartBuildItem}), once the
-     * CDI container is initialized : they may queue tasks for the user interface thread.
+     * CDI container is initialized : they may queue tasks for the user interface thread. The service stops after the
+     * {@code ShutdownEvent} observers, and before the CDI container stops (it starts after the ArC service that shuts the
+     * container down).
      */
     @BuildStep
-    @Record(ExecutionTime.RUNTIME_INIT)
-    ServiceStartBuildItem configureUserInterface(DesktopSwtRecorder recorder, ShutdownContextBuildItem shutdown,
-            LaunchModeBuildItem launchMode, ArcConfig arcConfig, ApplicationInfoBuildItem applicationInfo,
-            BeanContainerBuildItem beanContainer) {
-        recorder.configureUserInterface(shutdown, launchMode.getLaunchMode(),
-                arcConfig.test().disableApplicationLifecycleObservers(), valueOf(applicationInfo.getName()),
-                valueOf(applicationInfo.getVersion()));
+    ServiceStartBuildItem configureUserInterface(ServiceRegistrar serviceRegistrar, LaunchModeBuildItem launchMode,
+            ArcConfig arcConfig, ApplicationInfoBuildItem applicationInfo) {
+        LaunchMode mode = launchMode.getLaunchMode();
+        boolean lifecycleObserversDisabled = arcConfig.test().disableApplicationLifecycleObservers();
+        String applicationName = valueOf(applicationInfo.getName());
+        String applicationVersion = valueOf(applicationInfo.getVersion());
+        serviceRegistrar
+                .forService("io.quarkiverse.desktop.swt.configure-user-interface")
+                .after(ARC_SHUTDOWN)
+                .require(BeanContainer.class)
+                .require(DesktopSwtRuntimeConfig.class)
+                .onStart((ctx, beans, config) -> DesktopSwtSupport.configureUserInterface(ctx, beans, config, mode,
+                        lifecycleObserversDisabled, applicationName, applicationVersion));
         return new ServiceStartBuildItem(DesktopSwtProcessor.FEATURE);
     }
 
@@ -249,22 +267,24 @@ class DesktopSwtCdiProcessor {
     }
 
     /**
-     * Once the application started ({@code ApplicationStartBuildItem} : after the {@code StartupEvent} observers) :
+     * Once the application started (after the {@code StartupEvent} observers : the service starts after the ArC service
+     * firing {@code StartupEvent}) :
      * <ul>
-     * <li>registers the task that ends the user interface when the application stops, after the task firing
-     * {@code ShutdownEvent} : the shutdown tasks run in the reverse order, the user interface stops before the
-     * {@code ShutdownEvent} observers, whatever stops the application (a signal, the end of a test...);</li>
+     * <li>ends the user interface when the application stops, before the {@code ShutdownEvent} observers (the service
+     * stops before the ArC service firing {@code ShutdownEvent}), whatever stops the application (a signal, the end of a
+     * test...);</li>
      * <li>in tests, where no main runs the user interface, runs it on a thread of the extension, when it is enabled.</li>
      * </ul>
      */
     @BuildStep
-    @Record(ExecutionTime.RUNTIME_INIT)
     void startUserInterface(Optional<SwtUiBuildItem> userInterface, LaunchModeBuildItem launchMode,
-            ApplicationStartBuildItem applicationStart, ShutdownContextBuildItem shutdown, DesktopSwtRecorder recorder) {
-        recorder.stopUserInterfaceFirst(shutdown);
-        if (userInterface.isPresent() && launchMode.getLaunchMode() == LaunchMode.TEST) {
-            recorder.runUserInterfaceInTests();
-        }
+            ServiceRegistrar serviceRegistrar) {
+        boolean runInTests = userInterface.isPresent() && launchMode.getLaunchMode() == LaunchMode.TEST;
+        serviceRegistrar
+                .forService("io.quarkiverse.desktop.swt.user-interface")
+                .after(ARC_STARTUP_EVENT)
+                .require(BeanContainer.class)
+                .onStart((ctx, beans) -> DesktopSwtSupport.startUserInterface(ctx, beans, runInTests));
     }
 
     // --------------------------------------------------------------------------------------------------- build checks
