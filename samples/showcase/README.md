@@ -19,10 +19,9 @@ This directory is a Maven project of its own, not a module of the extension buil
 - Windows arm64: JVM mode only (GraalVM has no native image builder there): `tools/Cycle.java <label> --jvm-only`, run
   with the `java` of an arm64 JDK 25 (the tools build and run with the JDK that runs them: an x64 JDK gets the x64 SWT
   jar, and runs it under the x64 emulation of Windows).
-- macOS native executables of the AWT and Swing variants: Quarkus 4.0 or later (until its release, a Quarkus
-  `999-SNAPSHOT` built from `main`, used with `-Dquarkus.platform.version=999-SNAPSHOT`) and GraalVM 25.1 or later (the
-  SWT variant does not need Quarkus 4.0). The Robot pages (`-Dshowcase.robot=true`) need the Screen Recording and
-  Accessibility permissions for the terminal.
+- macOS native executables of the AWT and Swing variants: Quarkus 4.0.0.Beta1 or later (with
+  `-Dquarkus.platform.version=4.0.0.Beta1`) and GraalVM 25.1 or later (the SWT variant does not need Quarkus 4). The
+  Robot pages (`-Dshowcase.robot=true`) need the Screen Recording and Accessibility permissions for the terminal.
 
 ## Run
 
