@@ -8,8 +8,7 @@ Quarkus extensions to build AWT, Swing and SWT desktop (GUI) applications, in JV
 executables.
 
 - AWT and Swing: Windows x64, Linux x64 and arm64, and macOS on Apple silicon (JVM mode only on Windows arm64). Native
-  executables for macOS need Quarkus 4.0 or later, whose quarkus-awt supports macOS
-  ([Enable quarkus-awt on macOS](https://github.com/quarkusio/quarkus/pull/56979), and GraalVM 25.1 or later.
+  executables for macOS need Quarkus 4.0.0.Beta1 or later, whose quarkus-awt supports macOS, and GraalVM 25.1 or later.
 - SWT: Windows x64, Linux x64 and arm64, and macOS on Apple silicon, in JVM mode and as native executables (on Windows
   arm64: JVM mode only). On macOS, JVM mode needs `-XstartOnFirstThread`.
 
@@ -260,7 +259,7 @@ AWT and Swing:
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with Quarkus 4.0 or later and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
+| macOS on Apple silicon | yes | yes, with Quarkus 4.0.0.Beta1 or later and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
 
 SWT:
 

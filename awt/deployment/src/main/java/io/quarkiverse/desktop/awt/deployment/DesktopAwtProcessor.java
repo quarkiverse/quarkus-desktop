@@ -137,8 +137,7 @@ class DesktopAwtProcessor {
 
     /**
      * The macOS substitutions of {@code io.quarkus:quarkus-awt} (Quarkus versions whose quarkus-awt supports macOS native
-     * executables : Quarkus 4.0 and later, https://github.com/quarkusio/quarkus/pull/56979 "Enable quarkus-awt on macOS")
-     * that force headless AWT. Absent from older versions : a name absent
+     * executables : Quarkus 4.0.0.Beta1 and later) that force headless AWT. Absent from older versions : a name absent
      * from the jar removes nothing. {@code Target_sun_awt_FontConfiguration_Mac} stays (the macOS font configuration
      * stubs every lookup, its minimal {@code fontconfig.properties} is enough for GUI applications), and
      * {@code Target_sun_awt_HeadlessToolkit} and {@code MacHeadless}, only used by the removed ones, are then inert.
@@ -170,9 +169,8 @@ class DesktopAwtProcessor {
             "io/quarkus/awt/runtime/Target_sun_awt_im_ExecutableInputMethodManager.class");
 
     static final String MAC_QUARKUS_TOO_OLD = "Quarkus Desktop needs a quarkus-awt with macOS support to build AWT and"
-            + " Swing applications natively on macOS, found quarkus-awt %s : use Quarkus 4.0 or later (not released yet:"
-            + " until then, a Quarkus 999-SNAPSHOT built from main, see https://github.com/quarkusio/quarkus/pull/56979),"
-            + " and GraalVM 25.1 or later on Apple silicon. JVM mode works with this version.";
+            + " Swing applications natively on macOS, found quarkus-awt %s : use Quarkus 4.0.0.Beta1 or later, and GraalVM"
+            + " 25.1 or later on Apple silicon. JVM mode works with this version.";
 
     /**
      * The libraries a macOS native executable using AWT loads from its directory : copied there by GraalVM 25.1 and later
