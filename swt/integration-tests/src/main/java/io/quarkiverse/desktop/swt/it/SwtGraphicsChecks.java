@@ -10,6 +10,7 @@ import java.util.Arrays;
 import java.util.zip.CRC32;
 
 import org.eclipse.swt.SWT;
+import org.eclipse.swt.SWTException;
 import org.eclipse.swt.graphics.Color;
 import org.eclipse.swt.graphics.Cursor;
 import org.eclipse.swt.graphics.Font;
@@ -557,7 +558,20 @@ final class SwtGraphicsChecks {
             for (Format format : formats) {
                 byte[] bytes = save(format.type(), format.source());
                 ImageLoader loader = new ImageLoader();
-                ImageData loaded = loader.load(new ByteArrayInputStream(bytes))[0];
+                ImageData loaded;
+                try {
+                    loaded = loader.load(new ByteArrayInputStream(bytes))[0];
+                } catch (SWTException e) {
+                    // on Linux, SWT decodes the images with GdkPixbuf : since GdkPixbuf 2.44 (Ubuntu 26.04), its glycin
+                    // TIFF loader does not support palette images (RGBPalette)
+                    if (gtk && e.code == SWT.ERROR_INVALID_IMAGE && format.type() == SWT.IMAGE_TIFF
+                            && !format.source().palette.isDirect) {
+                        text.append(format.name()).append(" bytes=").append(bytes.length).append(" crc=")
+                                .append(crc(bytes)).append(" unsupported by GdkPixbuf\n");
+                        continue;
+                    }
+                    throw e;
+                }
                 require(loaded.width == format.source().width && loaded.height == format.source().height,
                         format.name() + " size " + loaded.width + "x" + loaded.height);
                 int different = differentPixels(format.source(), loaded);
@@ -594,13 +608,24 @@ final class SwtGraphicsChecks {
             ByteArrayOutputStream animated = new ByteArrayOutputStream();
             animation.save(animated, SWT.IMAGE_GIF);
             ImageLoader frames = new ImageLoader();
-            frames.load(new ByteArrayInputStream(animated.toByteArray()));
-            // on Linux, SWT decodes the images with GdkPixbuf, which reads this animation as a static image (its first
-            // frame)
-            require(frames.data.length == (gtk ? 1 : 2)
-                    && (gtk || frames.repeatCount == 0 && frames.data[1].delayTime == 20),
-                    "animated GIF " + frames.data.length + " frames, repeat " + frames.repeatCount);
-            text.append("gif-animated bytes=").append(animated.size()).append(" frames=").append(frames.data.length)
+            int frameCount;
+            try {
+                frames.load(new ByteArrayInputStream(animated.toByteArray()));
+                // on Linux, SWT decodes the images with GdkPixbuf, which reads this animation as a static image (its
+                // first frame)
+                require(frames.data.length == (gtk ? 1 : 2)
+                        && (gtk || frames.repeatCount == 0 && frames.data[1].delayTime == 20),
+                        "animated GIF " + frames.data.length + " frames, repeat " + frames.repeatCount);
+                frameCount = frames.data.length;
+            } catch (SWTException e) {
+                // SWT writes the frames of 1 bit with an LZW minimum code size of 1 (GIF89a requires 2) : the glycin GIF
+                // loader of GdkPixbuf 2.44 (Ubuntu 26.04) rejects them, "image truncated"
+                if (!gtk || e.code != SWT.ERROR_INVALID_IMAGE) {
+                    throw e;
+                }
+                frameCount = 0;
+            }
+            text.append("gif-animated bytes=").append(animated.size()).append(" frames=").append(frameCount)
                     .append('\n');
 
             Image directImage = resources.add(new Image(display, direct));
@@ -658,7 +683,7 @@ final class SwtGraphicsChecks {
             });
             checks.writeImage("images", data);
             checks.writeText("images", text.toString());
-            return "formats=" + formats.length + " animated=" + frames.data.length + " systemImages=" + found + "/"
+            return "formats=" + formats.length + " animated=" + frameCount + " systemImages=" + found + "/"
                     + systemIds.length;
         }
     }
