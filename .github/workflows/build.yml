@@ -69,15 +69,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends libgtk-3-0t64
 
-      # Ubuntu 26.04 : GdkPixbuf (2.44) decodes the images with glycin, which runs its loaders in a bubblewrap sandbox.
-      # The AppArmor restriction of unprivileged user namespaces makes bubblewrap fail in a way that glycin does not
-      # recognize (it then does not fall back to unsandboxed loaders), and SWT gets no image : allow them
-      - name: Allow the image loader sandbox
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          bwrap --unshare-all --die-with-parent --ro-bind / / true && echo "bubblewrap sandbox available"
-
       # AWT, Swing and SWT tests need a display : a virtual X display on Linux
       - name: Build with Maven (virtual X display)
         if: startsWith(matrix.os, 'ubuntu')
@@ -134,15 +125,6 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev xvfb fonts-dejavu-core \
             libx11-6 libxext6 libxrender1 libxi6 libxtst6 libfreetype6 libfontconfig1 libasound2t64 libcups2t64 \
             libgtk-3-0t64
-
-      # Ubuntu 26.04 : GdkPixbuf (2.44) decodes the images with glycin, which runs its loaders in a bubblewrap sandbox.
-      # The AppArmor restriction of unprivileged user namespaces makes bubblewrap fail in a way that glycin does not
-      # recognize (it then does not fall back to unsandboxed loaders), and SWT gets no image : allow them
-      - name: Allow the image loader sandbox
-        if: startsWith(matrix.os, 'ubuntu')
-        run: |
-          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
-          bwrap --unshare-all --die-with-parent --ro-bind / / true && echo "bubblewrap sandbox available"
 
       - name: Build native executables and run the integration tests (virtual X display)
         if: startsWith(matrix.os, 'ubuntu')
