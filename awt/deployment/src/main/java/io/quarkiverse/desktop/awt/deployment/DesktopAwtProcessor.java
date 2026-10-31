@@ -31,12 +31,11 @@ import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.awt.deployment.DesktopTargetPlatformBuildItem.Platform;
 import io.quarkiverse.desktop.awt.runtime.DesktopAwtConfig;
-import io.quarkiverse.desktop.awt.runtime.DesktopAwtRecorder;
+import io.quarkiverse.desktop.awt.runtime.DesktopAwtSupport;
 import io.quarkiverse.desktop.awt.runtime.graal.DesktopAwtFeature;
 import io.quarkiverse.desktop.awt.runtime.graal.OverrideChecksFeature;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 import io.quarkiverse.desktop.awt.runtime.macos.ParkMainThreadEnabled;
-import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
@@ -46,12 +45,11 @@ import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
-import io.quarkus.deployment.annotations.ExecutionTime;
-import io.quarkus.deployment.annotations.Record;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
@@ -62,7 +60,6 @@ import io.quarkus.deployment.builditem.NativeImageFeatureBuildItem;
 import io.quarkus.deployment.builditem.QuarkusApplicationClassBuildItem;
 import io.quarkus.deployment.builditem.RemovedResourceBuildItem;
 import io.quarkus.deployment.builditem.ServiceStartBuildItem;
-import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessFieldBuildItem;
 import io.quarkus.deployment.builditem.nativeimage.JniRuntimeAccessMethodBuildItem;
@@ -553,9 +550,9 @@ class DesktopAwtProcessor {
                 AwtClassesAndResources.WINDOWS_RESOURCE_GLOBS,
                 AwtClassesAndResources.LINUX_RESOURCE_GLOBS,
                 AwtClassesAndResources.MAC_RESOURCE_GLOBS))));
-        // the files of the JDK that the recorder extracts into java.home at startup, absent when the JDK of the build has
+        // the files of the JDK that the extension extracts into java.home at startup, absent when the JDK of the build has
         // none (a JDK without Metal shaders) : not found, instead of a MissingResourceRegistrationError
-        globs.add(DesktopAwtRecorder.RESOURCES + "*");
+        globs.add(DesktopAwtSupport.RESOURCES + "*");
         lookups.produce(new ReachabilityLookupsBuildItem(types, List.of(platform.withPlatform(
                 AwtClassesAndResources.METHOD_LOOKUPS,
                 AwtClassesAndResources.WINDOWS_METHOD_LOOKUPS,
@@ -734,27 +731,28 @@ class DesktopAwtProcessor {
     }
 
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
-    @Record(ExecutionTime.RUNTIME_INIT)
     ServiceStartBuildItem runtimeHome(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config,
-            NativeConfig nativeConfig, DesktopAwtRecorder recorder,
+            NativeConfig nativeConfig, ServiceRegistrar serviceRegistrar,
             BuildProducer<GeneratedResourceBuildItem> generatedResources,
-            BuildProducer<NativeImageResourceBuildItem> resources,
-            BuildProducer<DesktopAwtRuntimeInitBuildItem> runtimeInit) {
+            BuildProducer<NativeImageResourceBuildItem> resources) {
         Path jdkHome = builderJdkHome(nativeConfig);
-        embed(jdkHome.resolve("lib").resolve("psfontj2d.properties"), DesktopAwtRecorder.POSTSCRIPT_FONTS,
+        embed(jdkHome.resolve("lib").resolve("psfontj2d.properties"), DesktopAwtSupport.POSTSCRIPT_FONTS,
                 generatedResources, resources);
         String fontConfiguration = null;
         if (platform.isWindows() && config.windows().fontConfiguration() == DesktopAwtConfig.FontConfiguration.JDK) {
             byte[] data = embed(jdkHome.resolve("lib").resolve("fontconfig.properties.src"),
-                    DesktopAwtRecorder.FONT_CONFIGURATION, generatedResources, resources);
+                    DesktopAwtSupport.FONT_CONFIGURATION, generatedResources, resources);
             if (data != null) {
                 fontConfiguration = "quarkus-desktop-awt-fonts-" + sha256(data).substring(0, 16);
             }
         }
-        // Before the application starts, so before any AWT class is used : the other steps that use AWT at startup
-        // consume DesktopAwtRuntimeInitBuildItem
-        recorder.initRuntimeHome(fontConfiguration, platform.isMac());
-        runtimeInit.produce(new DesktopAwtRuntimeInitBuildItem());
+        // Before the application starts (a ServiceStartBuildItem : before the StartupEvent observers), so before any AWT
+        // class is used : the other services that use AWT at startup start after this one
+        String fonts = fontConfiguration;
+        boolean metalShaders = platform.isMac();
+        serviceRegistrar
+                .forService(DesktopAwtServices.RUNTIME_HOME)
+                .onStart(ctx -> DesktopAwtSupport.initRuntimeHome(fonts, metalShaders));
         return new ServiceStartBuildItem(FEATURE);
     }
 
@@ -1147,16 +1145,18 @@ class DesktopAwtProcessor {
     /**
      * The AWT toolkit, its threads and windows outlive the application in dev mode (live reload) and in tests (several
      * applications in the same JVM) : dispose the windows when the application stops, after the {@code ShutdownEvent}
-     * observers (a {@code ServiceStartBuildItem} registers the task before the one firing {@code ShutdownEvent}, and
-     * shutdown tasks run in reverse order) and before the CDI container stops (the task is registered after the container
-     * is initialized). The test application of continuous testing only disposes the windows it opened : the other ones
-     * are those of the dev mode application.
+     * observers (a {@code ServiceStartBuildItem} : the service starts before the {@code StartupEvent} observers, and so
+     * stops after the {@code ShutdownEvent} ones) and before the CDI container stops (the service starts after the ArC
+     * service that shuts the container down). The test application of continuous testing only disposes the windows it
+     * opened : the other ones are those of the dev mode application.
      */
     @BuildStep(onlyIfNot = IsNormal.class)
-    @Record(ExecutionTime.RUNTIME_INIT)
-    ServiceStartBuildItem disposeWindowsOnShutdown(DesktopAwtRecorder recorder, ShutdownContextBuildItem shutdownContext,
-            LaunchModeBuildItem launchMode, BeanContainerBuildItem beanContainer) {
-        recorder.disposeWindowsOnShutdown(shutdownContext, launchMode.isAuxiliaryApplication());
+    ServiceStartBuildItem disposeWindowsOnShutdown(ServiceRegistrar serviceRegistrar, LaunchModeBuildItem launchMode) {
+        boolean auxiliary = launchMode.isAuxiliaryApplication();
+        serviceRegistrar
+                .forService(DesktopAwtServices.DISPOSE_WINDOWS)
+                .after(DesktopAwtServices.ARC_SHUTDOWN)
+                .onStart(ctx -> DesktopAwtSupport.disposeWindowsOnStop(ctx, auxiliary));
         return new ServiceStartBuildItem(FEATURE);
     }
 
@@ -1164,13 +1164,17 @@ class DesktopAwtProcessor {
      * The AWT event dispatch thread outlives the application in dev mode (live reload) and in tests (several
      * applications in the same JVM), with the context class loader of the first application : dispatch the events with
      * the class loader of the running application, so that the classes that Swing loads by name on the event dispatch
-     * thread (look and feels, editor kits...) are the application ones.
+     * thread (look and feels, editor kits...) are the application ones. Until the {@code ShutdownEvent} observers and the
+     * dispose of the windows ran : the service starts before them (a {@code ServiceStartBuildItem}, and
+     * {@code before()} the service disposing the windows), and so stops after them.
      */
     @BuildStep(onlyIfNot = IsNormal.class)
-    @Record(ExecutionTime.RUNTIME_INIT)
-    void applicationClassLoaderOnEventDispatchThread(DesktopAwtRecorder recorder,
-            ShutdownContextBuildItem shutdownContext) {
-        recorder.useApplicationClassLoaderOnEventDispatchThread(shutdownContext);
+    ServiceStartBuildItem applicationClassLoaderOnEventDispatchThread(ServiceRegistrar serviceRegistrar) {
+        serviceRegistrar
+                .forService(DesktopAwtServices.APPLICATION_EVENT_QUEUE)
+                .before(DesktopAwtServices.DISPOSE_WINDOWS)
+                .onStart(ctx -> DesktopAwtSupport.useApplicationClassLoaderOnEventDispatchThread(ctx));
+        return new ServiceStartBuildItem(FEATURE);
     }
 
     /**

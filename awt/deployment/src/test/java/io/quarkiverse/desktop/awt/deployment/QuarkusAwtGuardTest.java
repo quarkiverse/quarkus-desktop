@@ -1,7 +1,6 @@
 package io.quarkiverse.desktop.awt.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.IOException;
@@ -58,21 +57,22 @@ class QuarkusAwtGuardTest {
     Path directory;
 
     /**
-     * The quarkus-awt version of the build (3.40) : no macOS support.
+     * The quarkus-awt version of the build (Quarkus 4.0.0.Beta2) : with macOS support, every
+     * substitution is known, and the ones to remove are there.
      */
     @Test
     void quarkusAwtOfTheBuild() throws URISyntaxException, ClassNotFoundException {
         Path jar = Path.of(Class.forName("io.quarkus.awt.runtime.JDKSubstitutions", false, getClass().getClassLoader())
                 .getProtectionDomain().getCodeSource().getLocation().toURI());
-        ResolvedDependency quarkusAwt = dependency(jar, "3.40.0");
-        assertFalse(quarkusAwt.getContentTree().contains(DesktopAwtProcessor.QUARKUS_AWT_MAC_SENTINEL),
-                "a Quarkus version with macOS support : update the version of this test");
-        assertEquals(DesktopAwtProcessor.QUARKUS_AWT_WINDOWS_GUI_BLOCKERS,
-                DesktopAwtProcessor.expectedGuiBlockers(quarkusAwt));
+        ResolvedDependency quarkusAwt = dependency(jar, "4.0.0.Beta2");
+        assertTrue(quarkusAwt.getContentTree().contains(DesktopAwtProcessor.QUARKUS_AWT_MAC_SENTINEL),
+                "a Quarkus version without macOS support : update the version of this test");
+        List<String> expected = new ArrayList<>(DesktopAwtProcessor.QUARKUS_AWT_WINDOWS_GUI_BLOCKERS);
+        expected.addAll(DesktopAwtProcessor.QUARKUS_AWT_MAC_GUI_BLOCKERS);
+        assertEquals(expected, DesktopAwtProcessor.expectedGuiBlockers(quarkusAwt));
         assertEquals(List.of(), DesktopAwtProcessor.missingGuiBlockers(quarkusAwt));
         assertEquals(List.of(), DesktopAwtProcessor.unknownSubstitutions(quarkusAwt));
-        assertEquals(Optional.of(String.format(DesktopAwtProcessor.MAC_QUARKUS_TOO_OLD, "3.40.0")),
-                DesktopAwtProcessor.macUnsupportedMessage(quarkusAwt));
+        assertEquals(Optional.empty(), DesktopAwtProcessor.macUnsupportedMessage(quarkusAwt));
     }
 
     @Test

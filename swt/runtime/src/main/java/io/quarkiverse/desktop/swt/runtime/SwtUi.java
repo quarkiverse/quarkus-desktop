@@ -420,8 +420,8 @@ public class SwtUi implements SwtLifecycle {
 
     private static String hint(Throwable e) {
         return hint(e, System.getProperty("os.name", ""), ImageMode.current() == ImageMode.NATIVE_RUN,
-                System.getProperty(MAIN_THREAD_PARKED), System.getProperty(DesktopSwtRecorder.SWT_LIBRARY_PATH),
-                DesktopSwtRecorder.librariesNextToExecutable);
+                System.getProperty(MAIN_THREAD_PARKED), System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH),
+                DesktopSwtSupport.librariesNextToExecutable);
     }
 
     static String hint(Throwable e, String osName, boolean nativeExecutable, String mainThreadParked) {
@@ -909,7 +909,7 @@ public class SwtUi implements SwtLifecycle {
      * When the application stops, before the {@code ShutdownEvent} observers : ends the event loop and waits for the user
      * interface thread to dispose the {@code Display} (the shutdown of a signal, of dev mode or of a test runs on another
      * thread while the event loop runs). When the user interface did not start, it never will : the queued tasks are
-     * rejected. Called twice when the application started (see {@code DesktopSwtRecorder}) : it waits once, the second
+     * rejected. Called twice when the application started (see {@code DesktopSwtSupport}) : it waits once, the second
      * call does not wait again for a user interface thread that did not stop within the time-out.
      */
     void stop() {
