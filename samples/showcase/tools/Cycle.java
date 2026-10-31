@@ -48,7 +48,7 @@ import java.util.Properties;
  * ({@code $GRAALVM_HOME/bin/java tools/Cycle.java win1}), which also runs the JVM snapshots on GraalVM (the same JDK
  * build as the native executable).
  * <p>
- * macOS (GraalVM 25.1 or later, and Quarkus 4.0.0.Beta1 or later, such as the Quarkus 999-SNAPSHOT of pom.xml) : after
+ * macOS (GraalVM 25.1 or later, and Quarkus 4.0.0.Beta1 or later, such as the Quarkus 4.0.0.Beta2 of pom.xml) : after
  * the native build,
  * comparison/logs-&lt;label&gt;/native-artifacts.txt lists the libraries next to the executable, its linked libraries
  * ({@code otool -L}), its run paths and its signature ; the cycle stops when a library that AWT needs is missing (not

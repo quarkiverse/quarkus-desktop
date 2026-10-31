@@ -57,14 +57,14 @@ class QuarkusAwtGuardTest {
     Path directory;
 
     /**
-     * The quarkus-awt version of the build (Quarkus 4.0, 999-SNAPSHOT until its release) : with macOS support, every
+     * The quarkus-awt version of the build (Quarkus 4.0.0.Beta2) : with macOS support, every
      * substitution is known, and the ones to remove are there.
      */
     @Test
     void quarkusAwtOfTheBuild() throws URISyntaxException, ClassNotFoundException {
         Path jar = Path.of(Class.forName("io.quarkus.awt.runtime.JDKSubstitutions", false, getClass().getClassLoader())
                 .getProtectionDomain().getCodeSource().getLocation().toURI());
-        ResolvedDependency quarkusAwt = dependency(jar, "999-SNAPSHOT");
+        ResolvedDependency quarkusAwt = dependency(jar, "4.0.0.Beta2");
         assertTrue(quarkusAwt.getContentTree().contains(DesktopAwtProcessor.QUARKUS_AWT_MAC_SENTINEL),
                 "a Quarkus version without macOS support : update the version of this test");
         List<String> expected = new ArrayList<>(DesktopAwtProcessor.QUARKUS_AWT_WINDOWS_GUI_BLOCKERS);

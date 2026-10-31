@@ -29,7 +29,7 @@
     </scm>
 
     <properties>
-        <quarkus.version>999-SNAPSHOT</quarkus.version>
+        <quarkus.version>4.0.0.Beta2</quarkus.version>
         <maven.compiler.release>21</maven.compiler.release>
         <!-- An application can depend on a later SWT release. Not swt.version : SWT reads a system property of that name
              (the version of its native libraries), which Maven passes to the tests -->

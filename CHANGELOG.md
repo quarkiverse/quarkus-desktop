@@ -11,8 +11,8 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Quarkus 4: the extensions are built with Quarkus `999-SNAPSHOT` (Quarkus `main`, until a Quarkus 4.0 release has the
-  services API) and need Java 21 or later. Their build steps register services (`ServiceRegistrar`) instead of
+- Quarkus 4: the extensions are built with Quarkus 4.0.0.Beta2, the first Quarkus 4 release with the services API,
+  and need Java 21 or later. Their build steps register services (`ServiceRegistrar`) instead of
   recording bytecode: the run time code of the former recorders is in `DesktopAwtSupport`, `DesktopLifecycleSupport`,
   `DesktopSwingSupport` and `DesktopSwtSupport`.
 - Desktop SWT depends on SWT 3.135.0 (3.132.0 before, the last SWT release that runs on Java 17).
