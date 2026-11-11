@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -79,8 +80,19 @@ final class NativeApplicationImage {
             if (!Files.exists(file.getFile())) {
                 throw new PackagingException(file.getFile() + ", a file of the native executable, does not exist");
             }
+            String name = file.getFile().getFileName().toString();
             Path fileDirectory = file.getDirectory().isEmpty() ? directory : directory.resolve(file.getDirectory());
-            FileTrees.copy(file.getFile(), fileDirectory.resolve(file.getFile().getFileName().toString()));
+            if (context.os() == TargetOs.MACOS && fileDirectory.normalize().startsWith(directory)
+                    && Files.isRegularFile(file.getFile(), LinkOption.NOFOLLOW_LINKS) && !FileTrees.isMachO(file.getFile())) {
+                // codesign takes every file of Contents/MacOS for code, which has to be signed : a file that is not
+                // goes to Contents/Resources, and the executable finds it through a link
+                FileTrees.copy(file.getFile(), content.resolve(file.getDirectory()).resolve(name));
+                Path link = Files.createDirectories(fileDirectory).resolve(name);
+                Files.deleteIfExists(link);
+                Files.createSymbolicLink(link, Path.of(macosResourceLink(file.getDirectory(), name)));
+            } else {
+                FileTrees.copy(file.getFile(), fileDirectory.resolve(name));
+            }
         }
         if (context.os() == TargetOs.WINDOWS) {
             launcher = renameWindowsExecutable(directory, executable.getFileName().toString(), launcher);
@@ -139,6 +151,21 @@ final class NativeApplicationImage {
             Files.write(library.getKey(), library.getValue());
         }
         return launcher;
+    }
+
+    /**
+     * The target of the link that a file of the native executable that is not code has in the {@code Contents/MacOS}
+     * directory of a bundle, to its copy in {@code Contents/Resources} : relative to the directory of the link, with
+     * {@code /} separators.
+     *
+     * @param directory the directory of the file, relative to {@code Contents/MacOS}, with {@code /} separators :
+     *        empty for {@code Contents/MacOS}
+     * @param fileName the file name of the file
+     */
+    static String macosResourceLink(String directory, String fileName) {
+        Path link = Path.of("Contents", "MacOS").resolve(directory).resolve(fileName).normalize();
+        Path resource = Path.of("Contents", "Resources").resolve(directory).resolve(fileName).normalize();
+        return link.getParent().relativize(resource).toString().replace('\\', '/');
     }
 
     /**

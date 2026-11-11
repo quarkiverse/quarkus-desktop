@@ -2,7 +2,11 @@ package io.quarkiverse.desktop.packaging.deployment;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -49,13 +53,9 @@ public final class Tools {
      * @param locations where the installer of the tool puts it, when that is not on the {@code PATH}
      */
     public Optional<Path> find(String name, Path... locations) {
-        String path = configured.get(name);
-        if (path != null && !path.isBlank()) {
-            Path tool = Path.of(path.trim());
-            if (!Files.isRegularFile(tool)) {
-                throw new PackagingException("quarkus.desktop.packaging.tools." + name + " : " + tool + " not found");
-            }
-            return Optional.of(tool);
+        Optional<Path> tool = configured(name);
+        if (tool.isPresent()) {
+            return tool;
         }
         Optional<Path> onPath = onPath(name);
         if (onPath.isPresent()) {
@@ -67,6 +67,24 @@ public final class Tools {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * The path of a tool in the configuration ({@code quarkus.desktop.packaging.tools.<name>}), if any.
+     *
+     * @param name the name of the tool, without extension
+     * @throws PackagingException when the configured file does not exist
+     */
+    public Optional<Path> configured(String name) {
+        String path = configured.get(name);
+        if (path == null || path.isBlank()) {
+            return Optional.empty();
+        }
+        Path tool = Path.of(path.trim());
+        if (!Files.isRegularFile(tool)) {
+            throw new PackagingException("quarkus.desktop.packaging.tools." + name + " : " + tool + " not found");
+        }
+        return Optional.of(tool);
     }
 
     /**
@@ -129,7 +147,9 @@ public final class Tools {
             boolean confidential) {
         LOGGER.debugf("Running %s%s", confidential ? command.get(0) + " (arguments not logged)" : command,
                 directory == null ? "" : " in " + directory);
-        ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
+        ProcessBuilder builder = new ProcessBuilder(TargetOs.host() == TargetOs.WINDOWS
+                ? command.stream().map(Tools::windowsArgument).toList()
+                : command).redirectErrorStream(true);
         if (directory != null) {
             builder.directory(directory.toFile());
         }
@@ -137,8 +157,7 @@ public final class Tools {
         try {
             Process process = builder.start();
             process.getOutputStream().close();
-            // the tools write in the encoding of the console
-            String output = new String(process.getInputStream().readAllBytes(), Charset.defaultCharset());
+            String output = decode(process.getInputStream().readAllBytes(), nativeEncoding());
             int exitCode = process.waitFor();
             LOGGER.debugf("%s exited with %d : %s", command.get(0), exitCode, output);
             return new Result(exitCode, output);
@@ -151,6 +170,56 @@ public final class Tools {
     }
 
     /**
+     * An argument escaped for the parsing of the command line by the C runtime of Windows : {@code ProcessBuilder}
+     * quotes an argument that has a space, but not the double quotes inside it, which would end the argument there.
+     * A double quote gets a backslash, and the backslashes before it are doubled.
+     */
+    static String windowsArgument(String argument) {
+        if (argument.indexOf('"') < 0) {
+            return argument;
+        }
+        StringBuilder escaped = new StringBuilder();
+        int backslashes = 0;
+        for (int i = 0; i < argument.length(); i++) {
+            char c = argument.charAt(i);
+            if (c == '\\') {
+                backslashes++;
+                continue;
+            }
+            escaped.append("\\".repeat(c == '"' ? 2 * backslashes + 1 : backslashes)).append(c);
+            backslashes = 0;
+        }
+        // the backslashes at the end stay as they are : ProcessBuilder doubles the last one when it quotes the argument
+        return escaped.append("\\".repeat(backslashes)).toString();
+    }
+
+    /**
+     * The text of the output of a tool : UTF-8 when the bytes are valid UTF-8 (the tools of Linux and macOS, ASCII),
+     * the given encoding otherwise (on Windows, the tools write in the ANSI code page).
+     */
+    static String decode(byte[] bytes, Charset fallback) {
+        try {
+            return StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+        } catch (CharacterCodingException e) {
+            return new String(bytes, fallback);
+        }
+    }
+
+    /**
+     * The encoding of the operating system ({@code native.encoding}) : the ANSI code page on Windows, which
+     * {@code Charset.defaultCharset()} is not since Java 18 (UTF-8).
+     */
+    private static Charset nativeEncoding() {
+        try {
+            return Charset.forName(System.getProperty("native.encoding", ""));
+        } catch (IllegalArgumentException e) {
+            // no such property, or an encoding that this JVM does not have
+            return Charset.defaultCharset();
+        }
+    }
+
+    /**
      * Runs a tool that has to succeed.
      *
      * @throws PackagingException when the exit code of the tool is not zero, with its output
@@ -158,10 +227,17 @@ public final class Tools {
     public static Result exec(Path directory, Map<String, String> environment, List<String> command) {
         Result result = run(directory, environment, command);
         if (!result.succeeded()) {
-            throw new PackagingException(command.get(0) + " failed with exit code " + result.exitCode() + " (" + String
-                    .join(" ", command) + ") :\n" + result.output().strip());
+            throw failure(command, result);
         }
         return result;
+    }
+
+    /**
+     * The failure of a tool : its command, its exit code and its output.
+     */
+    public static PackagingException failure(List<String> command, Result result) {
+        return new PackagingException(command.get(0) + " failed with exit code " + result.exitCode() + " (" + String
+                .join(" ", command) + ") :\n" + result.output().strip());
     }
 
     /**

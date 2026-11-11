@@ -8,7 +8,9 @@ import io.quarkus.builder.item.MultiBuildItem;
 /**
  * A file that the native executable of the application needs next to it : a native library that the executable loads
  * from its directory, typically. The Desktop Packaging extension copies it into the application image, in the directory
- * of the executable.
+ * of the executable. On macOS, where that directory ({@code Contents/MacOS}) is for code only, a file that is not code
+ * (not a Mach-O file) goes to the same path in {@code Contents/Resources}, with a symbolic link to it next to the
+ * executable.
  * <p>
  * The build steps that write files next to the native executable (after the native build, with a
  * {@code NativeImageBuildItem} parameter) produce this build item, or at least declare that they do : the packages are

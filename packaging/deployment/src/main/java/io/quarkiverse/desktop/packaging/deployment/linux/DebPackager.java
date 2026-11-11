@@ -133,20 +133,20 @@ public final class DebPackager implements Packager {
         }
         command.addAll(binaries);
         Tools.Result result = Tools.run(source, Map.of(), command);
-        List<String> depends = result.succeeded() ? parseShlibDepends(result.output()) : null;
-        if (depends == null) {
+        if (!result.succeeded()) {
             LOGGER.warnf("dpkg-shlibdeps did not find the dependencies of the Debian package (list them in"
                     + " quarkus.desktop.packaging.linux.deb.depends) :%n%s", result.output().strip());
             return List.of();
         }
-        return depends;
+        return parseShlibDepends(result.output());
     }
 
     /**
      * The dependencies in the output of {@code dpkg-shlibdeps -O} : the {@code shlibs:Depends} variable, among the
      * warnings.
      *
-     * @return {@code null} when the output has no such variable
+     * @return the dependencies, none when the output has no such variable : {@code dpkg-shlibdeps} writes none when the
+     *         files are linked with no shared library (statically linked executables)
      */
     static List<String> parseShlibDepends(String output) {
         for (String line : output.split("\\R")) {
@@ -160,6 +160,6 @@ public final class DebPackager implements Packager {
                 return depends;
             }
         }
-        return null;
+        return List.of();
     }
 }

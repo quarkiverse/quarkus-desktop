@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -91,6 +92,49 @@ class PeImportsTest {
         assertTrue(PeImports.rename(library(0x200), "app-runner.exe", "Éditeur.exe").isEmpty());
         // the shorter name still fits
         assertTrue(PeImports.rename(library(100), "app-runner.exe", "Editor.exe").isPresent());
+    }
+
+    /**
+     * The offset of the PE header near the largest int : not a PE file, rather than an exception.
+     */
+    @Test
+    void aHeaderBeyondTheEndOfTheFile() {
+        byte[] file = new byte[0x400];
+        ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN).putShort(0, (short) 0x5a4d).putInt(0x3c, 0x7ffffff0);
+        assertEquals(List.of(), PeImports.names(file));
+        assertFalse(PeImports.unsigned(file));
+    }
+
+    /**
+     * A section whose bytes pass the end of the file, or whose offset overflows an int, has no room for a longer
+     * name.
+     */
+    @Test
+    void aSectionBeyondTheEndOfTheFile() {
+        String name = "Quarkus Desktop Showcase.exe";
+        // more bytes than the file has
+        byte[] library = library(0x100);
+        ByteBuffer.wrap(library).order(ByteOrder.LITTLE_ENDIAN).putInt(SECTION_HEADER + 16, 0x1000);
+        assertEquals(List.of("KERNEL32.dll", "app-runner.exe"), PeImports.names(library));
+        assertTrue(PeImports.rename(library, "app-runner.exe", name).isEmpty());
+        // a second section, after a full one, at an offset near the largest int or negative
+        for (int rawPointer : new int[] { 0x7ffffff0, 0xffffff00 }) {
+            byte[] sections = library(100);
+            ByteBuffer.wrap(sections).order(ByteOrder.LITTLE_ENDIAN).putShort(0x46, (short) 2)
+                    .putInt(SECTION_HEADER + 40 + 8, 100).putInt(SECTION_HEADER + 40 + 12, 0x2000)
+                    .putInt(SECTION_HEADER + 40 + 16, 0x1000).putInt(SECTION_HEADER + 40 + 20, rawPointer);
+            assertTrue(PeImports.rename(sections, "app-runner.exe", name).isEmpty());
+        }
+    }
+
+    /**
+     * A file that ends in an imported name, without its terminating zero : the name is not imported.
+     */
+    @Test
+    void aTruncatedName() {
+        byte[] library = Arrays.copyOf(library(0x200), SECTION_DATA + 80 + "app-runner.exe".length());
+        assertEquals(List.of("KERNEL32.dll"), PeImports.names(library));
+        assertArrayEquals(library, PeImports.rename(library, "app-runner.exe", "Editor.exe").orElseThrow());
     }
 
     /**

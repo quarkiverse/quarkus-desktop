@@ -3,8 +3,10 @@ package io.quarkiverse.desktop.packaging.deployment.linux;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
@@ -31,6 +33,12 @@ public final class AppImagePackager implements Packager {
                         + ".AppImage from https://github.com/AppImage/appimagetool/releases, make it executable and"
                         + " put it on the PATH as appimagetool (or set quarkus.desktop.packaging.tools.appimagetool to"
                         + " its path)"));
+        Optional<Path> runtimeFile = context.config().linux().appimage().runtimeFile()
+                .map(context.projectDirectory()::resolve).map(Path::toAbsolutePath);
+        if (runtimeFile.isPresent() && !Files.isRegularFile(runtimeFile.get())) {
+            throw new PackagingException("quarkus.desktop.packaging.linux.appimage.runtime-file : " + runtimeFile.get()
+                    + " not found");
+        }
         AppInfo app = context.app();
         String name = app.packageName();
         Path work = context.workDirectory("appimage");
@@ -51,11 +59,35 @@ public final class AppImagePackager implements Packager {
         FileTrees.normalizePermissions(appDir);
 
         Path appImage = context.output(app.fileName() + "-" + app.version() + "-" + arch + ".AppImage");
-        // appimagetool is an AppImage itself : it extracts itself where FUSE is missing (containers)
-        Tools.exec(work, Map.of("ARCH", arch, "APPIMAGE_EXTRACT_AND_RUN", "1"),
-                List.of(appimagetool.toString(), "--no-appstream", appDir.toString(), appImage.toString()));
+        Path tmp = Files.createDirectories(work.resolve("tmp"));
+        Tools.exec(work, environment(arch, app.version(), tmp), command(appimagetool, runtimeFile, appDir, appImage));
         FileTrees.executable(appImage);
         return appImage;
+    }
+
+    /**
+     * The environment of {@code appimagetool} : the architecture and the version of the AppImage (rather than a
+     * {@code VERSION} variable of the build), and its extraction where FUSE is missing (containers), as it is an
+     * AppImage itself. It extracts itself in a temporary directory of the build : in {@code /tmp}, two builds would
+     * share the directory of the same {@code appimagetool}, which the first one to end deletes.
+     *
+     * @param tmp the temporary directory of {@code appimagetool}
+     */
+    static Map<String, String> environment(String arch, String version, Path tmp) {
+        return Map.of("ARCH", arch, "VERSION", version, "APPIMAGE_EXTRACT_AND_RUN", "1", "TMPDIR", tmp.toString());
+    }
+
+    /**
+     * The command of {@code appimagetool}.
+     *
+     * @param runtimeFile the runtime of the AppImage, or empty for {@code appimagetool} to download the latest one
+     */
+    static List<String> command(Path appimagetool, Optional<Path> runtimeFile, Path appDir, Path appImage) {
+        List<String> command = new ArrayList<>(List.of(appimagetool.toString(), "--no-appstream"));
+        runtimeFile.ifPresent(runtime -> command.addAll(List.of("--runtime-file", runtime.toString())));
+        command.add(appDir.toString());
+        command.add(appImage.toString());
+        return command;
     }
 
     /**

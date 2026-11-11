@@ -10,6 +10,7 @@ import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
+import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.Xml;
 
 /**
@@ -32,7 +33,10 @@ final class LinuxDesktop {
         entry.append("[Desktop Entry]\n");
         entry.append("Type=Application\n");
         entry.append("Name=").append(value(app.name())).append('\n');
-        entry.append("Comment=").append(value(app.description())).append('\n');
+        // a comment that repeats the name is redundant (the description defaults to the name)
+        if (!value(app.description()).equalsIgnoreCase(value(app.name()))) {
+            entry.append("Comment=").append(value(app.description())).append('\n');
+        }
         entry.append("Exec=").append(exec).append('\n');
         entry.append("Icon=").append(icon).append('\n');
         entry.append("Terminal=false\n");
@@ -64,8 +68,29 @@ final class LinuxDesktop {
      * The directory where the Debian and RPM packages install the application : {@code /opt/acme-editor}.
      */
     static String installPath(PackagingContext context) {
-        String directory = context.config().linux().installDirectory().replaceAll("/+$", "");
-        return (directory.startsWith("/") ? directory : "/" + directory) + "/" + context.app().packageName();
+        return installPath(context.config().linux().installDirectory(), context.app().packageName());
+    }
+
+    /**
+     * The directory where the Debian and RPM packages install the application : the installation directory of the
+     * configuration followed by the package name. The desktop entry, the spec file and the tree of the package have it
+     * as it is : its names have none of the characters that they would have to quote.
+     *
+     * @param directory the installation directory ({@code quarkus.desktop.packaging.linux.install-directory})
+     * @throws PackagingException when the directory is {@code /}, or when one of its names is {@code .}, {@code ..}
+     *         or has other characters than letters, digits, dots, dashes, underscores and plus signs
+     */
+    static String installPath(String directory, String packageName) {
+        String trimmed = directory.strip().replaceAll("/+$", "");
+        String path = trimmed.startsWith("/") ? trimmed : "/" + trimmed;
+        for (String element : path.substring(1).split("/", -1)) {
+            if (!element.matches("[A-Za-z0-9._+-]+") || element.equals(".") || element.equals("..")) {
+                throw new PackagingException("quarkus.desktop.packaging.linux.install-directory=" + directory + " : the"
+                        + " installation directory is an absolute directory other than /, such as /opt, whose names"
+                        + " have letters, digits, dots, dashes, underscores and plus signs");
+            }
+        }
+        return path + "/" + packageName;
     }
 
     /**
@@ -87,7 +112,9 @@ final class LinuxDesktop {
     }
 
     /**
-     * The AppStream metadata of the application, which the software centers show.
+     * The AppStream metadata of the application, installed in {@code share/metainfo} for the tools that read the
+     * metadata of the installed applications. It has no release : a release needs a date, which the build does not
+     * know.
      *
      * @param id the identifier of the application
      * @param desktopEntry the file name of its desktop entry
@@ -100,13 +127,14 @@ final class LinuxDesktop {
         xml.append("  <name>").append(Xml.escape(app.name())).append("</name>\n");
         xml.append("  <summary>").append(Xml.escape(app.description())).append("</summary>\n");
         xml.append("  <metadata_license>CC0-1.0</metadata_license>\n");
-        xml.append("  <developer_name>").append(Xml.escape(app.vendor())).append("</developer_name>\n");
+        // the developer is identified by the domain of the application ID
+        String developer = id.contains(".") ? id.substring(0, id.lastIndexOf('.')) : id;
+        xml.append("  <developer id=\"").append(Xml.escape(developer)).append("\">\n    <name>")
+                .append(Xml.escape(app.vendor())).append("</name>\n  </developer>\n");
         xml.append("  <description>\n    <p>").append(Xml.escape(app.description())).append("</p>\n  </description>\n");
         app.homepage().ifPresent(homepage -> xml.append("  <url type=\"homepage\">").append(Xml.escape(homepage))
                 .append("</url>\n"));
         xml.append("  <launchable type=\"desktop-id\">").append(Xml.escape(desktopEntry)).append("</launchable>\n");
-        xml.append("  <releases>\n    <release version=\"").append(Xml.escape(app.version())).append("\" />\n")
-                .append("  </releases>\n");
         xml.append("</component>\n");
         return xml.toString();
     }

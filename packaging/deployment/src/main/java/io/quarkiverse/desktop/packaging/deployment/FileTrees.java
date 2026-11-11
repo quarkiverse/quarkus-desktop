@@ -25,28 +25,31 @@ public final class FileTrees {
     }
 
     /**
-     * Copies a file or a directory and its content, with the permissions and the symbolic links.
+     * Copies a file or a directory and its content, with the permissions : a source that is a symbolic link is copied
+     * as the file or the directory that it links to (a license file linked to the one of the repository), the symbolic
+     * links inside a directory are copied as links.
      */
     public static void copy(Path source, Path target) throws IOException {
-        if (!Files.isDirectory(source, LinkOption.NOFOLLOW_LINKS)) {
+        Path from = Files.isSymbolicLink(source) ? source.toRealPath() : source;
+        if (!Files.isDirectory(from, LinkOption.NOFOLLOW_LINKS)) {
             if (target.getParent() != null) {
                 Files.createDirectories(target.getParent());
             }
-            Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES,
+            Files.copy(from, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES,
                     LinkOption.NOFOLLOW_LINKS);
             return;
         }
-        Files.walkFileTree(source, new SimpleFileVisitor<>() {
+        Files.walkFileTree(from, new SimpleFileVisitor<>() {
 
             @Override
             public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
-                Files.createDirectories(target.resolve(source.relativize(directory).toString()));
+                Files.createDirectories(target.resolve(from.relativize(directory).toString()));
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
-                Files.copy(file, target.resolve(source.relativize(file).toString()), StandardCopyOption.REPLACE_EXISTING,
+                Files.copy(file, target.resolve(from.relativize(file).toString()), StandardCopyOption.REPLACE_EXISTING,
                         StandardCopyOption.COPY_ATTRIBUTES, LinkOption.NOFOLLOW_LINKS);
                 return FileVisitResult.CONTINUE;
             }

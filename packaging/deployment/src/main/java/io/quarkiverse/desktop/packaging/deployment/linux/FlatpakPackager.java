@@ -68,20 +68,21 @@ public final class FlatpakPackager implements Packager {
     }
 
     /**
-     * The identifier of the application as a Flatpak application ID : at least three elements, and no dash but in the
-     * last one.
+     * The identifier of the application as a Flatpak application ID : at least three elements, no element that starts
+     * with a digit, and no dash but in the last one.
      */
     static String applicationId(AppInfo app) {
         String id = app.identifier();
         String[] elements = id.split("\\.");
         boolean valid = elements.length >= 3 && id.length() <= 255;
-        for (int i = 0; i < elements.length - 1; i++) {
-            valid &= !elements[i].contains("-");
+        for (int i = 0; i < elements.length; i++) {
+            valid &= !elements[i].matches("\\d.*") && (i == elements.length - 1 || !elements[i].contains("-"));
         }
         if (!valid) {
             throw new PackagingException("quarkus.desktop.packaging.identifier=" + id + " is not a Flatpak application"
                     + " ID : a reverse domain name of at least three elements, such as org.acme.Editor, with dashes"
-                    + " in the last element only");
+                    + " in the last element only, and no element that starts with a digit (org._7zip.Editor for"
+                    + " 7zip.org)");
         }
         return id;
     }

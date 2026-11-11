@@ -36,6 +36,10 @@ public final class RpmPackager implements Packager {
         Path work = context.workDirectory("rpm");
         Path root = work.resolve("root");
         LinuxDesktop.stage(context, image, root);
+        if (app.licenseFile().isPresent()) {
+            FileTrees.copy(app.licenseFile().get(), root.resolve("usr/share/licenses").resolve(app.packageName())
+                    .resolve("LICENSE"));
+        }
         FileTrees.normalizePermissions(root);
         String installPath = LinuxDesktop.installPath(context);
 
@@ -51,8 +55,7 @@ public final class RpmPackager implements Packager {
         Path spec = FileTrees.write(work.resolve(app.packageName() + ".spec"),
                 spec(app, context.config().linux(), root, installPath, new ArrayList<>(libraries)));
         Path top = work.resolve("rpmbuild");
-        Tools.exec(work, Map.of(), List.of(rpmbuild.toString(), "-bb", "--define", "_topdir " + top, "--target",
-                context.arch().gnu(), spec.toString()));
+        Tools.exec(work, Map.of(), command(rpmbuild, top, context.arch(), spec));
 
         Path built;
         try (Stream<Path> files = Files.walk(top.resolve("RPMS"))) {
@@ -61,11 +64,26 @@ public final class RpmPackager implements Packager {
         }
         Path rpm = context.output(fileName(app, context.config().linux(), context.arch()));
         Files.move(built, rpm, StandardCopyOption.REPLACE_EXISTING);
+        // the copy of the tree in the build root, which the %clean stage of rpmbuild no longer deletes
+        FileTrees.delete(top);
         return rpm;
     }
 
     static String fileName(AppInfo app, DesktopPackagingConfig.Linux config, Arch arch) {
         return app.packageName() + "-" + app.linuxVersion() + "-" + config.release() + "." + arch.gnu() + ".rpm";
+    }
+
+    /**
+     * The command that builds the package, without its {@code %clean} stage : the default one of {@code rpmbuild}
+     * (before 4.20) removes the build root, under {@code target/packaging}, with a shell command that does not quote
+     * its path. A {@code &}, {@code ;} or {@code |} in the path would make it remove another directory : the beginning
+     * of the path.
+     *
+     * @param top the directory of the build of {@code rpmbuild} ({@code _topdir})
+     */
+    static List<String> command(Path rpmbuild, Path top, Arch arch, Path spec) {
+        return List.of(rpmbuild.toString(), "-bb", "--noclean", "--define", "_topdir " + top, "--target", arch.gnu(),
+                spec.toString());
     }
 
     /**
@@ -112,12 +130,21 @@ public final class RpmPackager implements Packager {
         spec.append("mkdir -p \"%{buildroot}\"\n");
         spec.append("cp -a \"").append(root).append("/.\" \"%{buildroot}/\"\n");
         spec.append('\n');
+        // a %clean stage that does nothing, also when rpmbuild runs the spec file without --noclean (see command) : an
+        // empty one would not replace the default one
+        spec.append("%clean\n");
+        spec.append(":\n");
+        spec.append('\n');
         spec.append("%files\n");
         spec.append("%defattr(-,root,root,-)\n");
         spec.append(installPath).append('\n');
         spec.append("/usr/bin/").append(name).append('\n');
         spec.append("/usr/share/applications/").append(name).append(".desktop\n");
         spec.append("/usr/share/icons/hicolor/*/apps/").append(name).append(".png\n");
+        if (app.licenseFile().isPresent()) {
+            spec.append("%dir /usr/share/licenses/").append(name).append('\n');
+            spec.append("%license /usr/share/licenses/").append(name).append("/LICENSE\n");
+        }
         return spec.toString();
     }
 

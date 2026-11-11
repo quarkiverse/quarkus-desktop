@@ -25,14 +25,26 @@ public enum Arch {
 
     /**
      * The architecture of the JVM of the build.
+     *
+     * @throws PackagingException for an architecture other than x64 and arm64
      */
     public static Arch host() {
         return of(System.getProperty("os.arch", ""));
     }
 
+    /**
+     * The architecture of a value of {@code os.arch}.
+     *
+     * @throws PackagingException for an architecture other than x64 and arm64
+     */
     static Arch of(String osArch) {
-        String arch = osArch.toLowerCase(Locale.ROOT);
-        return arch.equals("aarch64") || arch.equals("arm64") ? ARM64 : X64;
+        return switch (osArch.toLowerCase(Locale.ROOT)) {
+            case "amd64", "x86_64" -> X64;
+            case "aarch64", "arm64" -> ARM64;
+            default -> throw new PackagingException("The packages are built for x64 and arm64, not for " + osArch
+                    + " : build them on an x64 or arm64 machine, or keep only the directory format in"
+                    + " quarkus.desktop.packaging.formats");
+        };
     }
 
     /**

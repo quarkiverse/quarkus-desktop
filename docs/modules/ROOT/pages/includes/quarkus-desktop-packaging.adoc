@@ -59,7 +59,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the application bundle on macOS. Defaults to `quarkus.application.name`.
+The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the application bundle on macOS. Defaults to `quarkus.application.name`. It names the files of the application on Windows and macOS : it has none of `++\++ / : ++*++ ? " < > ++\|++ % ;` on Windows, none of `/ " %` on macOS, and no control characters.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -80,7 +80,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The version of the application. Defaults to `quarkus.application.version`. The formats that need numbers (MSI, MSIX, macOS) take its leading numbers : `1.2.3-SNAPSHOT` is `1.2.3` for them. Windows compares them to upgrade the application, up to a limit : 255, 255 and 65535 for the three numbers of an MSI package, 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of `2025.1.0`.
+The version of the application. Defaults to `quarkus.application.version`. The formats that need numbers (MSI, MSIX, macOS) take its leading numbers, without the `v` of a tag : `1.2.3-SNAPSHOT` and `v1.2.3` are `1.2.3` for them. Windows compares them to upgrade the application, up to a limit : 255, 255 and 65535 for the three numbers of an MSI package, 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of `2025.1.0`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -101,7 +101,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identifier of the application, a reverse domain name such as `org.acme.editor` : the bundle identifier on macOS, the application ID of Flatpak, the identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the name of the application.
+The identifier of the application, a reverse domain name such as `org.acme.editor` : the bundle identifier on macOS, the application ID of Flatpak (at least three elements, none of which starts with a digit), the identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the name of the application.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -206,7 +206,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The license of the application, as a text file : shown by the Windows setup program and by the macOS installer package, installed with the Debian package.
+The license of the application, as a text file : shown by the Windows setup program and by the macOS installer package, installed with the Debian and RPM packages.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -248,7 +248,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-A directory of files to add to the application image, next to the executable : documents, data files. Defaults to `src/main/packaging/content` when the directory exists.
+A directory of files to add to the application image : documents, data files. They are next to the executable, in `Contents/Resources` on macOS, and at the root of the image in JVM mode on Linux, where the launcher is in the `bin` directory. Defaults to `src/main/packaging/content` when the directory exists.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -311,7 +311,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. In JVM mode, `jpackage` gives them to its launcher.
+Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. Native sources (`quarkus.native.sources-only=true`) do not get them : they are linked from a file of the build directory. In JVM mode, `jpackage` gives them to its launcher.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -689,7 +689,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The category of the application (`LSApplicationCategoryType`).
+The category of the application (`LSApplicationCategoryType`) : its identifier, such as `public.app-category.developer-tools`, or the last part of it, such as `developer-tools`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -731,7 +731,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-More entries of the `Info.plist` of the application bundle, as strings : the usage descriptions of the privacy permissions (`NSCameraUsageDescription`), for instance.
+More entries of the `Info.plist` of the application bundle : the usage descriptions of the privacy permissions (`NSCameraUsageDescription`), for instance. The values are strings, except `true` and `false`, which are Booleans. An entry replaces the one of the extension of the same key (`NSHighResolutionCapable`, `NSSupportsAutomaticGraphicsSwitching`, `CFBundleName`...).
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -773,7 +773,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-Whether the application bundle is signed.
+Whether the application bundle is signed. When it is not, the bundle of a JVM application that `jpackage` signed ad hoc (on Apple silicon) is signed ad hoc again after the changes of the extension, so that its signature stays valid.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -794,7 +794,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identity that signs the application bundle and the disk image, a `Developer ID Application` certificate of the keychain. By default, the signature is ad hoc (`-`) : the application runs on the machine that built it, and Gatekeeper blocks it on the others.
+The identity that signs the application bundle and the disk image, a `Developer ID Application` certificate of the keychain. By default, the signature is ad hoc (`-`) : the application runs on the machine that built it, and Gatekeeper blocks it on the others. A certificate also signs the macOS libraries inside the jars of a JVM application that are not signed with a certificate, which the notary service checks : the build fails when a signed jar (`META-INF/++*++.SF`), which cannot be changed, has one.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -891,6 +891,27 @@ endif::add-copy-button-to-env-var[]
 |string
 |
 
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-notarize-timeout]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-notarize-timeout[`+++quarkus.desktop.packaging.macos.notarize.timeout+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.notarize.timeout+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+How long the build waits for the answer of the notary service, as the `--timeout` option of `notarytool` takes it (`30m`, `2h`) : the build fails when the time is up. No limit by default.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_NOTARIZE_TIMEOUT+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_NOTARIZE_TIMEOUT+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-package-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-package-name[`+++quarkus.desktop.packaging.linux.package-name+++`]##
 ifdef::add-copy-button-to-config-props[]
 config_property_copy_button:+++quarkus.desktop.packaging.linux.package-name+++[]
@@ -920,7 +941,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The directory where the Debian and RPM packages install the application, in a directory named after the package.
+The directory where the Debian and RPM packages install the application, in a directory named after the package : an absolute directory other than `/`, whose names have letters, digits, dots, dashes, underscores and plus signs.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1162,6 +1183,27 @@ Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_REQUIRES+++`
 endif::add-copy-button-to-env-var[]
 --
 |list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-appimage-runtime-file]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-appimage-runtime-file[`+++quarkus.desktop.packaging.linux.appimage.runtime-file+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.appimage.runtime-file+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The runtime of the AppImage, for a build without access to GitHub or with a runtime of a known version : a `runtime-<arch>` file of https://github.com/AppImage/type2-runtime/releases. By default, `appimagetool` downloads the latest runtime at each build.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_RUNTIME_FILE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_RUNTIME_FILE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
 |
 
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime[`+++quarkus.desktop.packaging.linux.flatpak.runtime+++`]##
@@ -1424,7 +1466,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The JDK whose `jpackage` builds the application image : its `jlink` builds the Java runtime of the application, which is then of that version. Defaults to the JDK of the build.
+The JDK whose `jpackage` builds the application image, JDK 21 or later : its `jlink` builds the Java runtime of the application, which is then of that version. Defaults to the JDK of the build, rather than the one of the `PATH` ; `quarkus.desktop.packaging.tools.jpackage` takes precedence over both.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1466,7 +1508,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The options of `jlink`. Defaults to the ones of `jpackage` : no debug information, no header files, no manual pages, no commands.
+The options of `jlink`. Defaults to the ones of `jpackage` : no debug information, no header files, no manual pages, no commands. On Linux, `jlink` strips the debug information of the native libraries (`--strip-debug`) with `objcopy`, which has to be on the `PATH` (the `binutils` package).
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1487,7 +1529,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-A Java runtime to use rather than one built with `jlink`.
+A Java runtime to use rather than one built with `jlink` : `jpackage` takes it as it is, so `quarkus.desktop.packaging.jvm.modules` and `quarkus.desktop.packaging.jvm.jlink-options` cannot be set with it.
 
 
 ifdef::add-copy-button-to-env-var[]

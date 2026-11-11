@@ -36,8 +36,9 @@ permissions:
   contents: read
   pull-requests: read
 
+# A manual run of the packaging job alone has its group : it does not cancel the full build of the branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.jobs || 'all' }}
   cancel-in-progress: true
 
 # bash runs the steps with -eo pipefail : a build piped to tee still fails its step
@@ -208,7 +209,6 @@ jobs:
         with:
           distribution: temurin
           java-version: 25
-          cache: 'maven'
 
       - name: Set up GraalVM for JDK 25
         if: ${{ matrix.native }}
@@ -217,7 +217,14 @@ jobs:
           java-version: '25'
           distribution: 'graalvm'
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache: 'maven'
+
+      # The dependencies of the packaging modules only : a cache of their own, not the one of the full builds, which
+      # would then restore a partial repository
+      - name: Cache the Maven repository of the packaging modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: packaging-${{ runner.os }}-${{ matrix.native }}-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
 
       # dpkg-deb is part of Ubuntu. Snapcraft builds the snap in an LXD container : the build runs in the lxd group
       - name: Install the packaging tools of Linux
@@ -303,8 +310,19 @@ jobs:
           ./Packaging-IT-*.AppImage --appimage-extract-and-run --marker="$RUNNER_TEMP/appimage.txt" appimage
           started appimage "$RUNNER_TEMP/appimage.txt"
 
-          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          # No remote before : the installation adds Flathub, the repository of the runtime that the bundle names
           flatpak install --user -y --noninteractive ./Packaging-IT-*.flatpak
+          remotes=$(flatpak remotes --user --columns=name,url)
+          echo "flatpak remotes : $remotes"
+          grep -q 'dl.flathub.org/repo' <<< "$remotes"
+          # The command and the default permissions of the sandbox (linux.flatpak.finish-args)
+          metadata=$(flatpak info --user --show-metadata io.quarkiverse.desktop.PackagingIt)
+          permissions=$(flatpak info --user --show-permissions io.quarkiverse.desktop.PackagingIt)
+          echo "$metadata"
+          grep -qx 'command=packaging-it' <<< "$metadata"
+          for permission in 'sockets=x11;wayland;pulseaudio;' 'devices=dri;' 'filesystems=home;'; do
+            grep -q "$permission" <<< "$permissions"
+          done
           flatpak run io.quarkiverse.desktop.PackagingIt --marker="$HOME/flatpak.txt" flatpak
           started flatpak "$HOME/flatpak.txt"
           flatpak uninstall --user -y --noninteractive io.quarkiverse.desktop.PackagingIt
@@ -320,22 +338,28 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         working-directory: packaging/integration-tests/target/packaging
         run: |
+          # The bundles are opened as the Finder opens them : by LaunchServices, which reads their Info.plist, and may
+          # pass the serial number of the process (-psn_...) before the arguments
           started() {
-            grep -qF "started 999-SNAPSHOT [$1]" "$2" || { echo "::error::The application of the $1 package did not start"; exit 1; }
+            grep -qE "^started 999-SNAPSHOT \[(-psn_[0-9_]+, )?$1\]$" "$2" || { echo "::error::The application of the $1 package did not start"; exit 1; }
             echo "$1 : $(cat "$2")"
           }
           ls -l
           codesign --verify --deep --strict --verbose=2 "image/Packaging IT.app"
           plutil -lint "image/Packaging IT.app/Contents/Info.plist"
+          # The icon that the Info.plist names, which macOS decodes
+          icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "image/Packaging IT.app/Contents/Info.plist")
+          sips -s format png "image/Packaging IT.app/Contents/Resources/${icon%.icns}.icns" --out "$RUNNER_TEMP/icon.png"
+          test -s "$RUNNER_TEMP/icon.png"
 
           hdiutil attach Packaging-IT-*.dmg -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
           test -L "$RUNNER_TEMP/dmg/Applications"
-          "$RUNNER_TEMP/dmg/Packaging IT.app/Contents/MacOS/Packaging IT" --marker="$RUNNER_TEMP/dmg.txt" dmg
+          open -W -n "$RUNNER_TEMP/dmg/Packaging IT.app" --args --marker="$RUNNER_TEMP/dmg.txt" dmg
           started dmg "$RUNNER_TEMP/dmg.txt"
-          hdiutil detach "$RUNNER_TEMP/dmg"
+          hdiutil detach "$RUNNER_TEMP/dmg" || { sleep 5; hdiutil detach -force "$RUNNER_TEMP/dmg"; }
 
           sudo installer -pkg Packaging-IT-*.pkg -target /
-          "/Applications/Packaging IT.app/Contents/MacOS/Packaging IT" --marker="$RUNNER_TEMP/pkg.txt" pkg
+          open -W -n "/Applications/Packaging IT.app" --args --marker="$RUNNER_TEMP/pkg.txt" pkg
           started pkg "$RUNNER_TEMP/pkg.txt"
           pkgutil --pkg-info io.quarkiverse.desktop.PackagingIt
           sudo rm -rf "/Applications/Packaging IT.app"
@@ -346,7 +370,27 @@ jobs:
         working-directory: packaging/integration-tests/target/packaging
         run: |
           $ErrorActionPreference = 'Stop'
-          $launcher = "$env:ProgramFiles\Packaging IT\Packaging IT.exe"
+          $directory = "$env:ProgramFiles\Packaging IT"
+          $launcher = "$directory\Packaging IT.exe"
+          $shortcut = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Packaging IT.lnk"
+          # The entries of the installed programs (Settings, Apps) named after the application
+          function Get-UninstallEntry {
+            Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+              Where-Object DisplayName -eq 'Packaging IT'
+          }
+          # The shortcut of the Start menu, which starts the launcher, the entry of the installed programs, and the
+          # signature of the installed launcher
+          function Assert-Installed([string]$format, [string]$version) {
+            if (-not (Test-Path $shortcut)) { throw "$format : $shortcut is not installed" }
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+            if ($target -ne $launcher) { throw "$format : the shortcut of the Start menu starts $target" }
+            $entries = @(Get-UninstallEntry)
+            if ($entries.Count -ne 1) { throw "$format : $($entries.Count) entries of the installed programs" }
+            $entry = "$($entries[0].DisplayName) $($entries[0].DisplayVersion) of $($entries[0].Publisher)"
+            if ($entry -ne "Packaging IT $version of Quarkiverse") { throw "$format : the installed programs list $entry" }
+            if (-not (Get-AuthenticodeSignature -FilePath $launcher).SignerCertificate) { throw "$format : $launcher is not signed" }
+            "$format : $entry, $shortcut"
+          }
           function Start-Installed([string]$format) {
             if (-not (Test-Path $launcher)) { throw "$format : $launcher is not installed" }
             $marker = "$env:RUNNER_TEMP\$format.txt"
@@ -357,6 +401,10 @@ jobs:
           }
           function Assert-Removed([string]$format) {
             if (Test-Path $launcher) { throw "$format : $launcher is still installed" }
+            foreach ($path in $directory, $shortcut) {
+              if (Test-Path $path) { throw "$format : $path remains" }
+            }
+            if (@(Get-UninstallEntry).Count -ne 0) { throw "$format : the entry of the installed programs remains" }
           }
           Get-ChildItem
           $signed = @((Get-ChildItem *.msi, *.exe, *.msix).FullName) + (Resolve-Path 'image\Packaging IT\Packaging IT.exe').Path
@@ -368,19 +416,25 @@ jobs:
           $msi = (Get-ChildItem *.msi).FullName
           $process = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "msi : msiexec /i exited with $($process.ExitCode)" }
+          # the MSI package has the numbers of the version of the packages : 1.0.0-SNAPSHOT (application.properties)
+          Assert-Installed 'msi' '1.0.0'
           Start-Installed 'msi'
           $process = Start-Process msiexec -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "msi : msiexec /x exited with $($process.ExitCode)" }
           Assert-Removed 'msi'
+          # the registry value of the shortcut, written for the user who installs the package
+          if (Test-Path 'HKCU:\Software\Quarkiverse\Packaging IT') { throw 'msi : HKCU:\Software\Quarkiverse\Packaging IT remains' }
 
           $process = Start-Process (Get-ChildItem *.exe).FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "exe : the setup program exited with $($process.ExitCode)" }
+          Assert-Installed 'exe' '1.0.0-SNAPSHOT'
           Start-Installed 'exe'
           # the compiler of Inno Setup signs the uninstaller that the setup program installs
           $uninstaller = (Get-ChildItem "$env:ProgramFiles\Packaging IT\unins*.exe").FullName
           if (-not (Get-AuthenticodeSignature -FilePath $uninstaller).SignerCertificate) { throw "exe : $uninstaller is not signed" }
           Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
-          Start-Sleep -Seconds 5
+          # the uninstaller ends in a copy of itself, which removes the directory after it
+          for ($second = 0; $second -lt 30 -and (Test-Path $directory); $second++) { Start-Sleep -Seconds 1 }
           Assert-Removed 'exe'
 
           Add-AppxPackage -Path (Get-ChildItem *.msix).FullName

@@ -12,6 +12,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
 
+import org.jboss.logging.Logger;
+
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
@@ -22,9 +24,12 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * The tools of the Windows SDK ({@code makeappx}, {@code signtool}), which its installer does not add to the
- * {@code PATH}, and the signature of the Windows executables and packages.
+ * {@code PATH}, and the signature of the Windows executables and packages ; the application image as the Windows
+ * packages install it.
  */
 public final class WindowsSdk {
+
+    private static final Logger LOGGER = Logger.getLogger(WindowsSdk.class);
 
     /**
      * The length of a command line of {@code signtool}, below the 32767 characters of a Windows command line.
@@ -147,6 +152,39 @@ public final class WindowsSdk {
         try (InputStream input = Files.newInputStream(file)) {
             return input.readNBytes(HEADERS);
         }
+    }
+
+    /**
+     * Warns that a Windows package does not have the empty directories of the application image : the packages install
+     * its files, and an MSIX package cannot have an empty directory.
+     *
+     * @param windowsPackage the package
+     */
+    static void warnEmptyDirectories(ApplicationImage image, Path windowsPackage) throws IOException {
+        for (Path directory : emptyDirectories(image.root())) {
+            LOGGER.warnf("%s does not have %s, an empty directory of the application image : the Windows packages"
+                    + " install files, add one to it", windowsPackage.getFileName(), directory);
+        }
+    }
+
+    /**
+     * The directories of a directory that have no entries, as sorted relative paths.
+     */
+    static List<Path> emptyDirectories(Path root) throws IOException {
+        List<Path> directories = new ArrayList<>();
+        try (Stream<Path> paths = Files.walk(root)) {
+            for (Path path : (Iterable<Path>) paths::iterator) {
+                if (!path.equals(root) && Files.isDirectory(path, LinkOption.NOFOLLOW_LINKS)) {
+                    try (Stream<Path> entries = Files.list(path)) {
+                        if (entries.findAny().isEmpty()) {
+                            directories.add(root.relativize(path));
+                        }
+                    }
+                }
+            }
+        }
+        directories.sort(null);
+        return directories;
     }
 
     /**

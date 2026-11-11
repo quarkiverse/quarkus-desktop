@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,11 +22,13 @@ import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
+import io.quarkus.deployment.builditem.QuarkusBuildCloseablesBuildItem;
 import io.quarkus.deployment.pkg.NativeConfig;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.deployment.pkg.builditem.ArtifactResultBuildItem;
 import io.quarkus.deployment.pkg.builditem.CurateOutcomeBuildItem;
 import io.quarkus.deployment.pkg.builditem.JarBuildItem;
+import io.quarkus.deployment.pkg.builditem.JvmStartupOptimizerArchiveResultBuildItem;
 import io.quarkus.deployment.pkg.builditem.NativeImageBuildItem;
 import io.quarkus.deployment.pkg.builditem.NativeImageRunnerBuildItem;
 import io.quarkus.deployment.pkg.builditem.OutputTargetBuildItem;
@@ -82,45 +85,66 @@ class DesktopPackagingProcessor {
      * The icon and the version information of the Windows native executable
      * ({@code quarkus.desktop.packaging.windows.executable-resources}) : a compiled resource file that the linker adds
      * to the executable, with a {@code -H:NativeLinkerOption} option in a {@code native-image.properties} file
-     * generated in the application jar.
+     * generated in the application jar. Not for native sources ({@code quarkus.native.sources-only}) : the option
+     * would name a file of this build, which the machine that compiles them may not have.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
-    void windowsExecutableResources(DesktopPackagingConfig config, NativeImageRunnerBuildItem nativeImageRunner,
-            OutputTargetBuildItem outputTarget, ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
-            BuildProducer<GeneratedResourceBuildItem> generatedResources) throws IOException {
+    void windowsExecutableResources(DesktopPackagingConfig config, NativeConfig nativeConfig,
+            NativeImageRunnerBuildItem nativeImageRunner, OutputTargetBuildItem outputTarget,
+            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
+            QuarkusBuildCloseablesBuildItem closeables, BuildProducer<GeneratedResourceBuildItem> generatedResources)
+            throws IOException {
         if (!config.enabled() || !config.windows().executableResources()
                 || targetOs(nativeImageRunner.isContainerBuild()) != TargetOs.WINDOWS) {
             return;
         }
+        if (nativeConfig.sourcesOnly()) {
+            LOGGER.info("The native sources do not give the native executable the icon and the version of the"
+                    + " application : they are linked from a file of this build, which the machine that compiles the"
+                    + " sources may not have");
+            return;
+        }
         PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, TargetOs.WINDOWS);
         byte[] resources = WindowsResources.res(context.icons(), context.app(), context.app().name() + ".exe");
-        Optional<Path> file = writeResources(outputTarget.getOutputDirectory(), resources);
+        Path buildDirectory = outputTarget.getOutputDirectory().toAbsolutePath();
+        Optional<Path> file = writeResources(buildDirectory, Path.of(System.getProperty("java.io.tmpdir")), resources);
         if (file.isEmpty()) {
             return;
+        }
+        if (!file.get().startsWith(buildDirectory)) {
+            // a directory of its own in the temporary directory : deleted once the native executable is linked
+            Path directory = file.get().getParent();
+            closeables.add(() -> FileTrees.delete(directory));
         }
         generatedResources.produce(new GeneratedResourceBuildItem(WINDOWS_NATIVE_IMAGE_PROPERTIES,
                 nativeImageProperties(List.of("-H:NativeLinkerOption=" + file.get())).getBytes(StandardCharsets.UTF_8)));
     }
 
     /**
-     * Writes the compiled resource file in the build directory, or in the temporary directory when the path of the
-     * build directory has white space (native-image splits the options of a {@code native-image.properties} file on
-     * white space).
+     * Writes the compiled resource file in the build directory, or in a new directory of the temporary directory when
+     * the path of the build directory has white space (native-image splits the options of a
+     * {@code native-image.properties} file on white space). The new directory has a random name, so that no other
+     * account can create it first ; the build step deletes it at the end of the build, after the native executable is
+     * linked (there is no such file for native sources, which are linked later).
      *
+     * @param buildDirectory the build directory
+     * @param temporaryDirectory the temporary directory ({@code java.io.tmpdir})
      * @return the absolute path of the file, or empty when no directory without white space is available
      */
-    static Optional<Path> writeResources(Path buildDirectory, byte[] resources) throws IOException {
+    static Optional<Path> writeResources(Path buildDirectory, Path temporaryDirectory, byte[] resources)
+            throws IOException {
         Path directory = buildDirectory.toAbsolutePath().resolve("quarkus-desktop-packaging");
         if (hasWhiteSpace(directory)) {
-            directory = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath()
-                    .resolve("quarkus-desktop-packaging-" + Integer.toHexString(java.util.Arrays.hashCode(resources)));
-            if (hasWhiteSpace(directory)) {
+            Path temporary = temporaryDirectory.toAbsolutePath();
+            if (hasWhiteSpace(temporary)) {
                 LOGGER.warn("The native executable does not get the icon and the version of the application : the paths"
                         + " of the build directory and of the temporary directory contain white space. Build from a"
                         + " directory without white space, or set"
                         + " quarkus.desktop.packaging.windows.executable-resources=false");
                 return Optional.empty();
             }
+            // a random name of digits : without white space either
+            directory = Files.createTempDirectory(Files.createDirectories(temporary), "quarkus-desktop-packaging-");
         }
         return Optional.of(FileTrees.write(directory.resolve("application.res"), resources));
     }
@@ -168,20 +192,51 @@ class DesktopPackagingProcessor {
         if (formats.isEmpty()) {
             return;
         }
+        compressionWarning(config.linux(), formats, upxCompressed.isPresent()).ifPresent(LOGGER::warn);
         try {
             PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os);
             ApplicationImage image = NativeApplicationImage.build(context, nativeImage.getPath(), files);
             Packaging.build(context, image, formats);
         } catch (IOException e) {
-            throw new UncheckedIOException("Unable to package the native executable : " + e.getMessage(), e);
+            // the exception and its message : the message of some of them is a path alone
+            throw new UncheckedIOException("Unable to package the native executable : " + e, e);
         }
     }
 
     /**
-     * Packages the jar of a JVM build, with a Java runtime.
+     * The warning of a native executable compressed with UPX, for the automatic dependencies of the Debian and RPM
+     * packages : a compressed executable has no dynamic section, and {@code dpkg-shlibdeps} and {@code rpmbuild} do not
+     * see the shared libraries that it is linked with.
+     *
+     * @param compressed whether the native executable is compressed ({@code quarkus.native.compression.level})
+     * @return the warning, or empty when the formats have no automatic dependencies to lose
+     */
+    static Optional<String> compressionWarning(DesktopPackagingConfig.Linux config, List<PackageFormat> formats,
+            boolean compressed) {
+        List<String> properties = new ArrayList<>();
+        if (formats.contains(PackageFormat.DEB) && config.deb().autoDepends()) {
+            properties.add("quarkus.desktop.packaging.linux.deb.depends");
+        }
+        if (formats.contains(PackageFormat.RPM) && config.rpm().autoRequires()) {
+            properties.add("quarkus.desktop.packaging.linux.rpm.requires");
+        }
+        if (!compressed || properties.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of("The native executable is compressed with UPX (quarkus.native.compression.level) : the Linux"
+                + " packages do not depend on the packages of the shared libraries that it is linked with, which the"
+                + " compression hides. List them in " + String.join(" and ", properties) + ", or do not compress the"
+                + " executable");
+    }
+
+    /**
+     * Packages the jar of a JVM build, with a Java runtime. After the step of Quarkus that writes the AppCDS or AOT
+     * archive in the directory of a fast-jar ({@code quarkus.package.jar.aot.enabled}) : the archive is left out of
+     * the image (it was built for the JDK of the build and the path of the jar, not for the runtime of the image).
      */
     @BuildStep(onlyIf = JvmBuild.class)
-    void packageJar(DesktopPackagingConfig config, JarBuildItem jar, List<PackagedJvmOptionBuildItem> jvmOptions,
+    void packageJar(DesktopPackagingConfig config, JarBuildItem jar,
+            Optional<JvmStartupOptimizerArchiveResultBuildItem> startupArchive, List<PackagedJvmOptionBuildItem> jvmOptions,
             OutputTargetBuildItem outputTarget, ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
             BuildProducer<ArtifactResultBuildItem> artifactResults) {
         TargetOs os = TargetOs.host();
@@ -202,10 +257,11 @@ class DesktopPackagingProcessor {
         }
         try {
             PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os);
-            ApplicationImage image = JvmApplicationImage.build(context, jar.getPath(), uberJar, options);
+            ApplicationImage image = JvmApplicationImage.build(context, jar.getPath(), uberJar,
+                    startupArchive.map(JvmStartupOptimizerArchiveResultBuildItem::getArchive), options);
             Packaging.build(context, image, formats);
         } catch (IOException e) {
-            throw new UncheckedIOException("Unable to package the application : " + e.getMessage(), e);
+            throw new UncheckedIOException("Unable to package the application : " + e, e);
         }
     }
 

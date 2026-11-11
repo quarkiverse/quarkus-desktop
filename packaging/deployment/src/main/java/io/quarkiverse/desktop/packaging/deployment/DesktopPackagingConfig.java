@@ -38,23 +38,26 @@ public interface DesktopPackagingConfig {
 
     /**
      * The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the
-     * application bundle on macOS. Defaults to {@code quarkus.application.name}.
+     * application bundle on macOS. Defaults to {@code quarkus.application.name}. It names the files of the application
+     * on Windows and macOS : it has none of {@code \ / : * ? " < > | % ;} on Windows, none of {@code / " %} on macOS,
+     * and no control characters.
      */
     Optional<String> name();
 
     /**
      * The version of the application. Defaults to {@code quarkus.application.version}. The formats that need numbers
-     * (MSI, MSIX, macOS) take its leading numbers : {@code 1.2.3-SNAPSHOT} is {@code 1.2.3} for them. Windows compares
-     * them to upgrade the application, up to a limit : 255, 255 and 65535 for the three numbers of an MSI package,
-     * 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of
-     * {@code 2025.1.0}.
+     * (MSI, MSIX, macOS) take its leading numbers, without the {@code v} of a tag : {@code 1.2.3-SNAPSHOT} and
+     * {@code v1.2.3} are {@code 1.2.3} for them. Windows compares them to upgrade the application, up to a limit : 255,
+     * 255 and 65535 for the three numbers of an MSI package, 65535 for an MSIX package. The build of such a package
+     * fails for a larger number, such as the year of {@code 2025.1.0}.
      */
     Optional<String> version();
 
     /**
      * The identifier of the application, a reverse domain name such as {@code org.acme.editor} : the bundle identifier
-     * on macOS, the application ID of Flatpak, the identity of the MSIX package, the source of the upgrade code of the
-     * Windows installers. Defaults to the group ID of the project followed by the name of the application.
+     * on macOS, the application ID of Flatpak (at least three elements, none of which starts with a digit), the
+     * identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID
+     * of the project followed by the name of the application.
      */
     Optional<String> identifier();
 
@@ -81,7 +84,7 @@ public interface DesktopPackagingConfig {
 
     /**
      * The license of the application, as a text file : shown by the Windows setup program and by the macOS installer
-     * package, installed with the Debian package.
+     * package, installed with the Debian and RPM packages.
      */
     Optional<String> licenseFile();
 
@@ -93,8 +96,9 @@ public interface DesktopPackagingConfig {
     Optional<String> icon();
 
     /**
-     * A directory of files to add to the application image, next to the executable : documents, data files. Defaults
-     * to {@code src/main/packaging/content} when the directory exists.
+     * A directory of files to add to the application image : documents, data files. They are next to the executable,
+     * in {@code Contents/Resources} on macOS, and at the root of the image in JVM mode on Linux, where the launcher is
+     * in the {@code bin} directory. Defaults to {@code src/main/packaging/content} when the directory exists.
      */
     Optional<String> contentDirectory();
 
@@ -141,8 +145,9 @@ public interface DesktopPackagingConfig {
         /**
          * Whether the native executable gets the icon of the application and its version information (the Details tab
          * of its properties : product name, version, vendor, copyright). They are resources linked in the executable
-         * when it is built : the extension has to be in the application then, with or without packages. In JVM mode,
-         * {@code jpackage} gives them to its launcher.
+         * when it is built : the extension has to be in the application then, with or without packages. Native sources
+         * ({@code quarkus.native.sources-only=true}) do not get them : they are linked from a file of the build
+         * directory. In JVM mode, {@code jpackage} gives them to its launcher.
          */
         @WithDefault("true")
         boolean executableResources();
@@ -281,7 +286,8 @@ public interface DesktopPackagingConfig {
     interface Macos {
 
         /**
-         * The category of the application ({@code LSApplicationCategoryType}).
+         * The category of the application ({@code LSApplicationCategoryType}) : its identifier, such as
+         * {@code public.app-category.developer-tools}, or the last part of it, such as {@code developer-tools}.
          */
         @WithDefault("public.app-category.utilities")
         String category();
@@ -293,8 +299,10 @@ public interface DesktopPackagingConfig {
         Optional<String> minimumSystemVersion();
 
         /**
-         * More entries of the {@code Info.plist} of the application bundle, as strings : the usage descriptions of
-         * the privacy permissions ({@code NSCameraUsageDescription}), for instance.
+         * More entries of the {@code Info.plist} of the application bundle : the usage descriptions of the privacy
+         * permissions ({@code NSCameraUsageDescription}), for instance. The values are strings, except {@code true} and
+         * {@code false}, which are Booleans. An entry replaces the one of the extension of the same key
+         * ({@code NSHighResolutionCapable}, {@code NSSupportsAutomaticGraphicsSwitching}, {@code CFBundleName}...).
          */
         @ConfigDocMapKey("key")
         Map<String, String> infoPlist();
@@ -322,7 +330,9 @@ public interface DesktopPackagingConfig {
     interface MacSign {
 
         /**
-         * Whether the application bundle is signed.
+         * Whether the application bundle is signed. When it is not, the bundle of a JVM application that
+         * {@code jpackage} signed ad hoc (on Apple silicon) is signed ad hoc again after the changes of the extension,
+         * so that its signature stays valid.
          */
         @WithDefault("true")
         boolean enabled();
@@ -330,7 +340,9 @@ public interface DesktopPackagingConfig {
         /**
          * The identity that signs the application bundle and the disk image, a {@code Developer ID Application}
          * certificate of the keychain. By default, the signature is ad hoc ({@code -}) : the application runs on the
-         * machine that built it, and Gatekeeper blocks it on the others.
+         * machine that built it, and Gatekeeper blocks it on the others. A certificate also signs the macOS libraries
+         * inside the jars of a JVM application that are not signed with a certificate, which the notary service checks :
+         * the build fails when a signed jar ({@code META-INF/*.SF}), which cannot be changed, has one.
          */
         @WithDefault("-")
         String identity();
@@ -366,6 +378,13 @@ public interface DesktopPackagingConfig {
          * to be signed with a Developer ID identity.
          */
         Optional<String> keychainProfile();
+
+        /**
+         * How long the build waits for the answer of the notary service, as the {@code --timeout} option of
+         * {@code notarytool} takes it ({@code 30m}, {@code 2h}) : the build fails when the time is up. No limit by
+         * default.
+         */
+        Optional<String> timeout();
     }
 
     /**
@@ -381,7 +400,8 @@ public interface DesktopPackagingConfig {
 
         /**
          * The directory where the Debian and RPM packages install the application, in a directory named after the
-         * package.
+         * package : an absolute directory other than {@code /}, whose names have letters, digits, dots, dashes,
+         * underscores and plus signs.
          */
         @WithDefault("/opt")
         String installDirectory();
@@ -414,6 +434,11 @@ public interface DesktopPackagingConfig {
          * The RPM package.
          */
         Rpm rpm();
+
+        /**
+         * The AppImage.
+         */
+        AppImage appimage();
 
         /**
          * The Flatpak bundle.
@@ -484,6 +509,19 @@ public interface DesktopPackagingConfig {
          * More capabilities that the package requires.
          */
         Optional<List<String>> requires();
+    }
+
+    /**
+     * The AppImage.
+     */
+    interface AppImage {
+
+        /**
+         * The runtime of the AppImage, for a build without access to GitHub or with a runtime of a known version : a
+         * {@code runtime-<arch>} file of https://github.com/AppImage/type2-runtime/releases. By default,
+         * {@code appimagetool} downloads the latest runtime at each build.
+         */
+        Optional<String> runtimeFile();
     }
 
     /**
@@ -577,8 +615,9 @@ public interface DesktopPackagingConfig {
     interface Jvm {
 
         /**
-         * The JDK whose {@code jpackage} builds the application image : its {@code jlink} builds the Java runtime of
-         * the application, which is then of that version. Defaults to the JDK of the build.
+         * The JDK whose {@code jpackage} builds the application image, JDK 21 or later : its {@code jlink} builds the
+         * Java runtime of the application, which is then of that version. Defaults to the JDK of the build, rather than
+         * the one of the {@code PATH} ; {@code quarkus.desktop.packaging.tools.jpackage} takes precedence over both.
          */
         Optional<String> jdk();
 
@@ -591,12 +630,16 @@ public interface DesktopPackagingConfig {
 
         /**
          * The options of {@code jlink}. Defaults to the ones of {@code jpackage} : no debug information, no header
-         * files, no manual pages, no commands.
+         * files, no manual pages, no commands. On Linux, {@code jlink} strips the debug information of the native
+         * libraries ({@code --strip-debug}) with {@code objcopy}, which has to be on the {@code PATH} (the
+         * {@code binutils} package).
          */
         Optional<List<String>> jlinkOptions();
 
         /**
-         * A Java runtime to use rather than one built with {@code jlink}.
+         * A Java runtime to use rather than one built with {@code jlink} : {@code jpackage} takes it as it is, so
+         * {@code quarkus.desktop.packaging.jvm.modules} and {@code quarkus.desktop.packaging.jvm.jlink-options} cannot
+         * be set with it.
          */
         Optional<String> runtimeImage();
 

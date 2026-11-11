@@ -2,12 +2,15 @@ package io.quarkiverse.desktop.packaging.deployment.macos;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -21,10 +24,11 @@ import org.w3c.dom.NodeList;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.TestConfig;
+import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * The files that the macOS packagers generate : the information property list of the bundle, the entitlements and the
- * distribution file of the installer package.
+ * distribution file of the installer package. And the attempts of {@code hdiutil}.
  */
 class MacPackagesTest {
 
@@ -80,6 +84,72 @@ class MacPackagesTest {
         assertFalse(other.containsKey("LSMinimumSystemVersion"));
         assertFalse(other.containsKey("NSHumanReadableCopyright"));
         assertEquals("public.app-category.utilities", other.get("LSApplicationCategoryType"));
+
+        // the last part of the identifier of the category, which jpackage takes
+        DesktopPackagingConfig category = TestConfig.of(Map.of("macos.category", "developer-tools"));
+        assertEquals("public.app-category.developer-tools", entries(MacBundle.infoPlist(TestConfig.app(category),
+                category.macos(), "Acme Editor", "Acme-Editor.icns")).get("LSApplicationCategoryType"));
+    }
+
+    /**
+     * An entry of the configuration replaces the one of the bundle of the same key : once, {@code true} and
+     * {@code false} as Booleans.
+     */
+    @Test
+    void theEntriesOfTheConfigurationReplaceTheOnesOfTheBundle() throws Exception {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("macos.info-plist.NSSupportsAutomaticGraphicsSwitching",
+                "false", "macos.info-plist.LSUIElement", "true", "macos.info-plist.NSCameraUsageDescription", "Scans",
+                "macos.info-plist.CFBundleName", "Acme"));
+        String plist = MacBundle.infoPlist(TestConfig.app(config), config.macos(), "Acme Editor", "Acme-Editor.icns");
+        // a key once : the entries keep the last value of a key
+        for (String key : List.of("NSSupportsAutomaticGraphicsSwitching", "NSHighResolutionCapable", "CFBundleName")) {
+            assertEquals(2, plist.split("<key>" + key + "</key>", -1).length, plist);
+        }
+        assertTrue(plist.contains("<key>NSSupportsAutomaticGraphicsSwitching</key>\n    <false/>\n"), plist);
+        assertTrue(plist.contains("<key>NSHighResolutionCapable</key>\n    <true/>\n"), plist);
+        assertTrue(plist.contains("<key>LSUIElement</key>\n    <true/>\n"), plist);
+        Map<String, String> entries = entries(plist);
+        assertEquals("Scans", entries.get("NSCameraUsageDescription"));
+        assertEquals("Acme", entries.get("CFBundleName"));
+        assertEquals("Acme Editor", entries.get("CFBundleDisplayName"));
+
+        // the values of the extension stay strings
+        DesktopPackagingConfig named = TestConfig.of(Map.of("name", "true"));
+        assertTrue(MacBundle.infoPlist(TestConfig.app(named), named.macos(), "true", "true.icns")
+                .contains("<key>CFBundleName</key>\n    <string>true</string>\n"));
+    }
+
+    /**
+     * hdiutil runs again when a disk image is busy, up to its last attempt, and not when it fails otherwise.
+     */
+    @Test
+    void hdiutilRunsAgainWhenADiskImageIsBusy() {
+        assertTrue(DmgPackager.resourceBusy("hdiutil: create failed - Resource busy"));
+        assertFalse(DmgPackager.resourceBusy("hdiutil: create failed - No space left on device"));
+        assertFalse(DmgPackager.resourceBusy(""));
+
+        List<String> command = List.of("hdiutil", "create", "Acme.dmg");
+        Tools.Result busy = new Tools.Result(1, "hdiutil: create failed - Resource busy\n");
+        Tools.Result created = new Tools.Result(0, "created: Acme.dmg\n");
+        List<Tools.Result> results = new ArrayList<>(List.of(busy, busy, created));
+        assertSame(created, DmgPackager.exec(command, run -> results.remove(0), 0));
+        assertTrue(results.isEmpty());
+
+        List<List<String>> runs = new ArrayList<>();
+        PackagingException full = assertThrows(PackagingException.class, () -> DmgPackager.exec(command, run -> {
+            runs.add(run);
+            return new Tools.Result(1, "hdiutil: create failed - No space left on device");
+        }, 0));
+        assertEquals(List.of(command), runs);
+        assertEquals("hdiutil failed with exit code 1 (hdiutil create Acme.dmg) :\n"
+                + "hdiutil: create failed - No space left on device", full.getMessage());
+        runs.clear();
+        PackagingException stillBusy = assertThrows(PackagingException.class, () -> DmgPackager.exec(command, run -> {
+            runs.add(run);
+            return busy;
+        }, 0));
+        assertEquals(DmgPackager.ATTEMPTS, runs.size());
+        assertTrue(stillBusy.getMessage().endsWith(":\nhdiutil: create failed - Resource busy"), stillBusy.getMessage());
     }
 
     @Test

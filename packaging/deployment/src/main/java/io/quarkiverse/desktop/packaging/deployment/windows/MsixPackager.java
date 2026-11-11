@@ -79,6 +79,7 @@ public final class MsixPackager implements Packager {
         Path mappingFile = FileTrees.write(work.resolve("mapping.txt"),
                 mapping(generated, image.root(), FileTrees.files(image.root())));
         Path msix = context.output(context.app().fileName() + "-" + context.app().version() + ".msix");
+        WindowsSdk.warnEmptyDirectories(image, msix);
         Tools.exec(work, Map.of(), List.of(makeappx.toString(), "pack", "/o", "/f", mappingFile.toString(), "/p",
                 msix.toString()));
         if (WindowsSdk.signs(context)) {

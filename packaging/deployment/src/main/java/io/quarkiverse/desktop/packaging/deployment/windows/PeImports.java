@@ -110,16 +110,17 @@ public final class PeImports {
                 continue;
             }
             // the bytes between the end of the content of a section and the end of its bytes in the file : zeros,
-            // which Windows maps with the section
+            // which Windows maps with the section. In long : the fields of a malformed file overflow an int, and the
+            // bytes that a section declares may pass the end of the file
             boolean written = false;
             for (Section section : sections(buffer)) {
-                int free = section.rawSize() - section.virtualSize();
-                int offset = section.rawPointer() + section.virtualSize();
-                if (section.virtualSize() <= 0 || free < bytes.length || offset + bytes.length > renamed.length
-                        || !isZero(renamed, offset, free)) {
+                long free = (long) section.rawSize() - section.virtualSize();
+                long offset = (long) section.rawPointer() + section.virtualSize();
+                if (section.virtualSize() <= 0 || free < bytes.length || offset < 0 || offset + free > renamed.length
+                        || !isZero(renamed, (int) offset, (int) free)) {
                     continue;
                 }
-                System.arraycopy(bytes, 0, renamed, offset, bytes.length);
+                System.arraycopy(bytes, 0, renamed, (int) offset, bytes.length);
                 buffer.putInt(imported.nameField(), section.virtualAddress() + section.virtualSize());
                 buffer.putInt(section.header() + 8, section.virtualSize() + bytes.length);
                 written = true;
@@ -149,8 +150,9 @@ public final class PeImports {
             return -1;
         }
         int pe = buffer.getInt(0x3c);
-        // the signature, the file header (20 bytes), and at least the fields of the optional header read here
-        if (pe < 0 || pe + 24 + 240 > buffer.capacity() || buffer.getInt(pe) != 0x00004550) {
+        // the signature, the file header (20 bytes), and at least the fields of the optional header read here : a
+        // subtraction, which does not overflow for an offset near the largest int
+        if (pe < 0 || pe > buffer.capacity() - (24 + 240) || buffer.getInt(pe) != 0x00004550) {
             return -1;
         }
         return pe + 24;
@@ -211,6 +213,10 @@ public final class PeImports {
             int end = nameOffset;
             while (end < file.length && file[end] != 0) {
                 end++;
+            }
+            if (end == file.length) {
+                // a truncated file : a name without its terminating zero, which could not be renamed in place
+                break;
             }
             imports.add(new Import(descriptor + 12, nameOffset,
                     new String(file, nameOffset, end - nameOffset, StandardCharsets.US_ASCII)));

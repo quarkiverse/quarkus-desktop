@@ -68,6 +68,23 @@ class IconSetTest {
     }
 
     @Test
+    void aDamagedImageIsReportedWithItsPath(@TempDir Path directory) throws IOException {
+        BufferedImage source = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
+        for (int y = 0; y < 64; y++) {
+            for (int x = 0; x < 64; x++) {
+                source.setRGB(x, y, 0xff000000 | x * 0x040000 | y * 0x0400 | (x ^ y) * 4);
+            }
+        }
+        Path file = directory.resolve("icon.png");
+        ImageIO.write(source, "png", file.toFile());
+        byte[] png = java.nio.file.Files.readAllBytes(file);
+        java.nio.file.Files.write(file, java.util.Arrays.copyOf(png, png.length / 2));
+        PackagingException e = org.junit.jupiter.api.Assertions.assertThrows(PackagingException.class,
+                () -> IconSet.of(file));
+        assertTrue(e.getMessage().contains(file.toString()), e.getMessage());
+    }
+
+    @Test
     void theWindowsIconHasABitmapOfEachSizeAndAPngOf256Pixels() {
         byte[] ico = IconSet.generic().ico();
         ByteBuffer buffer = ByteBuffer.wrap(ico).order(ByteOrder.LITTLE_ENDIAN);

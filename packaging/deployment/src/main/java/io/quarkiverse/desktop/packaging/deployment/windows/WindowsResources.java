@@ -91,7 +91,8 @@ public final class WindowsResources {
 
     /**
      * The version information ({@code VS_VERSIONINFO}) : the version as numbers, and the strings that the properties
-     * of the file show.
+     * of the file show. The file description is the name of the application : Windows shows it as the name of the
+     * program (the task manager, the Open with list). The description of the application is a comment.
      */
     static byte[] versionInfo(AppInfo app, String executableName) {
         int[] version = versionNumbers(app);
@@ -104,8 +105,9 @@ public final class WindowsResources {
         fixed.putInt(0x3f).putInt(0).putInt(0x00040004).putInt(1).putInt(0).putInt(0).putInt(0);
 
         Map<String, String> strings = new LinkedHashMap<>();
+        strings.put("Comments", app.description());
         strings.put("CompanyName", app.vendor());
-        strings.put("FileDescription", app.description());
+        strings.put("FileDescription", app.name());
         strings.put("FileVersion", app.version());
         strings.put("InternalName", app.name());
         strings.put("LegalCopyright", app.copyright().orElse(""));

@@ -15,8 +15,6 @@ public final class PackagingContext {
 
     private final TargetOs os;
 
-    private final Arch arch;
-
     private final Tools tools;
 
     private final IconSet icons;
@@ -25,12 +23,11 @@ public final class PackagingContext {
 
     private final Path outputDirectory;
 
-    public PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Arch arch, Tools tools,
-            IconSet icons, Path projectDirectory, Path outputDirectory) {
+    public PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Tools tools, IconSet icons,
+            Path projectDirectory, Path outputDirectory) {
         this.config = config;
         this.app = app;
         this.os = os;
-        this.arch = arch;
         this.tools = tools;
         this.icons = icons;
         this.projectDirectory = projectDirectory;
@@ -53,10 +50,13 @@ public final class PackagingContext {
     }
 
     /**
-     * The architecture of the application.
+     * The architecture of the application : the one of the build, which only the packagers ask for (the application
+     * image is built on any architecture).
+     *
+     * @throws PackagingException for an architecture other than x64 and arm64
      */
     public Arch arch() {
-        return arch;
+        return Arch.host();
     }
 
     public Tools tools() {

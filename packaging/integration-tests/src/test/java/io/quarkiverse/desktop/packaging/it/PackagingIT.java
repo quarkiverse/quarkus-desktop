@@ -80,12 +80,20 @@ class PackagingIT {
         Path marker = directory.resolve("marker.txt");
         Process process = new ProcessBuilder(launcher.toString(), "--marker=" + marker, "first", "second argument")
                 .redirectErrorStream(true).redirectOutput(directory.resolve("output.txt").toFile()).start();
-        assertTrue(process.waitFor(2, TimeUnit.MINUTES), "The application did not exit");
-        String output = Files.readString(directory.resolve("output.txt"));
-        assertEquals(0, process.exitValue(), output);
-        assertTrue(Files.isRegularFile(marker), "The application did not write " + marker + " : " + output);
-        String version = System.getProperty("packaging.version", "");
-        assertEquals("started " + version + " [first, second argument]", Files.readString(marker));
+        try {
+            assertTrue(process.waitFor(2, TimeUnit.MINUTES), "The application did not exit");
+            String output = Files.readString(directory.resolve("output.txt"));
+            assertEquals(0, process.exitValue(), output);
+            assertTrue(Files.isRegularFile(marker), "The application did not write " + marker + " : " + output);
+            String version = System.getProperty("packaging.version", "");
+            assertEquals("started " + version + " [first, second argument]", Files.readString(marker));
+        } finally {
+            // an application that does not exit would keep its image and output.txt open : on Windows, the next build
+            // could not delete them. Its child processes first : they are only found while it runs
+            process.descendants().forEach(ProcessHandle::destroyForcibly);
+            process.destroyForcibly();
+            process.waitFor(10, TimeUnit.SECONDS);
+        }
     }
 
     @Test

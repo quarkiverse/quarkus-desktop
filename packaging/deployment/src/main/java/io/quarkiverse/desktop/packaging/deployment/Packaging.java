@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
 import org.jboss.logging.Logger;
 
@@ -32,7 +33,8 @@ final class Packaging {
     }
 
     /**
-     * The formats of the configuration that the operating system of the application has, without duplicates.
+     * The formats of the configuration that the operating system of the application has, without duplicates. The
+     * formats of the operating system of the build that a container build skips are logged as a warning.
      */
     static List<PackageFormat> formats(DesktopPackagingConfig config, TargetOs os) {
         List<PackageFormat> formats = new ArrayList<>();
@@ -43,7 +45,36 @@ final class Packaging {
                 LOGGER.debugf("The %s package is not built : it is not a format of %s", format, os);
             }
         }
+        containerBuildWarning(config, os, TargetOs.host()).ifPresent(LOGGER::warn);
         return formats;
+    }
+
+    /**
+     * The warning for the formats of the operating system of the build that are not built because the native
+     * executable is built in a container, for Linux ({@code quarkus.native.container-build}) : empty when there are
+     * none.
+     *
+     * @param os the operating system of the application : Linux for a container build
+     * @param host the operating system of the build
+     */
+    static Optional<String> containerBuildWarning(DesktopPackagingConfig config, TargetOs os, TargetOs host) {
+        if (os == host) {
+            return Optional.empty();
+        }
+        List<String> skipped = new ArrayList<>();
+        for (PackageFormat format : new LinkedHashSet<>(config.formats().orElse(List.of()))) {
+            if (format.supports(host) && !format.supports(os)) {
+                skipped.add(format.name().toLowerCase(Locale.ROOT));
+            }
+        }
+        if (skipped.isEmpty()) {
+            return Optional.empty();
+        }
+        String formats = String.join(", ", skipped);
+        return Optional.of("The " + formats + (skipped.size() == 1 ? " package is" : " packages are") + " not built :"
+                + " the native executable is built in a container (quarkus.native.container-build=true), for Linux, and"
+                + " only the Linux formats package it, with the tools of this machine. Build the native executable on"
+                + " this machine (quarkus.native.container-build=false) to package it as " + formats);
     }
 
     /**
@@ -58,9 +89,10 @@ final class Packaging {
     static PackagingContext context(DesktopPackagingConfig config, String applicationName, String applicationVersion,
             String groupId, Path projectDirectory, Path buildDirectory, TargetOs os) throws IOException {
         AppInfo app = AppInfo.of(config, applicationName, applicationVersion, groupId, projectDirectory);
-        return new PackagingContext(config, app, os, Arch.host(), new Tools(config.tools()),
-                IconSet.load(config.icon(), projectDirectory), projectDirectory,
-                buildDirectory.resolve(config.outputDirectory()).toAbsolutePath().normalize());
+        AppInfo.checkName(app.name(), config.windows().installDirectory(), os);
+        return new PackagingContext(config, app, os, new Tools(config.tools()),
+                IconSet.load(config.icon().map(String::trim).filter(value -> !value.isEmpty()), projectDirectory),
+                projectDirectory, buildDirectory.resolve(config.outputDirectory()).toAbsolutePath().normalize());
     }
 
     /**

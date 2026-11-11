@@ -1,15 +1,23 @@
 package io.quarkiverse.desktop.packaging.deployment;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.awt.image.BufferedImage;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import javax.imageio.ImageIO;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class AppInfoTest {
 
@@ -36,6 +44,32 @@ class AppInfoTest {
         assertEquals("Example", app.vendor());
     }
 
+    /**
+     * The white space around a value (a secret of the continuous integration that ends with a line break) is not part
+     * of it, and a blank value is the default.
+     */
+    @Test
+    void theValuesAreTrimmed(@TempDir Path project) throws IOException {
+        AppInfo app = TestConfig.app(TestConfig.of(Map.of("identifier", "com.example.editor ", "linux.package-name",
+                "example-editor\n")));
+        assertEquals("com.example.editor", app.identifier());
+        assertEquals("example-editor", app.packageName());
+        assertEquals("org.acme.AcmeEditor", TestConfig.app(TestConfig.of(Map.of("identifier", "   "))).identifier());
+        Files.writeString(project.resolve("LICENSE"), "license");
+        AppInfo licensed = AppInfo.of(TestConfig.of(Map.of("license-file", "LICENSE ")), "Acme Editor", "1.0",
+                "org.acme", project);
+        assertEquals(Optional.of(project.resolve("LICENSE")), licensed.licenseFile());
+        // not a path on any operating system
+        PackagingException e = assertThrows(PackagingException.class, () -> AppInfo.of(TestConfig.of(Map.of(
+                "license-file", "a\u0000b")), "Acme Editor", "1.0", "org.acme", project));
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.license-file="), e.getMessage());
+
+        BufferedImage icon = new BufferedImage(48, 48, BufferedImage.TYPE_INT_ARGB);
+        ImageIO.write(icon, "png", project.resolve("icon.png").toFile());
+        assertEquals(48, Packaging.context(TestConfig.of(Map.of("icon", "icon.png ")), "Acme Editor", "1.0", "org.acme",
+                project, project, TargetOs.LINUX).icons().sourceSize());
+    }
+
     @Test
     void anApplicationWithoutNameAndVersion() {
         AppInfo app = AppInfo.of(TestConfig.defaults(), AppInfo.UNSET, AppInfo.UNSET, "", Path.of("."));
@@ -54,8 +88,12 @@ class AppInfoTest {
     @Test
     void identifiers() {
         assertEquals("org.acme.AcmeEditor", AppInfo.identifier("org.acme", "Acme Editor"));
-        assertEquals("org.acme._3DViewer", AppInfo.identifier("org.acme", "3D Viewer"));
+        assertEquals("org.acme.3DViewer", AppInfo.identifier("org.acme", "3D Viewer"));
+        assertEquals("com.3m.Editor", AppInfo.identifier("com.3m", "Editor"));
         assertEquals("local.application.Editor", AppInfo.identifier(null, "Editor"));
+        // an element that starts with a digit : macOS and MSIX accept it, Flatpak does not
+        assertEquals("com.1password.editor", TestConfig.app(TestConfig.of(Map.of("identifier", "com.1password.editor")))
+                .identifier());
     }
 
     @Test
@@ -63,7 +101,53 @@ class AppInfoTest {
         assertThrows(PackagingException.class,
                 () -> TestConfig.app(TestConfig.of(Map.of("linux.package-name", "Acme Editor"))));
         assertThrows(PackagingException.class, () -> TestConfig.app(TestConfig.of(Map.of("identifier", "editor"))));
+        assertThrows(PackagingException.class,
+                () -> TestConfig.app(TestConfig.of(Map.of("identifier", "com.-acme.editor"))));
         assertThrows(PackagingException.class, () -> TestConfig.app(TestConfig.of(Map.of("license-file", "missing.txt"))));
+    }
+
+    /**
+     * The name of the application names its files on Windows and macOS, and {@code jpackage} takes it : the files of
+     * the Linux packages are named after the package name.
+     */
+    @Test
+    void theNameIsAFileName() {
+        for (String name : List.of("What's Up?", "Acme: Editor", "A*", "Notes/Tasks", "Acme\\Editor", "Acme <Beta>",
+                "Pipe|x", "Say \"hi\"", "50% Off", "Tools; Utilities", "Tab\tName", "Wide　Space")) {
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> AppInfo.checkName(name, Optional.empty(), TargetOs.WINDOWS), name);
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.name=\"" + name + "\" :"), e.getMessage());
+        }
+        for (String name : List.of("Notes/Tasks", "Say \"hi\"", "50% Off", "Line\nBreak", "Wide　Space")) {
+            assertThrows(PackagingException.class, () -> AppInfo.checkName(name, Optional.empty(), TargetOs.MACOS), name);
+        }
+        for (String name : List.of("What's Up?", "Acme: Editor", "Tools; Utilities")) {
+            assertDoesNotThrow(() -> AppInfo.checkName(name, Optional.empty(), TargetOs.MACOS), name);
+        }
+        assertThrows(PackagingException.class, () -> AppInfo.checkName("Tab\tName", Optional.empty(), TargetOs.LINUX));
+        for (String name : List.of("What's Up?", "Notes/Tasks", "50% Off", "Wide　Space")) {
+            assertDoesNotThrow(() -> AppInfo.checkName(name, Optional.empty(), TargetOs.LINUX), name);
+        }
+        for (TargetOs os : TargetOs.values()) {
+            for (String name : List.of("Acme Editor", "Acme (Beta) & Co", "Café", "Acme Corp.", "per-cent, apos' #1")) {
+                assertDoesNotThrow(() -> AppInfo.checkName(name, Optional.of("Tools & Utilities"), os), name);
+            }
+        }
+        // the launcher of a JVM application does not start on Windows from a directory whose path has a semicolon
+        PackagingException e = assertThrows(PackagingException.class,
+                () -> AppInfo.checkName("Tools", Optional.of("Tools;Utilities"), TargetOs.WINDOWS));
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.install-directory="), e.getMessage());
+        assertDoesNotThrow(() -> AppInfo.checkName("Tools", Optional.of("Tools;Utilities"), TargetOs.LINUX));
+    }
+
+    @Test
+    void theNameIsCheckedForTheOperatingSystemOfTheApplication(@TempDir Path project) throws IOException {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("name", "What's Up?"));
+        // before the native executable is built : the Windows executable gets the name in its resources
+        assertThrows(PackagingException.class,
+                () -> Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project, TargetOs.WINDOWS));
+        assertEquals("What's Up?",
+                Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project, TargetOs.MACOS).app().name());
     }
 
     @Test
@@ -76,6 +160,10 @@ class AppInfoTest {
         assertEquals("1.0.0", app("main").numericVersion(3));
         assertEquals("0.2.1", app("0.2.1").numericVersion(3));
         assertEquals("1.7.0", app("01.007").numericVersion(3));
+        // the version of a tag
+        assertEquals("1.2.0", app("v1.2").numericVersion(3));
+        assertEquals("1.2.3.0", app("V1.2.3-SNAPSHOT").numericVersion(4));
+        assertEquals("1.0.0", app("version").numericVersion(3));
     }
 
     @Test
@@ -84,12 +172,33 @@ class AppInfoTest {
         assertEquals("1.2.3", app("1.2.3").linuxVersion());
         assertEquals("0.main", app("main").linuxVersion());
         assertEquals("1.0.rc.1", app("1.0 rc/1").linuxVersion());
+        // a tilde before a pre-release qualifier : sorted before the release
+        assertEquals("1.0.0~rc1", app("1.0.0-rc1").linuxVersion());
+        assertEquals("1.0.0~RC.2", app("1.0.0-RC.2").linuxVersion());
+        assertEquals("2.0~M1", app("2.0-M1").linuxVersion());
+        assertEquals("1.0~alpha.1", app("1.0-alpha-1").linuxVersion());
+        assertEquals("1.0.0~Beta3", app("1.0.0.Beta3").linuxVersion());
+        assertEquals("1.4.0.2~SNAPSHOT", app("1.4.0-2-SNAPSHOT").linuxVersion());
+        // a dot before the other suffixes : sorted after the release
+        assertEquals("1.4.0.2", app("1.4.0-2").linuxVersion());
+        assertEquals("1.0.0.SP1", app("1.0.0-SP1").linuxVersion());
+        assertEquals("2.1.Final", app("2.1-Final").linuxVersion());
+        assertEquals("1.0.0.Final", app("1.0.0.Final").linuxVersion());
+        assertEquals("33.0.0.jre", app("33.0.0-jre").linuxVersion());
+        assertEquals("1.0.main", app("1.0-main").linuxVersion());
+        // the version of a tag
+        assertEquals("1.2", app("v1.2").linuxVersion());
+        assertEquals("1.2.3~rc1", app("v1.2.3-rc1").linuxVersion());
+        assertEquals("0.version", app("version").linuxVersion());
     }
 
     @Test
     void theGuidsAreStable() {
         AppInfo app = TestConfig.app();
-        assertEquals(app.guid("upgrade"), TestConfig.app().guid("upgrade"));
+        // the upgrade code and the component GUIDs of the installed applications : they never change
+        assertEquals("59D1462D-3EFC-3CAD-A8E4-2965BE1A0F56", app.guid("upgrade"));
+        assertEquals("05F95CC4-1B96-3EB0-ACCB-61B9F9EEF648", app.guid("other"));
+        assertEquals("8C16C0B2-04D5-3DAB-81CD-CEBFFD3AF8F0", app.guid("component:Acme Editor.exe"));
         assertTrue(app.guid("upgrade").matches("[0-9A-F]{8}(-[0-9A-F]{4}){3}-[0-9A-F]{12}"), app.guid("upgrade"));
         assertTrue(!app.guid("upgrade").equals(app.guid("other")));
     }
@@ -102,6 +211,25 @@ class AppInfoTest {
         assertEquals(List.of(PackageFormat.DIRECTORY, PackageFormat.DEB, PackageFormat.APPIMAGE),
                 Packaging.formats(config, TargetOs.LINUX));
         assertEquals(List.of(), Packaging.formats(TestConfig.defaults(), TargetOs.LINUX));
+    }
+
+    /**
+     * A native executable built in a container is a Linux executable, on any operating system : the formats of the
+     * operating system of the build are skipped, with a warning.
+     */
+    @Test
+    void theFormatsOfAContainerBuild() {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("formats", "msi,dmg,deb,dmg"));
+        assertEquals(Optional.empty(), Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.LINUX));
+        assertEquals(Optional.empty(), Packaging.containerBuildWarning(config, TargetOs.MACOS, TargetOs.MACOS));
+        String warning = Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.MACOS).orElseThrow();
+        assertTrue(warning.startsWith("The dmg package is not built : "), warning);
+        assertTrue(warning.contains("quarkus.native.container-build"), warning);
+        assertFalse(warning.contains("msi") || warning.contains("deb"), warning);
+        warning = Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.WINDOWS).orElseThrow();
+        assertTrue(warning.startsWith("The msi package is not built : "), warning);
+        assertEquals(Optional.empty(), Packaging.containerBuildWarning(TestConfig.of(Map.of("formats", "deb,rpm")),
+                TargetOs.LINUX, TargetOs.WINDOWS));
     }
 
     private static AppInfo app(String version) {

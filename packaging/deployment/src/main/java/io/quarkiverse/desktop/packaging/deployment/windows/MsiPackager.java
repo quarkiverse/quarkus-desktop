@@ -3,10 +3,12 @@ package io.quarkiverse.desktop.packaging.deployment.windows;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.regex.Pattern;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
@@ -29,6 +31,13 @@ public final class MsiPackager implements Packager {
 
     private static final String ICON = "ApplicationIcon.ico";
 
+    /**
+     * The name of a variable of WiX, and its scope : identifiers, which start with a letter or an underscore, and go on
+     * with letters, digits and underscores (and dots in the scope).
+     */
+    private static final Pattern VARIABLE_NAME = Pattern
+            .compile("[A-Za-z_][A-Za-z_\\p{Nd}]*(\\.[A-Za-z_][A-Za-z_.\\p{Nd}]*)?");
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         // the directory of the .NET global tools is on the PATH of the sessions opened after the first installation
@@ -41,6 +50,7 @@ public final class MsiPackager implements Packager {
                 FileTrees.files(image.root()));
         Path wxs = FileTrees.write(work.resolve("application.wxs"), source);
         Path msi = context.output(context.app().fileName() + "-" + context.app().version() + ".msi");
+        WindowsSdk.warnEmptyDirectories(image, msi);
         Tools.exec(work, Map.of(), List.of(wix.toString(), "build", "-arch", context.arch().windows(), "-pdbtype", "none",
                 "-intermediatefolder", work.resolve("obj").toString(), "-o", msi.toString(), wxs.toString()));
         // the description of the signature is the name of the package in the prompt of the rights of an administrator
@@ -89,6 +99,59 @@ public final class MsiPackager implements Packager {
     }
 
     /**
+     * A text as the value of an attribute of the WiX source : escaped for XML, and for the variables that WiX expands
+     * in every attribute. A dollar sign is doubled : {@code $(var.X)} is a variable of the preprocessor, {@code $$} a
+     * dollar sign. An exclamation mark is doubled before a variable of WiX ({@code !(loc.X)}, {@code !(wix.X)},
+     * {@code !(bind.X)}), as WiX reads {@code !!(} as an exclamation mark there only ; WiX reads these variables from
+     * the start of the text, and takes the text as it is after an {@code !(} that is not one.
+     */
+    static String text(String value) {
+        StringBuilder text = new StringBuilder();
+        int start = 0;
+        int index;
+        int end;
+        while ((index = value.indexOf("!(", start)) >= 0 && (end = variableEnd(value, index)) >= 0) {
+            text.append(value, start, index).append('!').append(value, index, end);
+            start = end;
+        }
+        text.append(value, start, value.length());
+        return Xml.escape(text.toString()).replace("$", "$$");
+    }
+
+    /**
+     * The end of the variable of WiX at an index of a text, after its closing parenthesis, or -1 when the text has none
+     * there : {@code !(loc.name)}, {@code !(wix.name)} or {@code !(bind.name)}, where the name may have a scope
+     * ({@code name.scope}) and be followed by a default value ({@code name=value}).
+     */
+    private static int variableEnd(String value, int index) {
+        int dot = value.indexOf('.', index);
+        int close = dot < 0 ? -1 : value.indexOf(')', dot);
+        if (close < 0 || !List.of("loc", "wix", "bind").contains(value.substring(index + 2, dot))) {
+            return -1;
+        }
+        int equals = value.indexOf('=', dot);
+        String name = value.substring(dot + 1, equals >= 0 && equals < close ? equals : close);
+        return VARIABLE_NAME.matcher(name).matches() ? close + 1 : -1;
+    }
+
+    /**
+     * The nested directories of a path of the configuration, separated by {@code \} or {@code /} : each is a directory
+     * of the source, which the package can remove from the profile of the user (WiX would create the parents of a
+     * path written as one name, without removing them).
+     *
+     * @param property the property of the path, after {@code quarkus.desktop.packaging.windows.}
+     * @throws PackagingException for a path without a name
+     */
+    static List<String> directories(String property, String path) {
+        List<String> names = Arrays.stream(path.split("[\\\\/]")).filter(name -> !name.isEmpty()).toList();
+        if (names.isEmpty()) {
+            throw new PackagingException("quarkus.desktop.packaging.windows." + property + "=" + path
+                    + " : write the name of a directory, or the names of nested directories separated by \\");
+        }
+        return names;
+    }
+
+    /**
      * A directory of the application image : its files and its sub directories, by name.
      */
     private static final class Directory {
@@ -123,6 +186,7 @@ public final class MsiPackager implements Packager {
     static String wxs(AppInfo app, DesktopPackagingConfig.Windows config, Path root, String launcher, Path icon,
             List<Path> files) {
         boolean perUser = config.perUser();
+        String upgradeCode = upgradeCode(app, config);
         String registryKey = "Software\\" + app.vendor() + "\\" + app.name();
         Directory tree = new Directory();
         for (Path file : files) {
@@ -136,22 +200,31 @@ public final class MsiPackager implements Packager {
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         xml.append("<Wix xmlns=\"http://wixtoolset.org/schemas/v4/wxs\">\n");
-        xml.append("  <Package Name=\"").append(Xml.escape(app.name())).append("\" Manufacturer=\"")
-                .append(Xml.escape(app.vendor())).append("\" Version=\"").append(version(app)).append("\" UpgradeCode=\"")
-                .append(upgradeCode(app, config)).append("\" Language=\"1033\" Scope=\"")
+        xml.append("  <Package Name=\"").append(text(app.name())).append("\" Manufacturer=\"")
+                .append(text(app.vendor())).append("\" Version=\"").append(version(app)).append("\" UpgradeCode=\"")
+                .append(upgradeCode).append("\" Language=\"1033\" Scope=\"")
                 .append(perUser ? "perUser" : "perMachine").append("\" InstallerVersion=\"500\">\n");
-        xml.append("    <SummaryInformation Description=\"").append(Xml.escape(app.description())).append("\" />\n");
+        xml.append("    <SummaryInformation Description=\"").append(text(app.description())).append("\" />\n");
         // a new version replaces the installed one ; a rebuild of the same version too
         xml.append("    <MajorUpgrade AllowSameVersionUpgrades=\"yes\" DowngradeErrorMessage=\"A newer version of")
                 .append(" [ProductName] is already installed.\" />\n");
+        // not over the setup program of the application, whose uninstall key is named after the upgrade code : the two
+        // would install the same files, and the removal of either would take them from the other
+        xml.append("    <Property Id=\"INNOSETUPINSTALLED\">\n");
+        xml.append("      <RegistrySearch Root=\"").append(perUser ? "HKCU" : "HKLM")
+                .append("\" Key=\"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{").append(upgradeCode)
+                .append("}_is1\" Name=\"UninstallString\" Type=\"raw\" />\n");
+        xml.append("    </Property>\n");
+        xml.append("    <Launch Condition=\"Installed OR NOT INNOSETUPINSTALLED\" Message=\"[ProductName] is installed")
+                .append(" by its setup program : remove it first.\" />\n");
         xml.append("    <MediaTemplate EmbedCab=\"yes\" CompressionLevel=\"high\" />\n");
-        xml.append("    <Icon Id=\"").append(ICON).append("\" SourceFile=\"").append(Xml.escape(icon.toString()))
+        xml.append("    <Icon Id=\"").append(ICON).append("\" SourceFile=\"").append(text(icon.toString()))
                 .append("\" />\n");
         xml.append("    <Property Id=\"ARPPRODUCTICON\" Value=\"").append(ICON).append("\" />\n");
         app.homepage().ifPresent(homepage -> xml.append("    <Property Id=\"ARPURLINFOABOUT\" Value=\"")
-                .append(Xml.escape(homepage)).append("\" />\n"));
+                .append(text(homepage)).append("\" />\n"));
 
-        String installDirectory = Xml.escape(config.installDirectory().orElse(app.name()));
+        List<String> installDirectory = directories("install-directory", config.installDirectory().orElse(app.name()));
         if (perUser) {
             xml.append("    <StandardDirectory Id=\"LocalAppDataFolder\">\n");
             xml.append("      <Directory Id=\"UserProgramsFolder\" Name=\"Programs\">\n");
@@ -159,9 +232,17 @@ public final class MsiPackager implements Packager {
             xml.append("    <StandardDirectory Id=\"ProgramFiles6432Folder\">\n");
         }
         String indent = perUser ? "        " : "      ";
-        xml.append(indent).append("<Directory Id=\"INSTALLFOLDER\" Name=\"").append(installDirectory).append("\">\n");
-        directory(xml, indent + "  ", tree, "INSTALLFOLDER", app, root, launcher, perUser, registryKey, ids);
-        xml.append(indent).append("</Directory>\n");
+        List<String> installParents = openDirectories(xml, indent, installDirectory, "INSTALLFOLDER", "InstallParent");
+        // the directories that a per-user package creates in the profile of the user above the installation directory,
+        // which have to be removed too (ICE64)
+        List<String> created = new ArrayList<>();
+        if (perUser) {
+            created.add("UserProgramsFolder");
+            created.addAll(installParents);
+        }
+        directory(xml, indent + "  ".repeat(installDirectory.size()), tree, "INSTALLFOLDER", app, root, launcher, perUser,
+                registryKey, ids, created);
+        closeDirectories(xml, indent, installDirectory.size());
         if (perUser) {
             xml.append("      </Directory>\n");
         }
@@ -169,27 +250,23 @@ public final class MsiPackager implements Packager {
 
         if (config.startMenu()) {
             xml.append("    <StandardDirectory Id=\"ProgramMenuFolder\">\n");
-            String shortcutIndent = "      ";
-            if (config.startMenuGroup().isPresent()) {
-                xml.append("      <Directory Id=\"StartMenuGroup\" Name=\"")
-                        .append(Xml.escape(config.startMenuGroup().get())).append("\">\n");
-                shortcutIndent = "        ";
-            }
-            shortcut(xml, shortcutIndent, "StartMenuShortcut", app, registryKey, config.startMenuGroup().isPresent());
-            if (config.startMenuGroup().isPresent()) {
-                xml.append("      </Directory>\n");
-            }
+            List<String> group = config.startMenuGroup().map(path -> directories("start-menu-group", path))
+                    .orElse(List.of());
+            List<String> groupParents = openDirectories(xml, "      ", group, "StartMenuGroup", "StartMenuGroup");
+            shortcut(xml, "      " + "  ".repeat(group.size()), "StartMenuShortcut", app, registryKey, !group.isEmpty(),
+                    groupParents);
+            closeDirectories(xml, "      ", group.size());
             xml.append("    </StandardDirectory>\n");
             ids.components.add("StartMenuShortcut");
         }
         if (config.desktopShortcut()) {
             xml.append("    <StandardDirectory Id=\"DesktopFolder\">\n");
-            shortcut(xml, "      ", "DesktopShortcut", app, registryKey, false);
+            shortcut(xml, "      ", "DesktopShortcut", app, registryKey, false, List.of());
             xml.append("    </StandardDirectory>\n");
             ids.components.add("DesktopShortcut");
         }
 
-        xml.append("    <Feature Id=\"Application\" Title=\"").append(Xml.escape(app.name())).append("\" Level=\"1\">\n");
+        xml.append("    <Feature Id=\"Application\" Title=\"").append(text(app.name())).append("\" Level=\"1\">\n");
         for (String component : ids.components) {
             xml.append("      <ComponentRef Id=\"").append(component).append("\" />\n");
         }
@@ -200,20 +277,52 @@ public final class MsiPackager implements Packager {
     }
 
     /**
+     * Opens the nested directories of a path : the last one has the given identifier, its parents a numbered one.
+     *
+     * @return the identifiers of the parents
+     */
+    private static List<String> openDirectories(StringBuilder xml, String indent, List<String> names, String id,
+            String parentId) {
+        List<String> parents = new ArrayList<>();
+        for (int i = 0; i < names.size(); i++) {
+            String directoryId = i == names.size() - 1 ? id : parentId + (i + 1);
+            xml.append(indent).append("  ".repeat(i)).append("<Directory Id=\"").append(directoryId).append("\" Name=\"")
+                    .append(text(names.get(i))).append("\">\n");
+            if (i < names.size() - 1) {
+                parents.add(directoryId);
+            }
+        }
+        return parents;
+    }
+
+    /**
+     * Closes the nested directories that {@link #openDirectories} opened.
+     */
+    private static void closeDirectories(StringBuilder xml, String indent, int count) {
+        for (int i = count - 1; i >= 0; i--) {
+            xml.append(indent).append("  ".repeat(i)).append("</Directory>\n");
+        }
+    }
+
+    /**
      * The components of the files of a directory, and its sub directories. A component has one file, which makes its
      * GUID stable : WiX derives it from the path of the installed file. In a per-user package, the files are in the
      * profile of the user : Windows Installer then wants a registry value of the user as the key path of each
      * component, and the removal of each directory ; WiX does not generate the GUID of such a component, which is
      * derived here from the identifier of the application and the path of the file.
+     *
+     * @param parents the directories of the profile of the user that the package creates above this one, which its
+     *        first component removes too
      */
     private static void directory(StringBuilder xml, String indent, Directory directory, String directoryId, AppInfo app,
-            Path root, String launcher, boolean perUser, String registryKey, Ids ids) {
+            Path root, String launcher, boolean perUser, String registryKey, Ids ids, List<String> parents) {
         if (perUser) {
             String component = ids.next("r");
             ids.components.add(component);
             xml.append(indent).append("<Component Id=\"").append(component).append("\">\n");
             xml.append(indent).append("  <RemoveFolder Id=\"").append(component).append("\" Directory=\"")
                     .append(directoryId).append("\" On=\"uninstall\" />\n");
+            removeFolders(xml, indent + "  ", parents);
             registryKeyPath(xml, indent + "  ", registryKey + "\\Components", component);
             xml.append(indent).append("</Component>\n");
         }
@@ -225,7 +334,7 @@ public final class MsiPackager implements Packager {
             xml.append(indent).append("<Component Id=\"").append(component).append("\"")
                     .append(perUser ? " Guid=\"" + app.guid("component:" + path) + "\"" : "").append(">\n");
             xml.append(indent).append("  <File Id=\"").append(isLauncher ? LAUNCHER_FILE : ids.next("f"))
-                    .append("\" Source=\"").append(Xml.escape(root.resolve(file).toString())).append("\"")
+                    .append("\" Source=\"").append(text(root.resolve(file).toString())).append("\"")
                     .append(perUser ? " KeyPath=\"no\"" : "").append(" />\n");
             if (perUser) {
                 registryKeyPath(xml, indent + "  ", registryKey + "\\Components", component);
@@ -235,31 +344,45 @@ public final class MsiPackager implements Packager {
         for (Map.Entry<String, Directory> child : directory.directories.entrySet()) {
             String id = ids.next("d");
             xml.append(indent).append("<Directory Id=\"").append(id).append("\" Name=\"")
-                    .append(Xml.escape(child.getKey())).append("\">\n");
-            directory(xml, indent + "  ", child.getValue(), id, app, root, launcher, perUser, registryKey, ids);
+                    .append(text(child.getKey())).append("\">\n");
+            directory(xml, indent + "  ", child.getValue(), id, app, root, launcher, perUser, registryKey, ids, List.of());
             xml.append(indent).append("</Directory>\n");
         }
     }
 
     /**
      * A shortcut to the launcher. The key path of the component of a shortcut is a registry value of the user.
+     *
+     * @param removeFolder whether the component removes the folder of the shortcut
+     * @param parents the parents of the folder of the shortcut that the component removes too
      */
     private static void shortcut(StringBuilder xml, String indent, String id, AppInfo app, String registryKey,
-            boolean removeFolder) {
+            boolean removeFolder, List<String> parents) {
         xml.append(indent).append("<Component Id=\"").append(id).append("\">\n");
-        xml.append(indent).append("  <Shortcut Id=\"").append(id).append("\" Name=\"").append(Xml.escape(app.name()))
-                .append("\" Description=\"").append(Xml.escape(app.description())).append("\" Target=\"[#")
+        xml.append(indent).append("  <Shortcut Id=\"").append(id).append("\" Name=\"").append(text(app.name()))
+                .append("\" Description=\"").append(text(app.description())).append("\" Target=\"[#")
                 .append(LAUNCHER_FILE).append("]\" WorkingDirectory=\"INSTALLFOLDER\" Icon=\"").append(ICON)
                 .append("\" />\n");
         if (removeFolder) {
             xml.append(indent).append("  <RemoveFolder Id=\"Remove").append(id).append("Folder\" On=\"uninstall\" />\n");
         }
+        removeFolders(xml, indent + "  ", parents);
         registryKeyPath(xml, indent + "  ", registryKey, id);
         xml.append(indent).append("</Component>\n");
     }
 
+    /**
+     * The removal of directories when the application is removed, when they are empty.
+     */
+    private static void removeFolders(StringBuilder xml, String indent, List<String> directoryIds) {
+        for (String directoryId : directoryIds) {
+            xml.append(indent).append("<RemoveFolder Id=\"Remove").append(directoryId).append("\" Directory=\"")
+                    .append(directoryId).append("\" On=\"uninstall\" />\n");
+        }
+    }
+
     private static void registryKeyPath(StringBuilder xml, String indent, String key, String name) {
-        xml.append(indent).append("<RegistryValue Root=\"HKCU\" Key=\"").append(Xml.escape(key)).append("\" Name=\"")
+        xml.append(indent).append("<RegistryValue Root=\"HKCU\" Key=\"").append(text(key)).append("\" Name=\"")
                 .append(name).append("\" Type=\"integer\" Value=\"1\" KeyPath=\"yes\" />\n");
     }
 }

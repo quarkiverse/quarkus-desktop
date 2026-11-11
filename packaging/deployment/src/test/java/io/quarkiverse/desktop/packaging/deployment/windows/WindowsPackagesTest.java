@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -92,6 +93,14 @@ class WindowsPackagesTest {
                 document.getElementsByTagName("ComponentRef").getLength());
         assertEquals(FILES.size() + 1, document.getElementsByTagName("Component").getLength());
         assertTrue(xml.contains("ARPURLINFOABOUT"), xml);
+        // not over the setup program of the application, whose uninstall key is named after the upgrade code
+        Element search = (Element) document.getElementsByTagName("RegistrySearch").item(0);
+        assertEquals("INNOSETUPINSTALLED", ((Element) search.getParentNode()).getAttribute("Id"));
+        assertEquals("HKLM", search.getAttribute("Root"));
+        assertEquals("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{" + TestConfig.app(config).guid("upgrade")
+                + "}_is1", search.getAttribute("Key"));
+        assertEquals("Installed OR NOT INNOSETUPINSTALLED",
+                ((Element) document.getElementsByTagName("Launch").item(0)).getAttribute("Condition"));
     }
 
     @Test
@@ -115,9 +124,120 @@ class WindowsPackagesTest {
             assertTrue(component.getAttribute("Guid").matches("[0-9A-F-]{36}"), component.getAttribute("Guid"));
             assertEquals(1, component.getElementsByTagName("RegistryValue").getLength());
         }
-        // each directory is removed : the installation directory, app and app\lib
-        assertEquals(3 + 1, document.getElementsByTagName("RemoveFolder").getLength());
+        // each directory is removed : the installation directory, app and app\lib, the folder of the shortcut, and the
+        // Programs directory of the profile, which the package may have created (ICE64)
+        assertEquals(3 + 2, document.getElementsByTagName("RemoveFolder").getLength());
+        assertTrue(removedFolders(document).contains("UserProgramsFolder"), removedFolders(document).toString());
+        // the setup program of the application is installed for the current user too
+        Element search = (Element) document.getElementsByTagName("RegistrySearch").item(0);
+        assertEquals("HKCU", search.getAttribute("Root"));
+        assertEquals("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\{11111111-2222-3333-4444-555555555555}_is1",
+                search.getAttribute("Key"));
         assertEquals(wxs(config), xml);
+    }
+
+    /**
+     * The directories of the {@code Directory} attribute of the {@code RemoveFolder} elements.
+     */
+    static List<String> removedFolders(Document document) {
+        List<String> directories = new ArrayList<>();
+        NodeList folders = document.getElementsByTagName("RemoveFolder");
+        for (int i = 0; i < folders.getLength(); i++) {
+            directories.add(((Element) folders.item(i)).getAttribute("Directory"));
+        }
+        return directories;
+    }
+
+    /**
+     * An installation directory and a folder of the Start menu with a path : nested directories, the parents of which
+     * are removed from the profile of the user.
+     */
+    @Test
+    void theWixSourceOfNestedDirectories() throws Exception {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("windows.per-user", "true", "windows.install-directory",
+                "Acme\\Editor", "windows.start-menu-group", "Acme/Tools/"));
+        Document document = parse(wxs(config));
+        Element installFolder = directory(document, "INSTALLFOLDER");
+        assertEquals("Editor", installFolder.getAttribute("Name"));
+        Element installParent = (Element) installFolder.getParentNode();
+        assertEquals("Acme", installParent.getAttribute("Name"));
+        assertEquals("UserProgramsFolder", ((Element) installParent.getParentNode()).getAttribute("Id"));
+        Element group = directory(document, "StartMenuGroup");
+        assertEquals("Tools", group.getAttribute("Name"));
+        Element groupParent = (Element) group.getParentNode();
+        assertEquals("Acme", groupParent.getAttribute("Name"));
+        assertEquals("ProgramMenuFolder", ((Element) groupParent.getParentNode()).getAttribute("Id"));
+        NodeList directories = document.getElementsByTagName("Directory");
+        for (int i = 0; i < directories.getLength(); i++) {
+            String name = ((Element) directories.item(i)).getAttribute("Name");
+            assertFalse(name.contains("\\") || name.contains("/"), name);
+        }
+        List<String> removed = removedFolders(document);
+        assertTrue(removed.containsAll(List.of("UserProgramsFolder", installParent.getAttribute("Id"),
+                groupParent.getAttribute("Id"))), removed.toString());
+
+        // for all users, only the folder of the Start menu (the directory of the component of the shortcut) and its
+        // parent are removed : the ICE checks take the Start menu as a directory of the profile
+        DesktopPackagingConfig perMachine = TestConfig.of(Map.of("windows.install-directory", "Acme\\Editor",
+                "windows.start-menu-group", "Acme\\Tools"));
+        Document machineDocument = parse(wxs(perMachine));
+        assertEquals("Acme", ((Element) directory(machineDocument, "INSTALLFOLDER").getParentNode()).getAttribute("Name"));
+        assertEquals("StartMenuGroup1", ((Element) directory(machineDocument, "StartMenuGroup").getParentNode())
+                .getAttribute("Id"));
+        assertEquals(List.of("", "StartMenuGroup1"), removedFolders(machineDocument));
+
+        // no name
+        for (Map.Entry<String, String> path : Map.of("windows.install-directory", "\\", "windows.start-menu-group", "/")
+                .entrySet()) {
+            DesktopPackagingConfig empty = TestConfig.of(Map.of(path.getKey(), path.getValue()));
+            PackagingException e = assertThrows(PackagingException.class, () -> wxs(empty));
+            assertTrue(e.getMessage().contains("quarkus.desktop.packaging." + path.getKey() + "="), e.getMessage());
+        }
+    }
+
+    /**
+     * The {@code Directory} element of an identifier.
+     */
+    static Element directory(Document document, String id) {
+        NodeList directories = document.getElementsByTagName("Directory");
+        for (int i = 0; i < directories.getLength(); i++) {
+            if (((Element) directories.item(i)).getAttribute("Id").equals(id)) {
+                return (Element) directories.item(i);
+            }
+        }
+        throw new AssertionError("No directory " + id);
+    }
+
+    /**
+     * The texts of the WiX source are escaped for the variables that WiX expands in every attribute : a dollar sign is
+     * doubled, an exclamation mark before a variable of WiX, as WiX 5 reads them.
+     */
+    @Test
+    void theWixSourceEscapesTheVariablesOfWix() {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("vendor", "A$$B", "description",
+                "Costs $(5), $$ and !(loc.Foo) or Hello!(beta)"));
+        List<Path> files = new ArrayList<>(FILES);
+        files.add(Path.of("pay$(x).txt"));
+        String xml = MsiPackager.wxs(TestConfig.app(config), config.windows(), ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), files);
+        assertTrue(xml.contains("Manufacturer=\"A$$$$B\""), xml);
+        assertTrue(xml.contains("<SummaryInformation Description=\"Costs $$(5), $$$$ and !!(loc.Foo) or Hello!(beta)\""),
+                xml);
+        assertTrue(xml.contains("Description=\"Costs $$(5), $$$$ and !!(loc.Foo) or Hello!(beta)\" Target="), xml);
+        assertTrue(xml.contains("Source=\"" + ROOT.resolve("pay$(x).txt").toString().replace("$", "$$") + "\""), xml);
+
+        assertEquals("end$$", MsiPackager.text("end$"));
+        assertEquals("A &amp; B $$$$", MsiPackager.text("A & B $$"));
+        assertEquals("a!!!(loc.x)", MsiPackager.text("a!!(loc.x)"));
+        assertEquals("!!(wix.Foo) !!(bind.FileVersion.f1) !!(loc.x=a b) !!(loc._x.y.z)",
+                MsiPackager.text("!(wix.Foo) !(bind.FileVersion.f1) !(loc.x=a b) !(loc._x.y.z)"));
+        // not variables : WiX reads !!( as an exclamation mark before a variable only, and takes the text as it is after
+        // an !( that is not a variable
+        for (String text : List.of("Hello!(beta)", "!(LOC.x)", "!(loc.1x)", "!(loc.x B)", "!(loc.x.)", "!(bindpath.x)",
+                "!(loc.x B", "Hello!(beta) !(loc.Foo)")) {
+            assertEquals(text, MsiPackager.text(text));
+        }
+        assertEquals("!!(loc.x) a!(b.c) !(loc.y)", MsiPackager.text("!(loc.x) a!(b.c) !(loc.y)"));
     }
 
     @Test
@@ -154,6 +274,10 @@ class WindowsPackagesTest {
             Element pkg = (Element) parse(wxs(config)).getElementsByTagName("Package").item(0);
             assertEquals("ABCDEFAB-1111-2222-3333-444444444444", pkg.getAttribute("UpgradeCode"));
             assertTrue(script(config).contains("AppId={{ABCDEFAB-1111-2222-3333-444444444444}\n"), script(config));
+            // the same code in the checks of the other installer
+            assertTrue(wxs(config).contains("Uninstall\\{ABCDEFAB-1111-2222-3333-444444444444}_is1\""), wxs(config));
+            assertTrue(script(config).contains("MsiEnumRelatedProducts('{ABCDEFAB-1111-2222-3333-444444444444}', 0, 0,"),
+                    script(config));
         }
         // not a GUID : neither the package nor the setup program is generated
         for (String written : List.of("my-application", "{", "{}", "{{abcdefab-1111-2222-3333-444444444444}",
@@ -167,7 +291,7 @@ class WindowsPackagesTest {
 
     static String script(DesktopPackagingConfig config) {
         return InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor");
+                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true);
     }
 
     @Test
@@ -176,7 +300,8 @@ class WindowsPackagesTest {
                 "windows.desktop-shortcut", "true"));
         AppInfo app = TestConfig.app(config);
         String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor-1.2.3-SNAPSHOT");
+                Path.of("application.ico"), Path.of("out"), "Acme-Editor-1.2.3-SNAPSHOT",
+                List.of(Path.of("Acme Editor.exe"), Path.of("lib", "a.dll"), Path.of("{x}", "b.txt")), true);
         assertTrue(script.contains("AppId={{" + app.guid("upgrade") + "}\n"), script);
         assertTrue(script.contains("AppName=Acme Editor\n"), script);
         assertTrue(script.contains("AppVersion=1.2.3-SNAPSHOT\n"), script);
@@ -185,7 +310,17 @@ class WindowsPackagesTest {
         assertTrue(script.contains("PrivilegesRequired=admin\n"), script);
         assertTrue(script.contains("ArchitecturesAllowed=x64compatible\n"), script);
         assertTrue(script.contains("OutputBaseFilename=Acme-Editor-1.2.3-SNAPSHOT\n"), script);
-        assertTrue(script.contains("Source: \"" + ROOT + "\\*\"; DestDir: \"{app}\""), script);
+        // a line per file, rather than a wildcard, which leaves out the hidden files
+        assertTrue(script.contains("Source: \"" + ROOT.resolve("Acme Editor.exe") + "\"; DestDir: \"{app}\"; Flags:"
+                + " ignoreversion\n"), script);
+        assertTrue(script.contains("Source: \"" + ROOT.resolve("lib").resolve("a.dll") + "\"; DestDir: \"{app}\\lib\";"
+                + " Flags: ignoreversion\n"), script);
+        assertTrue(script.contains("Source: \"" + ROOT.resolve("{x}").resolve("b.txt") + "\"; DestDir: \"{app}\\{{x}\";"
+                + " Flags: ignoreversion\n"), script);
+        assertFalse(script.contains("\\*\""), script);
+        assertFalse(script.contains("recursesubdirs"), script);
+        // a native executable : no directory of jpackage to delete
+        assertFalse(script.contains("[InstallDelete]"), script);
         assertTrue(script.contains("Name: \"{autoprograms}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\""), script);
         assertTrue(script.contains("Name: \"{autodesktop}\\Acme Editor\""), script);
         assertTrue(script.contains("[Tasks]"), script);
@@ -193,14 +328,40 @@ class WindowsPackagesTest {
                 + " skipifsilent\n"), script);
         // nothing to sign
         assertFalse(script.contains("SignTool"), script);
+        // not over the MSI package of the application : the products of its upgrade code
+        assertTrue(script.contains("external 'MsiEnumRelatedProductsW@msi.dll stdcall';\n"), script);
+        assertTrue(script.contains("  Result := MsiEnumRelatedProducts('{" + app.guid("upgrade") + "}', 0, 0, ProductCode)"
+                + " <> 0;\n"), script);
+        assertTrue(script.contains("SuppressibleMsgBox('Acme Editor is installed by its MSI package : remove it first.',"
+                + " mbCriticalError, MB_OK, IDOK);\n"), script);
+        assertTrue(script.indexOf("[Code]") > script.indexOf("[Run]"), script);
 
         DesktopPackagingConfig perUser = TestConfig.of(Map.of("windows.per-user", "true", "windows.start-menu", "false"));
         String userScript = InnoSetupPackager.script(TestConfig.app(perUser), perUser.windows(), Arch.ARM64, ROOT,
-                "Acme Editor.exe", Path.of("application.ico"), Path.of("out"), "Acme-Editor");
+                "Acme Editor.exe", Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, false);
         assertTrue(userScript.contains("PrivilegesRequired=lowest\n"), userScript);
         assertTrue(userScript.contains("ArchitecturesAllowed=arm64\n"), userScript);
         assertFalse(userScript.contains("{autoprograms}"), userScript);
         assertFalse(userScript.contains("[Tasks]"), userScript);
+        // the launcher of jpackage : the setup program deletes the jars and the Java runtime of the installed version
+        assertTrue(userScript.contains("[InstallDelete]\nType: filesandordirs; Name: \"{app}\\app\"\n"
+                + "Type: filesandordirs; Name: \"{app}\\runtime\"\n"), userScript);
+        assertTrue(userScript.indexOf("[InstallDelete]") < userScript.indexOf("[Files]"), userScript);
+    }
+
+    /**
+     * The name of the application in the message of the setup program when the MSI package is installed : a string of
+     * the code, whose quotes are doubled, and whose braces are not constants.
+     */
+    @Test
+    void theInnoSetupScriptNamesTheApplicationInItsCode() {
+        AppInfo app = new AppInfo("Acme's {Editor}", "acme", "org.acme.Editor", "1.0", "Acme", "Edits", Optional.empty(),
+                Optional.empty(), Optional.empty());
+        String script = InnoSetupPackager.script(app, TestConfig.defaults().windows(), Arch.X64, ROOT, "Editor.exe",
+                Path.of("application.ico"), Path.of("out"), "Editor-1.0", FILES, true);
+        assertTrue(script.contains("    SuppressibleMsgBox('Acme''s {Editor} is installed by its MSI package : remove it"
+                + " first.', mbCriticalError, MB_OK, IDOK);\n"), script);
+        assertTrue(script.contains("AppName=Acme's {{Editor}\n"), script);
     }
 
     /**
@@ -212,7 +373,7 @@ class WindowsPackagesTest {
         AppInfo app = new AppInfo("100% {Fun}, A&B|C", "fun", "org.acme.Fun", "1.0", "Acme", "Fun", Optional.empty(),
                 Optional.empty(), Optional.empty());
         String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Fun.exe",
-                Path.of("application.ico"), Path.of("out"), "Fun-1.0");
+                Path.of("application.ico"), Path.of("out"), "Fun-1.0", FILES, true);
         assertTrue(script.contains("Description: \"{cm:LaunchProgram,100%25 {{Fun%7d%2c A&&B%7cC}\"; Flags:"), script);
         // elsewhere the name is not the argument of a constant
         assertTrue(script.contains("AppName=100% {{Fun}, A&B|C\n"), script);
@@ -294,6 +455,20 @@ class WindowsPackagesTest {
                 WindowsSdk.unsigned(new ApplicationImage(root, "Acme Editor.exe", true)));
     }
 
+    /**
+     * The empty directories of the application image, which the Windows packages do not have.
+     */
+    @Test
+    void theEmptyDirectoriesOfTheApplicationImage(@TempDir Path root) throws Exception {
+        Files.write(root.resolve("Acme Editor.exe"), new byte[] { 1 });
+        Files.createDirectories(root.resolve("plugins"));
+        Files.createDirectories(root.resolve("data/cache"));
+        Files.writeString(root.resolve("data/notes.txt"), "notes");
+        Files.createDirectories(root.resolve("lib"));
+        Files.writeString(root.resolve("lib/a.dll"), "a");
+        assertEquals(List.of(Path.of("data", "cache"), Path.of("plugins")), WindowsSdk.emptyDirectories(root));
+    }
+
     @Test
     void theMsixManifest() throws Exception {
         DesktopPackagingConfig config = TestConfig.of(Map.of("vendor", "Acme, Inc.", "windows.msix.capabilities",
@@ -310,8 +485,9 @@ class WindowsPackagesTest {
         assertEquals("Acme Editor.exe", application.getAttribute("Executable"));
         assertEquals("Windows.FullTrustApplication", application.getAttribute("EntryPoint"));
         // the general capabilities come before the restricted ones
-        assertTrue(xml.indexOf("<Capability Name=\"internetClient\"") < xml.indexOf("<rescap:Capability Name=\"runFullTrust\""),
-                xml);
+        int general = xml.indexOf("<Capability Name=\"internetClient\"");
+        int restricted = xml.indexOf("<rescap:Capability Name=\"runFullTrust\"");
+        assertTrue(general >= 0 && restricted >= 0 && general < restricted, xml);
         assertEquals("Acme, Inc.", document.getElementsByTagName("PublisherDisplayName").item(0).getTextContent());
 
         DesktopPackagingConfig invalid = TestConfig.of(Map.of("windows.msix.identity-name", "a b"));
@@ -441,10 +617,14 @@ class WindowsPackagesTest {
         assertEquals(3 << 16, buffer.getInt(version[3] + 52));
         String strings = new String(res, version[3], version[2], StandardCharsets.UTF_16LE);
         for (String expected : List.of("VS_VERSION_INFO", "StringFileInfo", "040904B0", "CompanyName", "Acme & Sons",
-                "FileDescription", "Edits <documents>", "ProductVersion", "1.2.3-SNAPSHOT", "OriginalFilename",
-                "Acme Editor.exe", "LegalCopyright", "Copyright (c) Acme", "VarFileInfo", "Translation")) {
+                "ProductVersion", "1.2.3-SNAPSHOT", "OriginalFilename", "Acme Editor.exe", "LegalCopyright",
+                "Copyright (c) Acme", "VarFileInfo", "Translation")) {
             assertTrue(strings.contains(expected), expected);
         }
+        // the file description is the name of the program for Windows (the task manager) : the name of the
+        // application, rather than its description, which is a comment. A key, then the zeros of its end and padding
+        assertTrue(Pattern.compile("FileDescription\u0000+Acme Editor\u0000").matcher(strings).find(), strings);
+        assertTrue(Pattern.compile("Comments\u0000+Edits <documents>\u0000").matcher(strings).find(), strings);
         assertEquals(List.of(1, 2, 3, 0), List.of(WindowsResources.versionNumbers(app)[0],
                 WindowsResources.versionNumbers(app)[1], WindowsResources.versionNumbers(app)[2],
                 WindowsResources.versionNumbers(app)[3]));

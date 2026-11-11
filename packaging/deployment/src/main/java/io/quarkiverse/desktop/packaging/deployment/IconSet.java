@@ -56,7 +56,14 @@ public final class IconSet {
      */
     public static IconSet of(Path image) throws IOException {
         ImageIO.setUseCache(false);
-        BufferedImage read = ImageIO.read(image.toFile());
+        BufferedImage read;
+        try {
+            read = ImageIO.read(image.toFile());
+        } catch (IOException e) {
+            // a damaged file : the exception of ImageIO does not name it
+            throw new PackagingException(image + " is not an image that the JDK reads (" + e.getMessage()
+                    + ") : the icon of the application is a PNG file", e);
+        }
         if (read == null) {
             throw new PackagingException(image + " is not an image that the JDK reads : the icon of the application is a"
                     + " PNG file");
