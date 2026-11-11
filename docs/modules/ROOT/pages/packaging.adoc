@@ -1,0 +1,332 @@
+= Desktop Packaging
+
+include::./includes/attributes.adoc[]
+:diataxis-type: reference
+:categories: miscellaneous
+
+The `quarkus-desktop-packaging` extension packages a desktop application as the installers of Windows, macOS and
+Linux, at the end of the build: from its native executable or, in JVM mode, from its jar with a Java runtime. It does
+not depend on a user interface toolkit: it packages AWT, Swing, SWT and JavaFX applications alike, with or without the
+other extensions of Quarkus Desktop.
+
+[cols="1,1,2,3"]
+|===
+|Format |Operating system |What it is |Tool of the build machine
+
+|`directory`
+|all
+|The application image: the directory of the application (an application bundle on macOS), which the other formats
+install
+|none for a native executable; a JDK with `jpackage` in JVM mode
+
+|`msi`
+|Windows
+|A Windows Installer package
+|https://wixtoolset.org/[WiX Toolset] 4 or later (`dotnet tool install --global wix`)
+
+|`exe`
+|Windows
+|A setup program with a wizard and an uninstaller
+|https://jrsoftware.org/isinfo.php[Inno Setup] 6.3 or later (`winget install JRSoftware.InnoSetup`)
+
+|`msix`
+|Windows
+|An MSIX package
+|`makeappx` of the Windows SDK
+
+|`dmg`
+|macOS
+|A disk image, with a link to the `Applications` folder
+|`hdiutil` (part of macOS)
+
+|`pkg`
+|macOS
+|An installer package
+|`pkgbuild` and `productbuild` (part of macOS)
+
+|`deb`
+|Linux
+|A Debian package
+|`dpkg-deb`, and `dpkg-shlibdeps` of `dpkg-dev` for the dependencies
+
+|`rpm`
+|Linux
+|An RPM package
+|`rpmbuild` (`dnf install rpm-build`, or `apt install rpm`)
+
+|`appimage`
+|Linux
+|An AppImage: one executable file, without installation
+|https://github.com/AppImage/appimagetool[appimagetool], on the `PATH`
+
+|`flatpak`
+|Linux
+|A Flatpak bundle
+|`flatpak`
+
+|`snap`
+|Linux
+|A snap
+|`snapcraft` (`sudo snap install snapcraft --classic`)
+|===
+
+A package is built on its operating system, with the tool of its format: nothing is cross-built. The extension finds
+the tools on the `PATH` and where their installers put them, and the build fails with what to install when one is
+missing; `quarkus.desktop.packaging.tools.<name>` gives the path of a tool that is elsewhere.
+
+[[installation]]
+== Installation
+
+.Maven
+[source,xml,subs=attributes+]
+----
+<dependency>
+    <groupId>io.quarkiverse.desktop</groupId>
+    <artifactId>quarkus-desktop-packaging</artifactId>
+    <version>{project-version}</version>
+</dependency>
+----
+
+.Gradle
+[source,gradle,subs=attributes+]
+----
+implementation("io.quarkiverse.desktop:quarkus-desktop-packaging:{project-version}")
+----
+
+[[getting-started]]
+== Building packages
+
+Nothing is packaged by default. `quarkus.desktop.packaging.formats` lists the packages to build; the formats of the
+other operating systems are skipped, so that one list serves the builds of the three of them:
+
+[source,properties]
+----
+quarkus.desktop.packaging.name=Acme Editor
+quarkus.desktop.packaging.identifier=org.acme.editor
+quarkus.desktop.packaging.vendor=Acme
+quarkus.desktop.packaging.description=Edits documents
+quarkus.desktop.packaging.formats=msi,exe,dmg,deb,rpm,appimage
+----
+
+[source,shell]
+----
+./mvnw package -Dnative   # the native executable, packaged
+./mvnw package            # the jar, packaged with a Java runtime
+----
+
+The packages are in `target/packaging` (`quarkus.desktop.packaging.output-directory`), the application image in
+`target/packaging/image`, and the generated files of each format (the WiX source, the Inno Setup script, the spec
+file...) in `target/packaging/work`. The formats may also be given on the command line
+(`-Dquarkus.desktop.packaging.formats=msi`), to package in the release build only.
+
+The packages are not the artifact of the Quarkus build: the jar or the native executable still is (for
+`@QuarkusIntegrationTest`, for the container image extensions).
+
+[[application]]
+== The application
+
+[cols="1,3"]
+|===
+|Property |What it is
+
+|`name`
+|The name that the users see: the shortcuts, the installed program, the application bundle. Defaults to
+`quarkus.application.name`
+
+|`version`
+|Defaults to `quarkus.application.version`. The formats that take numbers only (MSI, MSIX, the macOS bundle) take its
+leading numbers: `1.2.3-SNAPSHOT` is `1.2.3` for them. The Debian and RPM packages write it `1.2.3~SNAPSHOT`
+
+|`identifier`
+|A reverse domain name (`org.acme.editor`): the bundle identifier on macOS, the application ID of Flatpak (which needs
+three elements), the identity of the MSIX package, and the source of the upgrade code of the Windows installers.
+Defaults to the group ID of the project followed by the name. Do not change it once the application is released
+
+|`vendor`, `description`, `copyright`, `homepage`, `license-file`
+|What the installers and the package managers show
+
+|`icon`
+|A square PNG file of 512 or 1024 pixels. Defaults to `src/main/packaging/icon.png`, and to a generic icon without it.
+The extension derives the `.ico` file of Windows, the `.icns` file of macOS and the PNG files of each size from it
+
+|`content-directory`
+|A directory of files added to the application image, next to the executable (in `Contents/Resources` on macOS).
+Defaults to `src/main/packaging/content`
+|===
+
+On Linux, the package and the command are named after `linux.package-name`: the name in lowercase with dashes
+(`acme-editor`) by default.
+
+[[application-image]]
+== The application image
+
+Every package installs the same application image, which the `directory` format keeps as the result.
+
+=== Native executable
+
+The image has the native executable, under the name of the application, and the shared libraries that are next to it
+when the build ends (`*.dll`, `*.so`, `*.dylib`, `*.jnilib`): the libraries of the JDK that an AWT executable loads,
+the Visual C++ runtime that Desktop AWT copies, the libraries of SWT (with
+`quarkus.desktop.swt.native-libraries=next-to-executable`, which suits a package: nothing is extracted to the home
+directory of the user). Build from a clean directory (`./mvnw clean package`): a library left by another build would be
+packaged too.
+
+On macOS, the image is an application bundle (`Acme Editor.app`), with its `Info.plist` and its icon.
+`macos.info-plist.<key>` adds entries, such as the usage descriptions of the privacy permissions.
+
+On Windows, the native executable gets the icon of the application and its version information (the Details tab of its
+properties). They are linked in the executable when it is built, so the extension has to be in the application then,
+with or without packages; `windows.executable-resources=false` disables it. The subsystem of the executable (no console
+window) is an option of the toolkit extensions: `quarkus.desktop.awt.windows.subsystem=windows` or
+`quarkus.desktop.swt.windows.subsystem=windows`.
+
+=== JVM mode
+
+In JVM mode, the image is built by `jpackage --type app-image`: the jar of the application (a fast-jar or an
+uber-jar), a Java runtime built by `jlink`, and a launcher with the icon of the application. The JDK of the build
+provides `jpackage` and the modules of the runtime, unless `jvm.jdk` names another one.
+
+[source,properties]
+----
+# a smaller Java runtime than the default one, which has every module
+quarkus.desktop.packaging.jvm.modules=java.desktop,java.net.http
+quarkus.desktop.packaging.jvm.options=-Xmx512m
+----
+
+By default, `jpackage` puts the modules of Java SE and of the JDK in the runtime. With `jvm.modules`, the runtime has
+the listed modules and the ones that Quarkus itself needs (`java.logging`, `java.naming`, `jdk.unsupported`,
+`jdk.zipfs`), which the extension adds: an application that misses a module fails when it uses it, so test the
+packaged application. The launcher of a fast-jar has the runner jar as its class path, as `java -jar quarkus-run.jar`
+has.
+
+[[windows]]
+== Windows
+
+`windows.per-user=true` makes the MSI package and the setup program install for the current user, without
+administrator rights (in `%LocalAppData%\Programs`); they install in `Program Files` for all users otherwise.
+`windows.start-menu`, `windows.start-menu-group` and `windows.desktop-shortcut` choose the shortcuts.
+
+The MSI package and the setup program of a new version replace the installed application: they recognize it by its
+upgrade code, derived from the identifier of the application (or given by `windows.upgrade-code`).
+
+An MSIX package declares a full trust desktop application. Windows only installs it when it is signed, and its
+publisher (`windows.msix.publisher`, `CN=<vendor>` by default) has to be the subject of the signing certificate.
+
+With a certificate, the launcher of the application and the three packages are signed by `signtool` of the Windows
+SDK:
+
+[source,properties]
+----
+quarkus.desktop.packaging.windows.sign.certificate-file=acme.pfx
+quarkus.desktop.packaging.windows.sign.certificate-password=${SIGN_PASSWORD}
+quarkus.desktop.packaging.windows.sign.timestamp-url=http://timestamp.digicert.com
+----
+
+`windows.sign.subject-name` or `windows.sign.thumbprint` select a certificate of the certificate store instead.
+
+[[macos]]
+== macOS
+
+The application bundle is signed with an ad hoc signature by default: it runs on the machine that built it, and
+Gatekeeper blocks it on the others. To distribute the application, sign it with a Developer ID certificate, and have
+the packages notarized:
+
+[source,properties]
+----
+quarkus.desktop.packaging.macos.sign.identity=Developer ID Application: Acme (ABCDE12345)
+quarkus.desktop.packaging.macos.sign.installer-identity=Developer ID Installer: Acme (ABCDE12345)
+# xcrun notarytool store-credentials acme
+quarkus.desktop.packaging.macos.notarize.keychain-profile=acme
+----
+
+With a certificate, the libraries, the executables and the bundle are signed with the hardened runtime and a secure
+time stamp. A JVM application gets the entitlements that a JVM needs (`macos.sign.entitlements` replaces them); a
+native executable has none by default. The disk image is signed too, the installer package is signed with the
+installer identity, and with a keychain profile both are submitted to the notary service and stapled: the build waits
+for the answer of Apple.
+
+The installer package installs the bundle in `/Applications` (`macos.install-location`).
+
+[[linux]]
+== Linux
+
+The Debian and RPM packages install the application image in `/opt/<package-name>`, a link to its launcher in
+`/usr/bin`, a desktop entry (`linux.categories`, `linux.startup-wm-class`) and the icons of the `hicolor` theme.
+
+The Debian package depends on the packages of the shared libraries that the application is linked with
+(`dpkg-shlibdeps`), and `rpmbuild` finds the ones of the RPM package. Neither sees the libraries that the application
+opens at run time (`dlopen`): AWT opens fontconfig, CUPS and GTK that way. List them:
+
+[source,properties]
+----
+quarkus.desktop.packaging.linux.deb.depends=libfontconfig1,libcups2t64
+quarkus.desktop.packaging.linux.rpm.requires=fontconfig,cups-libs
+----
+
+An AppImage has the application image, not the libraries of the system: it runs where they are installed.
+
+The Flatpak bundle is built with the `flatpak` command alone: the build directory is written by the extension, and
+neither `flatpak-builder` nor the SDK are needed. The runtime (`linux.flatpak.runtime`, `org.freedesktop.Platform` by
+default) is installed with the bundle, from Flathub; `org.gnome.Platform` has GTK, which SWT applications need.
+`linux.flatpak.finish-args` are the permissions of the sandbox.
+
+The snap is built by `snapcraft pack` from a generated project, whose application uses the `gnome` extension (the
+libraries of a desktop application). Snapcraft builds in an LXD container by default;
+`linux.snap.build-args=--destructive-mode` builds on the host, on the Ubuntu release of the base snap.
+
+[[extensions]]
+== For extension authors
+
+The `quarkus-desktop-packaging-spi` artifact has two build items for the deployment modules of other extensions:
+
+* `NativeExecutableFileBuildItem`: a file that the native executable needs next to it. The build steps that write files
+next to the executable after the native build produce it (or declare that they do), which also makes the packages wait
+for them. Desktop AWT and Desktop SWT do.
+* `PackagedJvmOptionBuildItem`: an option of the JVM that the application needs in JVM mode, for one operating system
+or for all of them.
+
+[[continuous-integration]]
+== Continuous integration
+
+A job per operating system builds the packages of each of them, as the `packaging` job of the
+https://github.com/quarkiverse/quarkus-desktop/blob/main/.github/workflows/build.yml[build workflow] of this project
+does (it then installs, starts and removes each package):
+
+[source,yaml]
+----
+jobs:
+  package:
+    strategy:
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+      - if: runner.os == 'Windows'
+        run: dotnet tool install --global wix --version 5.0.2
+      - if: runner.os == 'Linux'
+        run: sudo apt-get install -y rpm dpkg-dev
+      - run: ./mvnw -B package -Dnative -Dquarkus.desktop.packaging.formats=msi,exe,dmg,pkg,deb,rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.os }}
+          path: |
+            target/packaging/*.*
+----
+
+[[limitations]]
+== Limitations
+
+* No cross-building: each package is built on its operating system, and for the architecture of the build machine.
+* No file associations, URL schemes or automatic updates yet.
+* The packages of the application stores (the Microsoft Store, the Mac App Store, Flathub, the Snap Store) need their
+own submission steps, which the extension does not do.
+
+[[configuration-reference]]
+== Configuration reference
+
+include::includes/quarkus-desktop-packaging.adoc[leveloffset=+1, opts=optional]

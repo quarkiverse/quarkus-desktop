@@ -123,7 +123,7 @@ public final class WindowsSdk {
             command.add("SHA256");
         });
         command.add(file.toString());
-        Tools.Result result = Tools.run(null, Map.of(), command);
+        Tools.Result result = Tools.run(null, Map.of(), command, true);
         if (!result.succeeded()) {
             // not the command : it has the password of the certificate
             throw new PackagingException("signtool failed to sign " + file

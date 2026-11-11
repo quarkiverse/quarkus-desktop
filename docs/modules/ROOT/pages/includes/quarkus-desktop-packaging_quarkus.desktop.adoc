@@ -1,0 +1,1504 @@
+[.configuration-legend]
+icon:lock[title=Fixed at build time] Configuration property fixed at build time - All other configuration properties are overridable at runtime
+[.configuration-reference.searchable, cols="80,.^10,.^10"]
+|===
+
+h|[.header-title]##Configuration property##
+h|Type
+h|Default
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-enabled]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-enabled[`+++quarkus.desktop.packaging.enabled+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.enabled+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the extension does anything : the packages, and the icon and version of the Windows native executable.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_ENABLED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_ENABLED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-formats]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-formats[`+++quarkus.desktop.packaging.formats+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.formats+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The packages to build : `directory` (the application image, which the other formats install), `msi`, `exe`, `msix` (Windows), `dmg`, `pkg` (macOS), `deb`, `rpm`, `appimage`, `flatpak`, `snap` (Linux). The formats of the other operating systems are skipped : the same list builds the packages of each operating system, on a machine of that operating system. None by default.
+
+A native build (`quarkus.native.enabled`) packages the native executable, a JVM build packages the jar with a Java runtime (`jpackage` and `jlink` of the JDK). Each format needs its tool on the machine of the build : the build fails when it is missing.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_FORMATS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_FORMATS+++`
+endif::add-copy-button-to-env-var[]
+--
+a|list of `directory`, `msi`, `exe`, `msix`, `dmg`, `pkg`, `deb`, `rpm`, `appimage`, `flatpak`, `snap`
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-name[`+++quarkus.desktop.packaging.name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the application bundle on macOS. Defaults to `quarkus.application.name`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-version]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-version[`+++quarkus.desktop.packaging.version+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.version+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The version of the application. Defaults to `quarkus.application.version`. The formats that need numbers (MSI, MSIX, macOS) take its leading numbers : `1.2.3-SNAPSHOT` is `1.2.3` for them.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_VERSION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_VERSION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-identifier]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-identifier[`+++quarkus.desktop.packaging.identifier+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.identifier+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The identifier of the application, a reverse domain name such as `org.acme.editor` : the bundle identifier on macOS, the application ID of Flatpak, the identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the name of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_IDENTIFIER+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_IDENTIFIER+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-vendor]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-vendor[`+++quarkus.desktop.packaging.vendor+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.vendor+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The vendor of the application : the publisher on Windows, the maintainer of the Linux packages.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_VENDOR+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_VENDOR+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++Unknown+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-description]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-description[`+++quarkus.desktop.packaging.description+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.description+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+A one line description of the application. Defaults to its name.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_DESCRIPTION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_DESCRIPTION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-copyright]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-copyright[`+++quarkus.desktop.packaging.copyright+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.copyright+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The copyright notice of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_COPYRIGHT+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_COPYRIGHT+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-homepage]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-homepage[`+++quarkus.desktop.packaging.homepage+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.homepage+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The home page of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_HOMEPAGE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_HOMEPAGE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-license-file]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-license-file[`+++quarkus.desktop.packaging.license-file+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.license-file+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The license of the application, as a text file : shown by the Windows setup program and by the macOS installer package, installed with the Debian package.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LICENSE_FILE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LICENSE_FILE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-icon]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-icon[`+++quarkus.desktop.packaging.icon+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.icon+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The icon of the application, a square PNG file of 512 or 1024 pixels : the extension derives the icons of every format from it (`.ico`, `.icns`, the PNG files of each size). Defaults to `src/main/packaging/icon.png` when the file exists, and to a generic icon otherwise.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_ICON+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_ICON+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-content-directory]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-content-directory[`+++quarkus.desktop.packaging.content-directory+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.content-directory+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+A directory of files to add to the application image, next to the executable : documents, data files. Defaults to `src/main/packaging/content` when the directory exists.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_CONTENT_DIRECTORY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_CONTENT_DIRECTORY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-output-directory]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-output-directory[`+++quarkus.desktop.packaging.output-directory+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.output-directory+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The directory of the packages, relative to the build directory (`target`).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_OUTPUT_DIRECTORY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_OUTPUT_DIRECTORY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++packaging+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-tools-tool]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-tools-tool[`+++quarkus.desktop.packaging.tools."tool"+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.tools."tool"+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The paths of the packaging tools that are not on the `PATH`, by name : `wix`, `iscc`, `makeappx`, `signtool`, `hdiutil`, `pkgbuild`, `productbuild`, `codesign`, `xcrun`, `dpkg-deb`, `dpkg-shlibdeps`, `rpmbuild`, `appimagetool`, `flatpak`, `snapcraft`, `jpackage`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_TOOLS__TOOL_+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_TOOLS__TOOL_+++`
+endif::add-copy-button-to-env-var[]
+--
+|Map<String,String>
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-executable-resources]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-executable-resources[`+++quarkus.desktop.packaging.windows.executable-resources+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.executable-resources+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. In JVM mode, `jpackage` gives them to its launcher.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_EXECUTABLE_RESOURCES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_EXECUTABLE_RESOURCES+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-upgrade-code]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-upgrade-code[`+++quarkus.desktop.packaging.windows.upgrade-code+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.upgrade-code+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The upgrade code of the application, a GUID : the Windows installers of the next versions upgrade the application that has the same code. Defaults to a GUID derived from the identifier of the application : never change either once the application is released.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_UPGRADE_CODE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_UPGRADE_CODE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-per-user]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-per-user[`+++quarkus.desktop.packaging.windows.per-user+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.per-user+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the application is installed for the current user only, without administrator rights (in `%LocalAppData%++\++Programs`), rather than for all users (in `Program Files`).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_PER_USER+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_PER_USER+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++false+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-install-directory]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-install-directory[`+++quarkus.desktop.packaging.windows.install-directory+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.install-directory+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the installation directory. Defaults to the name of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_INSTALL_DIRECTORY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_INSTALL_DIRECTORY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-start-menu]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-start-menu[`+++quarkus.desktop.packaging.windows.start-menu+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.start-menu+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the installers add a shortcut to the Start menu.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_START_MENU+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_START_MENU+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-start-menu-group]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-start-menu-group[`+++quarkus.desktop.packaging.windows.start-menu-group+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.start-menu-group+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The folder of the shortcut in the Start menu. None by default : the shortcut is in the programs folder.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_START_MENU_GROUP+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_START_MENU_GROUP+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-desktop-shortcut]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-desktop-shortcut[`+++quarkus.desktop.packaging.windows.desktop-shortcut+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.desktop-shortcut+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the installers add a shortcut to the desktop : the MSI package always does, the setup program lets the user choose.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_DESKTOP_SHORTCUT+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_DESKTOP_SHORTCUT+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++false+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-identity-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-identity-name[`+++quarkus.desktop.packaging.windows.msix.identity-name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.identity-name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the identity of the package : letters, digits, dots and dashes. Defaults to the identifier of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_IDENTITY_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_IDENTITY_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-publisher]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-publisher[`+++quarkus.desktop.packaging.windows.msix.publisher+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.publisher+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The publisher of the package, a distinguished name that has to be the subject of the certificate that signs the package (`CN=Acme, O=Acme, C=US`). Defaults to `CN=` followed by the vendor.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_PUBLISHER+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_PUBLISHER+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-publisher-display-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-publisher-display-name[`+++quarkus.desktop.packaging.windows.msix.publisher-display-name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.publisher-display-name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the publisher, as the users see it. Defaults to the vendor.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_PUBLISHER_DISPLAY_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_PUBLISHER_DISPLAY_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-capabilities]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-capabilities[`+++quarkus.desktop.packaging.windows.msix.capabilities+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.capabilities+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The capabilities of the application. A desktop application is a full trust application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_CAPABILITIES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_CAPABILITIES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|`+++runFullTrust+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-min-version]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-min-version[`+++quarkus.desktop.packaging.windows.msix.min-version+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.min-version+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The minimum version of Windows that installs the package.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_MIN_VERSION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_MIN_VERSION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++10.0.17763.0+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-file]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-file[`+++quarkus.desktop.packaging.windows.sign.certificate-file+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.certificate-file+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The certificate file (`.pfx`) that signs the executable and the packages. Nothing is signed without a certificate file, a subject name or a thumbprint. An unsigned MSIX package cannot be installed.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_CERTIFICATE_FILE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_CERTIFICATE_FILE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-password]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-password[`+++quarkus.desktop.packaging.windows.sign.certificate-password+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.certificate-password+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The password of the certificate file.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_CERTIFICATE_PASSWORD+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_CERTIFICATE_PASSWORD+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-subject-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-subject-name[`+++quarkus.desktop.packaging.windows.sign.subject-name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.subject-name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The subject name of the signing certificate, in the certificate store.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_SUBJECT_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_SUBJECT_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-thumbprint]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-thumbprint[`+++quarkus.desktop.packaging.windows.sign.thumbprint+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.thumbprint+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The SHA-1 thumbprint of the signing certificate, in the certificate store.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_THUMBPRINT+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_THUMBPRINT+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-timestamp-url]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-timestamp-url[`+++quarkus.desktop.packaging.windows.sign.timestamp-url+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.timestamp-url+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The URL of the RFC 3161 time stamp server.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_TIMESTAMP_URL+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_TIMESTAMP_URL+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-category]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-category[`+++quarkus.desktop.packaging.macos.category+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.category+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The category of the application (`LSApplicationCategoryType`).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_CATEGORY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_CATEGORY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++public.app-category.utilities+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-minimum-system-version]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-minimum-system-version[`+++quarkus.desktop.packaging.macos.minimum-system-version+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.minimum-system-version+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The minimum version of macOS that runs the application (`LSMinimumSystemVersion`). Defaults to the minimum version that the executable declares.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_MINIMUM_SYSTEM_VERSION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_MINIMUM_SYSTEM_VERSION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-info-plist-key]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-info-plist-key[`+++quarkus.desktop.packaging.macos.info-plist."key"+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.info-plist."key"+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+More entries of the `Info.plist` of the application bundle, as strings : the usage descriptions of the privacy permissions (`NSCameraUsageDescription`), for instance.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_INFO_PLIST__KEY_+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_INFO_PLIST__KEY_+++`
+endif::add-copy-button-to-env-var[]
+--
+|Map<String,String>
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-install-location]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-install-location[`+++quarkus.desktop.packaging.macos.install-location+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.install-location+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The directory where the installer package installs the application bundle.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_INSTALL_LOCATION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_INSTALL_LOCATION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++/Applications+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-enabled]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-enabled[`+++quarkus.desktop.packaging.macos.sign.enabled+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.sign.enabled+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the application bundle is signed.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_ENABLED+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_ENABLED+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-identity]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-identity[`+++quarkus.desktop.packaging.macos.sign.identity+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.sign.identity+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The identity that signs the application bundle and the disk image, a `Developer ID Application` certificate of the keychain. By default, the signature is ad hoc (`-`) : the application runs on the machine that built it, and Gatekeeper blocks it on the others.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_IDENTITY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_IDENTITY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++-+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-installer-identity]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-installer-identity[`+++quarkus.desktop.packaging.macos.sign.installer-identity+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.sign.installer-identity+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The identity that signs the installer package, a `Developer ID Installer` certificate of the keychain. The installer package is not signed by default.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_INSTALLER_IDENTITY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_INSTALLER_IDENTITY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-entitlements]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-entitlements[`+++quarkus.desktop.packaging.macos.sign.entitlements+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.sign.entitlements+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The entitlements of the application, a property list file. By default, a native executable has none, and a JVM application has the ones that the JVM needs with the hardened runtime (just-in-time compilation, unsigned executable memory, libraries of other teams).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_ENTITLEMENTS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_ENTITLEMENTS+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-keychain]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-sign-keychain[`+++quarkus.desktop.packaging.macos.sign.keychain+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.sign.keychain+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The keychain of the identities. Defaults to the keychains of the user.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_KEYCHAIN+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_SIGN_KEYCHAIN+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-notarize-keychain-profile]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-notarize-keychain-profile[`+++quarkus.desktop.packaging.macos.notarize.keychain-profile+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.macos.notarize.keychain-profile+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The keychain profile of the credentials of the notary service, stored with `xcrun notarytool store-credentials`. When set, the disk image and the installer package are submitted to the notary service of Apple, and the ticket is stapled to them : the build waits for the answer. They have to be signed with a Developer ID identity.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_MACOS_NOTARIZE_KEYCHAIN_PROFILE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_MACOS_NOTARIZE_KEYCHAIN_PROFILE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-package-name]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-package-name[`+++quarkus.desktop.packaging.linux.package-name+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.package-name+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The name of the package and of the command of the application : lowercase letters, digits and dashes. Defaults to the name of the application, in that form.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_PACKAGE_NAME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_PACKAGE_NAME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-install-directory]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-install-directory[`+++quarkus.desktop.packaging.linux.install-directory+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.install-directory+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The directory where the Debian and RPM packages install the application, in a directory named after the package.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_INSTALL_DIRECTORY+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_INSTALL_DIRECTORY+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++/opt+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-categories]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-categories[`+++quarkus.desktop.packaging.linux.categories+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.categories+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The categories of the desktop entry, which place the application in the menus.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_CATEGORIES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_CATEGORIES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|`+++Utility+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-startup-wm-class]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-startup-wm-class[`+++quarkus.desktop.packaging.linux.startup-wm-class+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.startup-wm-class+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The window class of the application (`StartupWMClass` of the desktop entry) : desktops use it to associate the windows of the application with its launcher.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_STARTUP_WM_CLASS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_STARTUP_WM_CLASS+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-release]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-release[`+++quarkus.desktop.packaging.linux.release+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.release+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The release of the Debian and RPM packages : the version of the package itself, for a given version of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_RELEASE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RELEASE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++1+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-maintainer]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-maintainer[`+++quarkus.desktop.packaging.linux.deb.maintainer+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.deb.maintainer+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The maintainer of the package, as a name and an email address : `Jane Doe <jane@acme.org>`. Defaults to the vendor.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_MAINTAINER+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_MAINTAINER+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-section]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-section[`+++quarkus.desktop.packaging.linux.deb.section+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.deb.section+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The section of the package.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_SECTION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_SECTION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++utils+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-auto-depends]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-auto-depends[`+++quarkus.desktop.packaging.linux.deb.auto-depends+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.deb.auto-depends+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the package depends on the packages of the shared libraries that the application is linked with, found with `dpkg-shlibdeps` (the `dpkg-dev` package).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_AUTO_DEPENDS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_AUTO_DEPENDS+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-depends]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-deb-depends[`+++quarkus.desktop.packaging.linux.deb.depends+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.deb.depends+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+More packages that the package depends on : the libraries that the application loads at run time (`dlopen`), which the automatic dependencies miss.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_DEPENDS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_DEB_DEPENDS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-license]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-license[`+++quarkus.desktop.packaging.linux.rpm.license+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.rpm.license+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The license of the application, as RPM names it : `Apache-2.0`, `GPL-3.0-or-later`...
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_LICENSE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_LICENSE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++Unknown+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-group]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-group[`+++quarkus.desktop.packaging.linux.rpm.group+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.rpm.group+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The group of the package.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_GROUP+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_GROUP+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-auto-requires]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-auto-requires[`+++quarkus.desktop.packaging.linux.rpm.auto-requires+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.rpm.auto-requires+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the package requires the shared libraries that the application is linked with, found by `rpmbuild`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_AUTO_REQUIRES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_AUTO_REQUIRES+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++true+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-requires]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-rpm-requires[`+++quarkus.desktop.packaging.linux.rpm.requires+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.rpm.requires+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+More capabilities that the package requires.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_REQUIRES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_RPM_REQUIRES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime[`+++quarkus.desktop.packaging.linux.flatpak.runtime+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.flatpak.runtime+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The runtime of the application. `org.gnome.Platform` has GTK, which SWT applications need.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_RUNTIME+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_RUNTIME+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++org.freedesktop.Platform+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime-version]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-runtime-version[`+++quarkus.desktop.packaging.linux.flatpak.runtime-version+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.flatpak.runtime-version+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The version of the runtime.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_RUNTIME_VERSION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_RUNTIME_VERSION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++24.08+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-sdk]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-sdk[`+++quarkus.desktop.packaging.linux.flatpak.sdk+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.flatpak.sdk+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The SDK of the runtime.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_SDK+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_SDK+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++org.freedesktop.Sdk+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-branch]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-branch[`+++quarkus.desktop.packaging.linux.flatpak.branch+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.flatpak.branch+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The branch of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_BRANCH+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_BRANCH+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++stable+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-finish-args]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-finish-args[`+++quarkus.desktop.packaging.linux.flatpak.finish-args+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.flatpak.finish-args+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The permissions of the sandbox, as the options of `flatpak build-finish`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_FINISH_ARGS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_FINISH_ARGS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|`+++--share=ipc+++`, `+++--socket=x11+++`, `+++--socket=wayland+++`, `+++--socket=pulseaudio+++`, `+++--share=network+++`, `+++--device=dri+++`, `+++--filesystem=home+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-base]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-base[`+++quarkus.desktop.packaging.linux.snap.base+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.base+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The base snap.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_BASE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_BASE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++core24+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-confinement]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-confinement[`+++quarkus.desktop.packaging.linux.snap.confinement+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.confinement+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The confinement of the snap : `strict`, `classic` or `devmode`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_CONFINEMENT+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_CONFINEMENT+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++strict+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-grade]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-grade[`+++quarkus.desktop.packaging.linux.snap.grade+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.grade+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The grade of the snap : `stable` or `devel`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_GRADE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_GRADE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|`+++stable+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-extensions]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-extensions[`+++quarkus.desktop.packaging.linux.snap.extensions+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.extensions+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The extensions of the application of the snap. The `gnome` extension gives it the libraries of a desktop application (X11, Wayland, GTK, fonts, themes).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_EXTENSIONS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_EXTENSIONS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|`+++gnome+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-plugs]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-plugs[`+++quarkus.desktop.packaging.linux.snap.plugs+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.plugs+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The interfaces that the application plugs.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_PLUGS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_PLUGS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|`+++home+++`, `+++network+++`, `+++audio-playback+++`, `+++removable-media+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-stage-packages]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-stage-packages[`+++quarkus.desktop.packaging.linux.snap.stage-packages+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.stage-packages+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The packages of the Ubuntu archive to add to the snap.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_STAGE_PACKAGES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_STAGE_PACKAGES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-build-args]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-snap-build-args[`+++quarkus.desktop.packaging.linux.snap.build-args+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.snap.build-args+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+More arguments of `snapcraft pack` : `--destructive-mode` to build on the host rather than in an LXD container, for instance.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_BUILD_ARGS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_SNAP_BUILD_ARGS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-jdk]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-jdk[`+++quarkus.desktop.packaging.jvm.jdk+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.jvm.jdk+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The JDK whose `jpackage` builds the application image : its `jlink` builds the Java runtime of the application, which is then of that version. Defaults to the JDK of the build.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_JVM_JDK+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_JVM_JDK+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-modules]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-modules[`+++quarkus.desktop.packaging.jvm.modules+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.jvm.modules+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The modules of the Java runtime of the application (`--add-modules` of `jpackage`). By default, `jpackage` adds the modules of Java SE and the ones of the JDK that export an API, as an application on the class path may use any of them : a list of modules makes a smaller runtime.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_JVM_MODULES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_JVM_MODULES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-jlink-options]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-jlink-options[`+++quarkus.desktop.packaging.jvm.jlink-options+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.jvm.jlink-options+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The options of `jlink`. Defaults to the ones of `jpackage` : no debug information, no header files, no manual pages, no commands.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_JVM_JLINK_OPTIONS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_JVM_JLINK_OPTIONS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-runtime-image]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-runtime-image[`+++quarkus.desktop.packaging.jvm.runtime-image+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.jvm.runtime-image+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+A Java runtime to use rather than one built with `jlink`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_JVM_RUNTIME_IMAGE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_JVM_RUNTIME_IMAGE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-options]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-jvm-options[`+++quarkus.desktop.packaging.jvm.options+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.jvm.options+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The options of the JVM of the application : `-Xmx512m`, `-Dkey=value`...
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_JVM_OPTIONS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_JVM_OPTIONS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
+|===
+

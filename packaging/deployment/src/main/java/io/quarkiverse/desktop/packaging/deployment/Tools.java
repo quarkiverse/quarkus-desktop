@@ -117,7 +117,18 @@ public final class Tools {
      * @param environment more environment variables
      */
     public static Result run(Path directory, Map<String, String> environment, List<String> command) {
-        LOGGER.debugf("Running %s%s", command, directory == null ? "" : " in " + directory);
+        return run(directory, environment, command, false);
+    }
+
+    /**
+     * Runs a tool and returns its output, whatever its exit code.
+     *
+     * @param confidential whether the command has a secret (the password of a certificate) : it is not logged then
+     */
+    public static Result run(Path directory, Map<String, String> environment, List<String> command,
+            boolean confidential) {
+        LOGGER.debugf("Running %s%s", confidential ? command.get(0) + " (arguments not logged)" : command,
+                directory == null ? "" : " in " + directory);
         ProcessBuilder builder = new ProcessBuilder(command).redirectErrorStream(true);
         if (directory != null) {
             builder.directory(directory.toFile());

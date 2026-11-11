@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Desktop Packaging (`quarkus-desktop-packaging`), a new extension that builds the installers of a desktop application
+  at the end of the build, whatever its user interface toolkit: MSI (WiX), EXE (Inno Setup) and MSIX on Windows, DMG and
+  PKG on macOS, deb, RPM, AppImage, Flatpak and Snap on Linux (`quarkus.desktop.packaging.formats`). It packages the
+  native executable or, in JVM mode, the jar with a Java runtime (`jpackage`), derives the icons of every format from
+  one PNG file, gives the Windows native executable its icon and version information, and signs the Windows and macOS
+  packages (with notarization on macOS). The `quarkus-desktop-packaging-spi` artifact lets other extensions add the
+  files of the native executable and the options of the JVM; Desktop AWT and Desktop SWT declare the libraries that
+  they copy next to the native executable.
 - Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
   native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
 

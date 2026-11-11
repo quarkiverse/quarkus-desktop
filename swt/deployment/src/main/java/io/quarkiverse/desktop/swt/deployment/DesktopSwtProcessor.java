@@ -20,6 +20,7 @@ import java.util.stream.Stream;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
@@ -166,6 +167,18 @@ class DesktopSwtProcessor {
         String module = platform.map(swt -> manifest(swt.getJar().getContentTree()).getMainAttributes()
                 .getValue("Automatic-Module-Name")).orElse(null);
         nativeAccess.produce(new ModuleEnableNativeAccessBuildItem(module != null ? module : SWT_HOST_ARTIFACT_ID));
+    }
+
+    /**
+     * The options of the JVM of an SWT application packaged in JVM mode by the Desktop Packaging extension. Its
+     * launcher does not start the runner jar as {@code java -jar} does : the {@code Enable-Native-Access} attribute of
+     * the manifest of the jar does not apply. On macOS, the {@code Display} is created on the first thread of the
+     * process.
+     */
+    @BuildStep
+    void packagedJvmOptions(BuildProducer<PackagedJvmOptionBuildItem> jvmOptions) {
+        jvmOptions.produce(new PackagedJvmOptionBuildItem("--enable-native-access=ALL-UNNAMED"));
+        jvmOptions.produce(new PackagedJvmOptionBuildItem("-XstartOnFirstThread", OS.MAC));
     }
 
     private static Manifest manifest(PathTree tree) {
