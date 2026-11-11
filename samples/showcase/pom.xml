@@ -194,5 +194,33 @@
                 <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
             </properties>
         </profile>
+        <profile>
+            <!--
+                The installers of the showcase (-Dpackaging), built by the Desktop Packaging extension from the native
+                executable (-Dnative) or from the jar with a Java runtime : the formats of the operating system of the
+                build among -Dquarkus.desktop.packaging.formats (msi, exe, msix, dmg, pkg, deb, rpm, appimage, flatpak,
+                snap), in target/packaging. A Windows native executable then has the icon and the version of the
+                application.
+            -->
+            <id>packaging</id>
+            <activation>
+                <property>
+                    <name>packaging</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.desktop.packaging.name>Quarkus Desktop Showcase</quarkus.desktop.packaging.name>
+                <quarkus.desktop.packaging.identifier>io.quarkiverse.desktop.Showcase</quarkus.desktop.packaging.identifier>
+                <quarkus.desktop.packaging.vendor>Quarkiverse</quarkus.desktop.packaging.vendor>
+                <quarkus.desktop.packaging.description>The AWT, Java2D, Swing and SWT features of Quarkus Desktop</quarkus.desktop.packaging.description>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>io.quarkiverse.desktop</groupId>
+                    <artifactId>quarkus-desktop-packaging</artifactId>
+                    <version>${quarkus-desktop.version}</version>
+                </dependency>
+            </dependencies>
+        </profile>
     </profiles>
 </project>

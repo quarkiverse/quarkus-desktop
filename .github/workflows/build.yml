@@ -194,10 +194,7 @@ jobs:
         native: [ false, true ]
     runs-on: ${{ matrix.os }}
     env:
-      # the formats of the other operating systems are skipped
-      PACKAGING_ARGS: >-
-        ${{ matrix.native && '-Dnative' || '' }}
-        -Dquarkus.desktop.packaging.formats=directory,msi,exe,msix,dmg,pkg,deb,rpm,appimage,flatpak,snap
+      NATIVE_ARGS: ${{ matrix.native && '-Dnative' || '' }}
     steps:
       - name: Prepare git
         run: git config --global core.autocrlf false
@@ -232,13 +229,21 @@ jobs:
           curl -fsSL -o appimagetool https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
           sudo install -m 755 appimagetool /usr/local/bin/appimagetool
           rm appimagetool
-          # the snap store does not always answer
-          for attempt in 1 2 3 4 5; do sudo snap install snapcraft --classic && break || sleep 20; done
-          for attempt in 1 2 3 4 5; do { sudo snap install lxd || sudo snap refresh lxd; } && break || sleep 20; done
-          snapcraft --version
-          sudo lxd init --auto
-          sudo usermod --append --groups lxd "$USER"
-          sudo iptables -P FORWARD ACCEPT
+          # The snap store does not always answer the runners : the snap is then not built, and the job says so
+          snap_tools() {
+            for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 20; done
+            for attempt in 1 2 3; do sudo snap install lxd && break || sleep 20; done
+            snap list snapcraft && snap list lxd
+          }
+          if snap_tools; then
+            sudo lxd init --auto
+            sudo usermod --append --groups lxd "$USER"
+            sudo iptables -P FORWARD ACCEPT
+            echo "LINUX_FORMATS=directory,deb,rpm,appimage,flatpak,snap" >> "$GITHUB_ENV"
+          else
+            echo "::warning::The snap store does not answer : the snap is not built"
+            echo "LINUX_FORMATS=directory,deb,rpm,appimage,flatpak" >> "$GITHUB_ENV"
+          fi
 
       # makeappx and signtool are part of the Windows SDK of the runner. An MSIX package is only installed when it is
       # signed : a self-signed certificate, trusted by the runner, whose subject is the publisher of the package
@@ -258,11 +263,17 @@ jobs:
 
       - name: Build the packages (in the lxd group)
         if: startsWith(matrix.os, 'ubuntu')
-        run: sg lxd -c "./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $PACKAGING_ARGS" 2>&1 | tee maven.log
+        run: |
+          build="./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=$LINUX_FORMATS"
+          if getent group lxd > /dev/null; then
+            sg lxd -c "$build" 2>&1 | tee maven.log
+          else
+            $build 2>&1 | tee maven.log
+          fi
 
       - name: Build the packages
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
-        run: ./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $PACKAGING_ARGS $SIGN_ARGS 2>&1 | tee maven.log
+        run: ./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=directory,msi,exe,msix,dmg,pkg $SIGN_ARGS 2>&1 | tee maven.log
 
       # The RPM package is installed in a Fedora container
       - name: Install, start and remove the packages of Linux
@@ -296,10 +307,12 @@ jobs:
           started flatpak "$HOME/flatpak.txt"
           flatpak uninstall --user -y --noninteractive io.quarkiverse.desktop.PackagingIt
 
-          sudo snap install --dangerous ./packaging-it_*.snap
-          /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
-          started snap "$HOME/snap.txt"
-          sudo snap remove packaging-it
+          if ls ./packaging-it_*.snap > /dev/null 2>&1; then
+            sudo snap install --dangerous ./packaging-it_*.snap
+            /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
+            started snap "$HOME/snap.txt"
+            sudo snap remove packaging-it
+          fi
 
       - name: Install, start and remove the packages of macOS
         if: startsWith(matrix.os, 'macos')

@@ -4,12 +4,16 @@ import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
 
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.deployment.macos.MacBundle;
+import io.quarkiverse.desktop.packaging.deployment.windows.PeImports;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
 
 /**
@@ -78,6 +82,9 @@ final class NativeApplicationImage {
             Path fileDirectory = file.getDirectory().isEmpty() ? directory : directory.resolve(file.getDirectory());
             FileTrees.copy(file.getFile(), fileDirectory.resolve(file.getFile().getFileName().toString()));
         }
+        if (context.os() == TargetOs.WINDOWS) {
+            launcher = renameWindowsExecutable(directory, executable.getFileName().toString(), launcher);
+        }
         copyContent(context, content);
 
         ApplicationImage image = new ApplicationImage(root, launcher, true);
@@ -90,6 +97,48 @@ final class NativeApplicationImage {
             MacBundle.sign(context, image);
         }
         return image;
+    }
+
+    /**
+     * Makes the libraries of the application image work with the Windows executable under the name of the
+     * application. The libraries of the JDK call the JVM through libraries that native-image links with the
+     * executable by its file name ({@code jvm.dll}, {@code java.dll}) : the name that they import is changed to the
+     * new one. When it cannot be (a name that is not ASCII, typically), the executable keeps the name that the build
+     * gave it.
+     *
+     * @param directory the directory of the executable and of its libraries, in the application image
+     * @param built the file name of the executable in the build directory
+     * @param launcher the file name of the executable in the application image
+     * @return the file name of the executable in the application image, which is renamed back when needed
+     */
+    static String renameWindowsExecutable(Path directory, String built, String launcher) throws IOException {
+        if (launcher.equalsIgnoreCase(built)) {
+            return launcher;
+        }
+        Map<Path, byte[]> renamed = new LinkedHashMap<>();
+        try (DirectoryStream<Path> libraries = Files.newDirectoryStream(directory, "*.dll")) {
+            for (Path library : libraries) {
+                byte[] bytes = Files.readAllBytes(library);
+                if (!PeImports.imports(bytes, built)) {
+                    continue;
+                }
+                Optional<byte[]> changed = PeImports.rename(bytes, built, launcher);
+                if (changed.isEmpty()) {
+                    LOGGER.warnf("The executable of the application image is named %s rather than %s : %s is linked with"
+                            + " the executable by its file name, which cannot be changed to that one. Name the"
+                            + " executable in the build (quarkus.package.output-name, with"
+                            + " quarkus.package.jar.add-runner-suffix=false)", built, launcher, library.getFileName());
+                    Files.move(directory.resolve(launcher), directory.resolve(built));
+                    return built;
+                }
+                renamed.put(library, changed.get());
+            }
+        }
+        for (Map.Entry<Path, byte[]> library : renamed.entrySet()) {
+            LOGGER.debugf("%s now imports %s", library.getKey(), launcher);
+            Files.write(library.getKey(), library.getValue());
+        }
+        return launcher;
     }
 
     /**
