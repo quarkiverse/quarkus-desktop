@@ -25,10 +25,12 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.awt.DesktopStartupEvent;
 import io.quarkiverse.desktop.awt.EdtExecutor;
 import io.quarkiverse.desktop.awt.RunOnEdt;
+import io.quarkiverse.desktop.awt.runtime.DesktopAwtRuntimeConfig;
 import io.quarkiverse.desktop.awt.runtime.DesktopHandlers;
-import io.quarkiverse.desktop.awt.runtime.DesktopLifecycleRecorder;
+import io.quarkiverse.desktop.awt.runtime.DesktopLifecycleSupport;
 import io.quarkiverse.desktop.awt.runtime.DesktopUi;
 import io.quarkiverse.desktop.awt.runtime.RunOnEdtInterceptor;
+import io.quarkiverse.desktop.awt.runtime.UncaughtExceptionLogging;
 import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ArcConfig;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
@@ -40,13 +42,12 @@ import io.quarkus.arc.deployment.staticmethods.InterceptedStaticMethodBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
 import io.quarkus.arc.processor.InjectionPointInfo;
 import io.quarkus.arc.processor.ObserverInfo;
+import io.quarkus.arc.runtime.BeanContainer;
+import io.quarkus.core.deployment.service.ServiceRegistrar;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
-import io.quarkus.deployment.annotations.ExecutionTime;
-import io.quarkus.deployment.annotations.Record;
-import io.quarkus.deployment.builditem.ApplicationStartBuildItem;
 import io.quarkus.deployment.builditem.LaunchModeBuildItem;
-import io.quarkus.deployment.builditem.ShutdownContextBuildItem;
+import io.quarkus.runtime.LaunchMode;
 
 /**
  * The CDI integration : {@code DesktopStartupEvent} and the lifecycle of the user interface.
@@ -232,7 +233,7 @@ class DesktopCdiProcessor {
         }
         if (ui) {
             userInterface.produce(new DesktopUiBuildItem());
-            // looked up by the recorder
+            // looked up by the service of the user interface
             unremovableBeans.produce(UnremovableBeanBuildItem.beanTypes(DesktopUi.class));
             return;
         }
@@ -279,21 +280,40 @@ class DesktopCdiProcessor {
     }
 
     /**
-     * Starts the user interface once the application started ({@code ApplicationStartBuildItem} : after the
-     * {@code StartupEvent} observers), with the handlers of the observed {@code java.awt.Desktop} events.
+     * Starts the user interface once the application started (after the {@code StartupEvent} observers : the service
+     * starts after the ArC service firing {@code StartupEvent}, and so stops before the {@code ShutdownEvent}
+     * observers), with the handlers of the observed {@code java.awt.Desktop} events.
+     * <p>
+     * The logging of the uncaught exceptions that the user interface installs is removed once the other stop handlers ran
+     * (dev and test modes) : it is the value of a service that starts before the {@code StartupEvent} observers and the
+     * services of the dev and test modes, and so stops after them.
      */
     @BuildStep
-    @Record(ExecutionTime.RUNTIME_INIT)
-    void startUserInterface(Optional<DesktopUiBuildItem> userInterface, ApplicationStartBuildItem applicationStart,
-            DesktopLifecycleRecorder recorder, ShutdownContextBuildItem shutdown, LaunchModeBuildItem launchMode,
-            ArcConfig arcConfig, BeanDiscoveryFinishedBuildItem beanDiscovery) {
+    void startUserInterface(Optional<DesktopUiBuildItem> userInterface, ServiceRegistrar serviceRegistrar,
+            LaunchModeBuildItem launchMode, ArcConfig arcConfig, BeanDiscoveryFinishedBuildItem beanDiscovery) {
         if (userInterface.isEmpty()) {
             return;
         }
-        recorder.startUserInterface(shutdown, launchMode.getLaunchMode(),
-                arcConfig.test().disableApplicationLifecycleObservers(),
-                DesktopAwtProcessor.isPresent(DesktopAwtProcessor.QUARKUS_FX_APPLICATION,
-                        Thread.currentThread().getContextClassLoader()),
-                launchMode.isAuxiliaryApplication(), desktopEvents(beanDiscovery.getObservers()));
+        serviceRegistrar
+                .forService(UncaughtExceptionLogging.class)
+                .before(DesktopAwtServices.ARC_STARTUP_EVENT)
+                .before(DesktopAwtServices.APPLICATION_EVENT_QUEUE)
+                .before(DesktopAwtServices.DISPOSE_WINDOWS)
+                .onStart(ctx -> UncaughtExceptionLogging.create(ctx));
+        LaunchMode mode = launchMode.getLaunchMode();
+        boolean lifecycleObserversDisabled = arcConfig.test().disableApplicationLifecycleObservers();
+        boolean quarkusFx = DesktopAwtProcessor.isPresent(DesktopAwtProcessor.QUARKUS_FX_APPLICATION,
+                Thread.currentThread().getContextClassLoader());
+        boolean auxiliary = launchMode.isAuxiliaryApplication();
+        List<String> desktopEvents = List.copyOf(desktopEvents(beanDiscovery.getObservers()));
+        serviceRegistrar
+                .forService(DesktopAwtServices.USER_INTERFACE)
+                .after(DesktopAwtServices.ARC_STARTUP_EVENT)
+                .require(BeanContainer.class)
+                .require(DesktopAwtRuntimeConfig.class)
+                .require(UncaughtExceptionLogging.class)
+                .onStart((ctx, beans, config, uncaughtExceptions) -> DesktopLifecycleSupport.startUserInterface(ctx,
+                        beans, config, uncaughtExceptions, mode, lifecycleObserversDisabled, quarkusFx, auxiliary,
+                        desktopEvents));
     }
 }

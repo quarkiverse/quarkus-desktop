@@ -24,17 +24,15 @@ import java.util.concurrent.TimeUnit;
 
 import org.jboss.logging.Logger;
 
+import io.quarkus.core.StartContext;
 import io.quarkus.runtime.ApplicationLifecycleManager;
-import io.quarkus.runtime.ShutdownContext;
-import io.quarkus.runtime.annotations.Recorder;
 
 /**
- * Run time support of the Desktop AWT extension.
+ * Run time support of the Desktop AWT extension : what its services do when the application starts and stops.
  */
-@Recorder
-public class DesktopAwtRecorder {
+public final class DesktopAwtSupport {
 
-    private static final Logger LOGGER = Logger.getLogger(DesktopAwtRecorder.class);
+    private static final Logger LOGGER = Logger.getLogger(DesktopAwtSupport.class);
 
     /**
      * Directory of the files that the extension embeds in native executables.
@@ -64,6 +62,9 @@ public class DesktopAwtRecorder {
      */
     static final String RUNTIME_HOME = "quarkus-awt-tmp-fonts";
 
+    private DesktopAwtSupport() {
+    }
+
     /**
      * Prepares the {@code java.home} directory of a native executable, which has no JDK : some JDK desktop classes read
      * files in it, and some fail when {@code java.home} is not set (for instance the Java Sound audio system and the
@@ -78,7 +79,7 @@ public class DesktopAwtRecorder {
      *        configuration to, or {@code null} when none is embedded
      * @param metalShaders whether the Metal shaders of the JDK are embedded (macOS)
      */
-    public void initRuntimeHome(String fontConfiguration, boolean metalShaders) {
+    public static void initRuntimeHome(String fontConfiguration, boolean metalShaders) {
         try {
             Path tmp = Path.of(System.getProperty("java.io.tmpdir"));
             Path home = tmp.resolve(RUNTIME_HOME);
@@ -115,7 +116,7 @@ public class DesktopAwtRecorder {
         if (Files.isRegularFile(file)) {
             return true;
         }
-        try (InputStream in = DesktopAwtRecorder.class.getClassLoader().getResourceAsStream(resource)) {
+        try (InputStream in = DesktopAwtSupport.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 LOGGER.debugf("Resource %s not found", resource);
                 return false;
@@ -144,7 +145,7 @@ public class DesktopAwtRecorder {
      */
     static boolean extractIfChanged(String resource, Path file) throws IOException {
         byte[] data;
-        try (InputStream in = DesktopAwtRecorder.class.getClassLoader().getResourceAsStream(resource)) {
+        try (InputStream in = DesktopAwtSupport.class.getClassLoader().getResourceAsStream(resource)) {
             if (in == null) {
                 return false;
             }
@@ -179,11 +180,12 @@ public class DesktopAwtRecorder {
      * The test application of continuous testing runs next to the dev mode application : it only disposes the windows
      * opened while it ran.
      *
+     * @param context the start context of the service, which disposes the windows when it stops
      * @param auxiliary whether it is the test application of continuous testing
      */
-    public void disposeWindowsOnShutdown(ShutdownContext shutdownContext, boolean auxiliary) {
+    public static void disposeWindowsOnStop(StartContext context, boolean auxiliary) {
         if (!auxiliary) {
-            shutdownContext.addShutdownTask(() -> disposeWindows(null));
+            context.onStop(() -> disposeWindows(null));
             return;
         }
         Set<Window> opened = Collections.synchronizedSet(Collections.newSetFromMap(new WeakHashMap<>()));
@@ -198,7 +200,7 @@ public class DesktopAwtRecorder {
             LOGGER.debugf(e, "Unable to follow the windows of the test application");
             return;
         }
-        shutdownContext.addShutdownTask(() -> {
+        context.onStop(() -> {
             Toolkit.getDefaultToolkit().removeAWTEventListener(listener);
             Set<Window> windows;
             synchronized (opened) {
@@ -288,8 +290,12 @@ public class DesktopAwtRecorder {
      * for the life of the JVM : after a live reload in dev mode, or in a test running another application, Swing would
      * load the classes it finds by name on the event dispatch thread (look and feels, editor kits, Synth objects...)
      * with the class loader of a stopped application.
+     *
+     * @param context the start context of the service, which removes the event queue when it stops : after the
+     *        {@code ShutdownEvent} observers and the dispose of the windows, which run with the class loader of the
+     *        application
      */
-    public void useApplicationClassLoaderOnEventDispatchThread(ShutdownContext shutdownContext) {
+    public static void useApplicationClassLoaderOnEventDispatchThread(StartContext context) {
         ApplicationEventQueue queue = new ApplicationEventQueue(Thread.currentThread().getContextClassLoader());
         try {
             Toolkit.getDefaultToolkit().getSystemEventQueue().push(queue);
@@ -297,9 +303,7 @@ public class DesktopAwtRecorder {
             LOGGER.debugf(e, "Unable to install the application event queue");
             return;
         }
-        // the last task : the ShutdownEvent observers and the dispose of the windows run with the class loader of the
-        // application
-        shutdownContext.addLastShutdownTask(queue::remove);
+        context.onStop(queue::remove);
     }
 
     /**

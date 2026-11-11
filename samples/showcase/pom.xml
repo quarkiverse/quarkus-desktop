@@ -12,7 +12,8 @@
     <properties>
         <maven.compiler.release>25</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <quarkus.platform.version>3.40.0</quarkus.platform.version>
+        <!-- The Quarkus version of quarkus-desktop -->
+        <quarkus.platform.version>4.0.0.Beta2</quarkus.platform.version>
         <quarkus-desktop.version>999-SNAPSHOT</quarkus-desktop.version>
         <compiler-plugin.version>3.14.0</compiler-plugin.version>
         <!-- The quarkus-desktop extension of the variant : quarkus-desktop-swing (default), quarkus-desktop-awt (awt-only)

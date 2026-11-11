@@ -40,8 +40,8 @@ class ResourceGlobsTest {
     @Test
     void patterns() {
         List<NativeImageResourcePatternsBuildItem> patterns = ResourceGlobs.patterns(GLOBS);
-        // one item per module with the Quarkus versions that register module resources, else one item
-        assertEquals(ResourceGlobs.moduleResources() ? 4 : 1, patterns.size());
+        // one item per module
+        assertEquals(4, patterns.size());
         assertEquals(List.of(), ResourceGlobs.patterns(List.of()));
     }
 }
