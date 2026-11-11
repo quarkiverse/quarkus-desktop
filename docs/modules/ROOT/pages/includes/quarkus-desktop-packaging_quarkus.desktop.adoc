@@ -101,7 +101,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identifier of the application, a reverse domain name such as `org.acme.editor` : the bundle identifier on macOS, the application ID of Flatpak (at least three elements, none of which starts with a digit), the identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the name of the application.
+The identifier of the application, a reverse domain name such as `org.acme.editor` : the bundle identifier on macOS (without underscores : an element loses its leading ones, and the others are dashes), the application ID of Flatpak (at least three elements, none of which starts with a digit), the identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the name of the application.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -269,7 +269,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The directory of the packages, relative to the build directory (`target`).
+The directory of the packages, relative to the build directory (`target`, `build` with Gradle), or absolute.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -311,7 +311,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. Native sources (`quarkus.native.sources-only=true`) do not get them : they are linked from a file of the build directory. In JVM mode, `jpackage` gives them to its launcher.
+Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. Native sources (`quarkus.native.sources-only=true`) do not get them : they are linked from a file of the build directory. An application that links a resource file of its own (`-H:NativeLinkerOption=app.res` in `quarkus.native.additional-build-args`) keeps it, without them ; one linked in another way conflicts with them (the link fails with `CVT1100: duplicate resource`) unless this is `false`. In JVM mode, `jpackage` gives them to its launcher.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -542,7 +542,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The minimum version of Windows that installs the package.
+The minimum version of Windows that installs the package : four numbers, such as `10.0.17763.0` (Windows 10 1809) or `10.0.22000.0` (Windows 11). The package is declared as tested on `10.0.26100.0` (Windows 11 24H2), or on the minimum version when it is later.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -710,7 +710,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The minimum version of macOS that runs the application (`LSMinimumSystemVersion`). Defaults to the minimum version that the executable declares.
+The minimum version of macOS that runs the application (`LSMinimumSystemVersion`). Defaults to the minimum version that the native executable declares, and in JVM mode to the one that `jpackage` writes.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -731,7 +731,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-More entries of the `Info.plist` of the application bundle : the usage descriptions of the privacy permissions (`NSCameraUsageDescription`), for instance. The values are strings, except `true` and `false`, which are Booleans. An entry replaces the one of the extension of the same key (`NSHighResolutionCapable`, `NSSupportsAutomaticGraphicsSwitching`, `CFBundleName`...).
+More entries of the `Info.plist` of the application bundle : the usage descriptions of the privacy permissions (`NSCameraUsageDescription`), for instance. The values are strings, except `true` and `false`, which are Booleans. An entry replaces the one of the same key that the extension writes (`NSHighResolutionCapable`, `NSSupportsAutomaticGraphicsSwitching`, `CFBundleName`...), or that `jpackage` writes in JVM mode.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -815,7 +815,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identity that signs the installer package, a `Developer ID Installer` certificate of the keychain. The installer package is not signed by default.
+The identity that signs the installer package, a `Developer ID Installer` certificate of the keychain. The installer package is not signed by default : the build warns about it when the application bundle is signed with a certificate.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -836,7 +836,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The entitlements of the application, a property list file. By default, a native executable has none, and a JVM application has the ones that the JVM needs with the hardened runtime (just-in-time compilation, unsigned executable memory, libraries of other teams).
+The entitlements of the application, a property list file, in place of the default ones. With a certificate, the hardened runtime only loads the libraries signed by Apple or with the identity of the application, unless an entitlement allows the others. By default, a JVM application has the entitlements that the JVM needs (just-in-time compilation, unsigned executable memory, libraries of other teams), and a native executable signed with a certificate has the one of the libraries of other teams (`com.apple.security.cs.disable-library-validation`), for the libraries that it loads from outside the bundle, such as the ones that SWT extracts to the home directory of the user.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -878,7 +878,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The keychain profile of the credentials of the notary service, stored with `xcrun notarytool store-credentials`. When set, the disk image and the installer package are submitted to the notary service of Apple, and the ticket is stapled to them : the build waits for the answer. They have to be signed with a Developer ID identity.
+The keychain profile of the credentials of the notary service, stored with `xcrun notarytool store-credentials`. When set, the disk image and the installer package are submitted to the notary service of Apple, and the ticket is stapled to them : the build waits for the answer, and fails with the log of the submission when the service does not accept a package. They have to be signed with a Developer ID identity (`macos.sign.identity`, and `macos.sign.installer-identity` for the installer package) : the build fails before they are built otherwise. Without a keychain profile, the build warns that the packages of a bundle signed with a certificate are not notarized.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1214,7 +1214,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The runtime of the application. `org.gnome.Platform` has GTK, which SWT applications need.
+The runtime of the application. The default one has GTK 3, which SWT needs. `org.gnome.Platform` also has WebKitGTK, which the `Browser` widget of SWT uses : with `quarkus.desktop.packaging.linux.flatpak.sdk=org.gnome.Sdk` and `quarkus.desktop.packaging.linux.flatpak.runtime-version` set to a version of GNOME, such as `50`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1235,7 +1235,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The version of the runtime.
+The version of the runtime and of its SDK : a branch of the runtime on Flathub, such as `25.08` for `org.freedesktop.Platform` or `50` for `org.gnome.Platform`. A branch reaches its end of life after one or two years, and gets no security fixes then : the version follows the releases of the runtime.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1246,7 +1246,7 @@ Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_FLATPAK_RUNTIME_VERSIO
 endif::add-copy-button-to-env-var[]
 --
 |string
-|`+++24.08+++`
+|`+++25.08+++`
 
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-sdk]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-flatpak-sdk[`+++quarkus.desktop.packaging.linux.flatpak.sdk+++`]##
 ifdef::add-copy-button-to-config-props[]
@@ -1256,7 +1256,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The SDK of the runtime.
+The SDK of the runtime, of the same version : `org.gnome.Sdk` for `org.gnome.Platform`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1340,7 +1340,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The confinement of the snap : `strict`, `classic` or `devmode`.
+The confinement of the snap : `strict`, `classic` or `devmode`. A `classic` snap has no `gnome` extension : set `quarkus.desktop.packaging.linux.snap.extensions` to empty.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1382,7 +1382,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The extensions of the application of the snap. The `gnome` extension gives it the libraries of a desktop application (X11, Wayland, GTK, fonts, themes).
+The extensions of the application of the snap, empty for none. The `gnome` extension gives it the libraries of a desktop application (X11, Wayland, GTK, fonts, themes) : it supports the `strict` and `devmode` confinements, not `classic`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1487,7 +1487,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The modules of the Java runtime of the application (`--add-modules` of `jpackage`). By default, `jpackage` adds the modules of Java SE and the ones of the JDK that export an API, as an application on the class path may use any of them : a list of modules makes a smaller runtime.
+The modules of the Java runtime of the application (`--add-modules` of `jpackage`), to which the extension adds the ones that Quarkus needs. By default, the runtime has the modules of Java SE and the ones of the JDK that export an API, as an application on the class path may use any of them, and the modules that provide their services : the locale data, the charsets that are not standard, the key stores of Windows... A list of modules makes a smaller runtime, without these services unless it lists their modules : `jdk.localedata` for the languages other than English, `jdk.charsets`, `jdk.crypto.mscapi`... With JDK 21, the extension adds `jdk.crypto.ec`, which TLS needs.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1550,7 +1550,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The options of the JVM of the application : `-Xmx512m`, `-Dkey=value`...
+The options of the JVM of the application : `-Xmx512m`, `-Dkey=value`... Each one is one argument of the JVM, white space and quotes included (`-Dapp.title=Acme Editor`) ; the long form of an option with its value after white space (`--add-opens java.base/java.lang=ALL-UNNAMED`) is written with `=`.
 
 
 ifdef::add-copy-button-to-env-var[]

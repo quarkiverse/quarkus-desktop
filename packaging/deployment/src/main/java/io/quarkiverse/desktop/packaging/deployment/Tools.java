@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
@@ -26,10 +27,26 @@ public final class Tools {
     private final Map<String, String> configured;
 
     /**
+     * The directory of the relative paths of the configuration.
+     */
+    private final Path projectDirectory;
+
+    /**
      * @param configured the paths of the configuration, by tool name ({@code quarkus.desktop.packaging.tools})
+     * @param projectDirectory the directory of the relative paths of the configuration
+     */
+    public Tools(Map<String, String> configured, Path projectDirectory) {
+        this.configured = configured;
+        this.projectDirectory = projectDirectory;
+    }
+
+    /**
+     * The tools of the {@code PATH}, and of paths that are absolute or relative to the working directory of the build.
+     *
+     * @param configured the paths, by tool name
      */
     public Tools(Map<String, String> configured) {
-        this.configured = configured;
+        this(configured, Path.of(""));
     }
 
     /**
@@ -46,8 +63,8 @@ public final class Tools {
     }
 
     /**
-     * The path of a tool : the one of the configuration, the first one of the {@code PATH}, or the first existing one
-     * of the given locations.
+     * The absolute path of a tool : the one of the configuration, the first one of the {@code PATH}, or the first
+     * existing one of the given locations. The tools run in other working directories than the one of the build.
      *
      * @param name the name of the tool, without extension
      * @param locations where the installer of the tool puts it, when that is not on the {@code PATH}
@@ -70,7 +87,8 @@ public final class Tools {
     }
 
     /**
-     * The path of a tool in the configuration ({@code quarkus.desktop.packaging.tools.<name>}), if any.
+     * The absolute path of a tool in the configuration ({@code quarkus.desktop.packaging.tools.<name>}), if any : a
+     * relative path is relative to the directory of the project.
      *
      * @param name the name of the tool, without extension
      * @throws PackagingException when the configured file does not exist
@@ -80,7 +98,7 @@ public final class Tools {
         if (path == null || path.isBlank()) {
             return Optional.empty();
         }
-        Path tool = Path.of(path.trim());
+        Path tool = projectDirectory.resolve(path.trim()).toAbsolutePath().normalize();
         if (!Files.isRegularFile(tool)) {
             throw new PackagingException("quarkus.desktop.packaging.tools." + name + " : " + tool + " not found");
         }
@@ -99,7 +117,16 @@ public final class Tools {
     }
 
     private static Optional<Path> onPath(String name) {
-        String path = System.getenv("PATH");
+        return onPath(name, System.getenv("PATH"));
+    }
+
+    /**
+     * The first file of a tool in the directories of a {@code PATH}, as an absolute path : a relative directory is
+     * relative to the working directory of the build.
+     *
+     * @param path the directories, or {@code null}
+     */
+    static Optional<Path> onPath(String name, String path) {
         if (path == null) {
             return Optional.empty();
         }
@@ -118,7 +145,7 @@ public final class Tools {
                 try {
                     Path candidate = Path.of(directory.trim()).resolve(name + extension);
                     if (Files.isRegularFile(candidate) && (windows || Files.isExecutable(candidate))) {
-                        return Optional.of(candidate);
+                        return Optional.of(candidate.toAbsolutePath());
                     }
                 } catch (RuntimeException e) {
                     // an entry of the PATH that is not a path
@@ -142,14 +169,18 @@ public final class Tools {
      * Runs a tool and returns its output, whatever its exit code.
      *
      * @param confidential whether the command has a secret (the password of a certificate) : it is not logged then
+     * @throws PackagingException for a batch file of Windows, with an argument that {@code cmd.exe} would change
      */
     public static Result run(Path directory, Map<String, String> environment, List<String> command,
             boolean confidential) {
         LOGGER.debugf("Running %s%s", confidential ? command.get(0) + " (arguments not logged)" : command,
                 directory == null ? "" : " in " + directory);
-        ProcessBuilder builder = new ProcessBuilder(TargetOs.host() == TargetOs.WINDOWS
-                ? command.stream().map(Tools::windowsArgument).toList()
-                : command).redirectErrorStream(true);
+        List<String> arguments = command;
+        if (TargetOs.host() == TargetOs.WINDOWS) {
+            arguments = isBatchFile(command.get(0)) ? batchCommand(command)
+                    : command.stream().map(Tools::windowsArgument).toList();
+        }
+        ProcessBuilder builder = new ProcessBuilder(arguments).redirectErrorStream(true);
         if (directory != null) {
             builder.directory(directory.toFile());
         }
@@ -191,6 +222,41 @@ public final class Tools {
         }
         // the backslashes at the end stay as they are : ProcessBuilder doubles the last one when it quotes the argument
         return escaped.append("\\".repeat(backslashes)).toString();
+    }
+
+    /**
+     * Whether a tool is a batch file ({@code .cmd}, {@code .bat}), which Windows runs with {@code cmd.exe} : a
+     * wrapper of the configuration ({@code quarkus.desktop.packaging.tools.<name>}), or of the {@code PATH}.
+     */
+    static boolean isBatchFile(String tool) {
+        // Windows ignores the dots and spaces at the end of a file name
+        String name = tool.toLowerCase(Locale.ROOT).replaceAll("[. ]+$", "");
+        return name.endsWith(".cmd") || name.endsWith(".bat");
+    }
+
+    /**
+     * The command of a batch file, for {@code cmd.exe} : the path and each argument between double quotes, where
+     * {@code cmd.exe} keeps {@code & | < > ^} and white space, with the backslashes at their end doubled, which the
+     * command line parser of the program that the batch file runs reads as one before the closing quote.
+     * {@code ProcessBuilder} leaves a quoted argument as it is.
+     *
+     * @throws PackagingException for a double quote, a percent sign or a line break, which {@code cmd.exe} would
+     *         change whatever the quotes : the message does not have the argument, which may be a password
+     */
+    static List<String> batchCommand(List<String> command) {
+        List<String> quoted = new ArrayList<>();
+        for (int i = 0; i < command.size(); i++) {
+            String argument = command.get(i);
+            if (argument.chars().anyMatch(c -> c == '"' || c == '%' || c == '\r' || c == '\n')) {
+                throw new PackagingException(command.get(0) + " is a batch file, which cmd.exe runs : "
+                        + (i == 0 ? "its path" : "its argument " + i) + " has a double quote, a percent sign or a line"
+                        + " break, which cmd.exe changes. Set quarkus.desktop.packaging.tools.<name> to the executable"
+                        + " (.exe) of the tool rather than to a batch file");
+            }
+            int backslashes = argument.length() - argument.replaceAll("\\\\+$", "").length();
+            quoted.add('"' + argument + "\\".repeat(backslashes) + '"');
+        }
+        return quoted;
     }
 
     /**

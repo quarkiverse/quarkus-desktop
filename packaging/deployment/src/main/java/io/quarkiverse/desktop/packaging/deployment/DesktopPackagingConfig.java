@@ -55,9 +55,10 @@ public interface DesktopPackagingConfig {
 
     /**
      * The identifier of the application, a reverse domain name such as {@code org.acme.editor} : the bundle identifier
-     * on macOS, the application ID of Flatpak (at least three elements, none of which starts with a digit), the
-     * identity of the MSIX package, the source of the upgrade code of the Windows installers. Defaults to the group ID
-     * of the project followed by the name of the application.
+     * on macOS (without underscores : an element loses its leading ones, and the others are dashes), the application
+     * ID of Flatpak (at least three elements, none of which starts with a digit), the identity of the MSIX package, the
+     * source of the upgrade code of the Windows installers. Defaults to the group ID of the project followed by the
+     * name of the application.
      */
     Optional<String> identifier();
 
@@ -103,7 +104,8 @@ public interface DesktopPackagingConfig {
     Optional<String> contentDirectory();
 
     /**
-     * The directory of the packages, relative to the build directory ({@code target}).
+     * The directory of the packages, relative to the build directory ({@code target}, {@code build} with Gradle), or
+     * absolute.
      */
     @WithDefault("packaging")
     String outputDirectory();
@@ -147,7 +149,10 @@ public interface DesktopPackagingConfig {
          * of its properties : product name, version, vendor, copyright). They are resources linked in the executable
          * when it is built : the extension has to be in the application then, with or without packages. Native sources
          * ({@code quarkus.native.sources-only=true}) do not get them : they are linked from a file of the build
-         * directory. In JVM mode, {@code jpackage} gives them to its launcher.
+         * directory. An application that links a resource file of its own ({@code -H:NativeLinkerOption=app.res} in
+         * {@code quarkus.native.additional-build-args}) keeps it, without them ; one linked in another way conflicts
+         * with them (the link fails with {@code CVT1100: duplicate resource}) unless this is {@code false}. In JVM
+         * mode, {@code jpackage} gives them to its launcher.
          */
         @WithDefault("true")
         boolean executableResources();
@@ -233,7 +238,9 @@ public interface DesktopPackagingConfig {
         List<String> capabilities();
 
         /**
-         * The minimum version of Windows that installs the package.
+         * The minimum version of Windows that installs the package : four numbers, such as {@code 10.0.17763.0}
+         * (Windows 10 1809) or {@code 10.0.22000.0} (Windows 11). The package is declared as tested on
+         * {@code 10.0.26100.0} (Windows 11 24H2), or on the minimum version when it is later.
          */
         @WithDefault("10.0.17763.0")
         String minVersion();
@@ -294,15 +301,16 @@ public interface DesktopPackagingConfig {
 
         /**
          * The minimum version of macOS that runs the application ({@code LSMinimumSystemVersion}). Defaults to the
-         * minimum version that the executable declares.
+         * minimum version that the native executable declares, and in JVM mode to the one that {@code jpackage} writes.
          */
         Optional<String> minimumSystemVersion();
 
         /**
          * More entries of the {@code Info.plist} of the application bundle : the usage descriptions of the privacy
          * permissions ({@code NSCameraUsageDescription}), for instance. The values are strings, except {@code true} and
-         * {@code false}, which are Booleans. An entry replaces the one of the extension of the same key
-         * ({@code NSHighResolutionCapable}, {@code NSSupportsAutomaticGraphicsSwitching}, {@code CFBundleName}...).
+         * {@code false}, which are Booleans. An entry replaces the one of the same key that the extension writes
+         * ({@code NSHighResolutionCapable}, {@code NSSupportsAutomaticGraphicsSwitching}, {@code CFBundleName}...), or
+         * that {@code jpackage} writes in JVM mode.
          */
         @ConfigDocMapKey("key")
         Map<String, String> infoPlist();
@@ -349,14 +357,19 @@ public interface DesktopPackagingConfig {
 
         /**
          * The identity that signs the installer package, a {@code Developer ID Installer} certificate of the keychain.
-         * The installer package is not signed by default.
+         * The installer package is not signed by default : the build warns about it when the application bundle is
+         * signed with a certificate.
          */
         Optional<String> installerIdentity();
 
         /**
-         * The entitlements of the application, a property list file. By default, a native executable has none, and a
-         * JVM application has the ones that the JVM needs with the hardened runtime (just-in-time compilation,
-         * unsigned executable memory, libraries of other teams).
+         * The entitlements of the application, a property list file, in place of the default ones. With a certificate,
+         * the hardened runtime only loads the libraries signed by Apple or with the identity of the application, unless
+         * an entitlement allows the others. By default, a JVM application has the entitlements that the JVM needs
+         * (just-in-time compilation, unsigned executable memory, libraries of other teams), and a native executable
+         * signed with a certificate has the one of the libraries of other teams
+         * ({@code com.apple.security.cs.disable-library-validation}), for the libraries that it loads from outside the
+         * bundle, such as the ones that SWT extracts to the home directory of the user.
          */
         Optional<String> entitlements();
 
@@ -374,8 +387,11 @@ public interface DesktopPackagingConfig {
         /**
          * The keychain profile of the credentials of the notary service, stored with
          * {@code xcrun notarytool store-credentials}. When set, the disk image and the installer package are submitted
-         * to the notary service of Apple, and the ticket is stapled to them : the build waits for the answer. They have
-         * to be signed with a Developer ID identity.
+         * to the notary service of Apple, and the ticket is stapled to them : the build waits for the answer, and fails
+         * with the log of the submission when the service does not accept a package. They have to be signed with a
+         * Developer ID identity ({@code macos.sign.identity}, and {@code macos.sign.installer-identity} for the
+         * installer package) : the build fails before they are built otherwise. Without a keychain profile, the build
+         * warns that the packages of a bundle signed with a certificate are not notarized.
          */
         Optional<String> keychainProfile();
 
@@ -530,19 +546,25 @@ public interface DesktopPackagingConfig {
     interface Flatpak {
 
         /**
-         * The runtime of the application. {@code org.gnome.Platform} has GTK, which SWT applications need.
+         * The runtime of the application. The default one has GTK 3, which SWT needs. {@code org.gnome.Platform} also
+         * has WebKitGTK, which the {@code Browser} widget of SWT uses : with
+         * {@code quarkus.desktop.packaging.linux.flatpak.sdk=org.gnome.Sdk} and
+         * {@code quarkus.desktop.packaging.linux.flatpak.runtime-version} set to a version of GNOME, such as {@code 50}.
          */
         @WithDefault("org.freedesktop.Platform")
         String runtime();
 
         /**
-         * The version of the runtime.
+         * The version of the runtime and of its SDK : a branch of the runtime on Flathub, such as {@code 25.08} for
+         * {@code org.freedesktop.Platform} or {@code 50} for {@code org.gnome.Platform}. A branch reaches its end of
+         * life after one or two years, and gets no security fixes then : the version follows the releases of the
+         * runtime.
          */
-        @WithDefault("24.08")
+        @WithDefault("25.08")
         String runtimeVersion();
 
         /**
-         * The SDK of the runtime.
+         * The SDK of the runtime, of the same version : {@code org.gnome.Sdk} for {@code org.gnome.Platform}.
          */
         @WithDefault("org.freedesktop.Sdk")
         String sdk();
@@ -572,7 +594,8 @@ public interface DesktopPackagingConfig {
         String base();
 
         /**
-         * The confinement of the snap : {@code strict}, {@code classic} or {@code devmode}.
+         * The confinement of the snap : {@code strict}, {@code classic} or {@code devmode}. A {@code classic} snap
+         * has no {@code gnome} extension : set {@code quarkus.desktop.packaging.linux.snap.extensions} to empty.
          */
         @WithDefault("strict")
         String confinement();
@@ -584,11 +607,12 @@ public interface DesktopPackagingConfig {
         String grade();
 
         /**
-         * The extensions of the application of the snap. The {@code gnome} extension gives it the libraries of a
-         * desktop application (X11, Wayland, GTK, fonts, themes).
+         * The extensions of the application of the snap, empty for none. The {@code gnome} extension gives it the
+         * libraries of a desktop application (X11, Wayland, GTK, fonts, themes) : it supports the {@code strict} and
+         * {@code devmode} confinements, not {@code classic}.
          */
         @WithDefault("gnome")
-        List<String> extensions();
+        Optional<List<String>> extensions();
 
         /**
          * The interfaces that the application plugs.
@@ -622,9 +646,13 @@ public interface DesktopPackagingConfig {
         Optional<String> jdk();
 
         /**
-         * The modules of the Java runtime of the application ({@code --add-modules} of {@code jpackage}). By default,
-         * {@code jpackage} adds the modules of Java SE and the ones of the JDK that export an API, as an application
-         * on the class path may use any of them : a list of modules makes a smaller runtime.
+         * The modules of the Java runtime of the application ({@code --add-modules} of {@code jpackage}), to which the
+         * extension adds the ones that Quarkus needs. By default, the runtime has the modules of Java SE and the ones of
+         * the JDK that export an API, as an application on the class path may use any of them, and the modules that
+         * provide their services : the locale data, the charsets that are not standard, the key stores of Windows...
+         * A list of modules makes a smaller runtime, without these services unless it lists their modules :
+         * {@code jdk.localedata} for the languages other than English, {@code jdk.charsets},
+         * {@code jdk.crypto.mscapi}... With JDK 21, the extension adds {@code jdk.crypto.ec}, which TLS needs.
          */
         Optional<List<String>> modules();
 
@@ -644,7 +672,10 @@ public interface DesktopPackagingConfig {
         Optional<String> runtimeImage();
 
         /**
-         * The options of the JVM of the application : {@code -Xmx512m}, {@code -Dkey=value}...
+         * The options of the JVM of the application : {@code -Xmx512m}, {@code -Dkey=value}... Each one is one argument
+         * of the JVM, white space and quotes included ({@code -Dapp.title=Acme Editor}) ; the long form of an option
+         * with its value after white space ({@code --add-opens java.base/java.lang=ALL-UNNAMED}) is written with
+         * {@code =}.
          */
         Optional<List<String>> options();
     }

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
@@ -23,8 +24,9 @@ import org.junit.jupiter.api.io.TempDir;
 
 /**
  * The packages that the build of this module wrote ({@code target/packaging}) : the application image, whose launcher
- * starts the application, and a package of each format of {@code quarkus.desktop.packaging.formats} that the operating
- * system of the build has. In JVM mode and, with {@code -Dnative}, for the native executable.
+ * starts the application without any warning or error, and a package of each format of
+ * {@code quarkus.desktop.packaging.formats} that the operating system of the build has. In JVM mode and, with
+ * {@code -Dnative}, for the native executable.
  */
 class PackagingIT {
 
@@ -84,6 +86,9 @@ class PackagingIT {
             assertTrue(process.waitFor(2, TimeUnit.MINUTES), "The application did not exit");
             String output = Files.readString(directory.resolve("output.txt"));
             assertEquals(0, process.exitValue(), output);
+            // without the banner and with the warnings and errors only, the application prints nothing : what it prints
+            // is a module missing from the Java runtime, a start or stop handler that failed, a warning of the JVM...
+            assertEquals("", output.strip(), "The application printed warnings or errors");
             assertTrue(Files.isRegularFile(marker), "The application did not write " + marker + " : " + output);
             String version = System.getProperty("packaging.version", "");
             assertEquals("started " + version + " [first, second argument]", Files.readString(marker));
@@ -100,6 +105,33 @@ class PackagingIT {
     void theApplicationImageHasTheContentDirectory() {
         Path readme = MAC ? image().resolve("Contents/Resources/README.txt") : image().resolve("README.txt");
         assertTrue(Files.isRegularFile(readme), readme + " : the file of src/main/packaging/content");
+    }
+
+    /**
+     * The files of the application image are not read-only on Windows, where mvn clean could not delete them : the
+     * launcher of jpackage is when it is written.
+     */
+    @Test
+    void theApplicationImageHasNoReadOnlyFile() throws IOException {
+        assumeTrue(WINDOWS);
+        try (Stream<Path> files = Files.walk(image())) {
+            assertEquals(List.of(), files.filter(Files::isRegularFile).filter(file -> !Files.isWritable(file)).toList(),
+                    "The read-only files of the application image : mvn clean cannot delete them");
+        }
+    }
+
+    /**
+     * The options of the JVM of the configuration, in the launcher configuration of the application image of JVM mode :
+     * one argument of the JVM each, white space and quotes included.
+     */
+    @Test
+    void theLauncherConfigurationHasTheOptionsOfTheJvm() throws IOException {
+        assumeFalse(NATIVE);
+        Path configuration = WINDOWS ? image().resolve("app").resolve(NAME + ".cfg")
+                : MAC ? image().resolve("Contents/app").resolve(NAME + ".cfg")
+                        : image().resolve("lib/app").resolve(PACKAGE_NAME + ".cfg");
+        List<String> lines = Files.readAllLines(configuration);
+        assertTrue(lines.contains("java-options=-Dpackaging.it.option=it's \"set\""), configuration + " : " + lines);
     }
 
     /**

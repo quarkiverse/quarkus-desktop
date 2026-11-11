@@ -60,4 +60,38 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- Maven Central requires a javadoc jar for every jar, and the javadoc plugin of the release makes none for a
+             module without Java source : a placeholder that points to the documentation. To remove when the module
+             has Java sources, which the javadoc plugin documents in a javadoc jar of its own -->
+        <profile>
+            <id>javadoc-placeholder</id>
+            <activation>
+                <property>
+                    <name>performRelease</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <artifactId>maven-jar-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>javadoc-placeholder</id>
+                                <phase>package</phase>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                                <configuration>
+                                    <classifier>javadoc</classifier>
+                                    <classesDirectory>${project.basedir}/src/main/javadoc</classesDirectory>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
 </project>

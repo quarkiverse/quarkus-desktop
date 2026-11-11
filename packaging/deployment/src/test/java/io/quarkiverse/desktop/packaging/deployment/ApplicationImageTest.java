@@ -9,12 +9,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 
 import org.junit.jupiter.api.Test;
@@ -24,6 +28,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import io.quarkiverse.desktop.packaging.deployment.windows.WindowsResources;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
 
 /**
  * The application images : the one of a native executable, built here, and what the one of JVM mode gives to
@@ -33,7 +38,8 @@ class ApplicationImageTest {
 
     static PackagingContext context(Path project, TargetOs os, Map<String, String> properties) throws IOException {
         DesktopPackagingConfig config = TestConfig.of(properties);
-        return Packaging.context(config, "Acme Editor", "1.2.3", "org.acme", project, project.resolve("target"), os);
+        return Packaging.context(config, "Acme Editor", "1.2.3", "org.acme", project, project.resolve("target"), os,
+                Arch::host);
     }
 
     /**
@@ -57,7 +63,7 @@ class ApplicationImageTest {
 
         PackagingContext context = context(project, TargetOs.WINDOWS, Map.of());
         ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner.exe"),
-                List.of(new NativeExecutableFileBuildItem(extra, "data")));
+                List.of(new NativeExecutableFileBuildItem(extra, "data")), List.of());
         assertEquals(project.resolve("target/packaging/image/Acme Editor"), image.root());
         assertEquals("Acme Editor.exe", image.launcher());
         assertTrue(image.nativeExecutable());
@@ -66,11 +72,97 @@ class ApplicationImageTest {
         assertEquals("acme-runner.exe", Files.readString(image.launcherPath()));
     }
 
+    /**
+     * A 64-bit Windows library with one section, which imports the given files : the import descriptors, then the
+     * names.
+     */
+    static byte[] library(String... imports) {
+        int names = 20 * (imports.length + 1);
+        ByteBuffer buffer = ByteBuffer.allocate(0x400).order(ByteOrder.LITTLE_ENDIAN);
+        // the DOS header, the signature, the file header, PE32+ and the import directory (the second data directory)
+        buffer.putShort(0, (short) 0x5a4d).putInt(0x3c, 0x40);
+        buffer.putInt(0x40, 0x00004550).putShort(0x44, (short) 0x8664).putShort(0x46, (short) 1).putShort(0x54, (short) 240);
+        buffer.putShort(0x58, (short) 0x20b).putInt(0x58 + 112 + 8, 0x1000).putInt(0x58 + 112 + 12, names);
+        // the section : virtual size, virtual address, size and offset in the file
+        buffer.putInt(0x58 + 240 + 8, 0x200).putInt(0x58 + 240 + 12, 0x1000).putInt(0x58 + 240 + 16, 0x200)
+                .putInt(0x58 + 240 + 20, 0x200);
+        for (int i = 0; i < imports.length; i++) {
+            buffer.putInt(0x200 + 20 * i + 12, 0x1000 + names + 32 * i);
+            buffer.put(0x200 + names + 32 * i, imports[i].getBytes(StandardCharsets.US_ASCII));
+        }
+        return buffer.array();
+    }
+
+    /**
+     * A JDK for Windows, with the Visual C++ runtime in its {@code bin} directory : {@code msvcp140.dll} imports the two
+     * others, and {@code vcruntime140_1.dll} imports {@code vcruntime140.dll}.
+     */
+    static Path vcRuntimeJdk(Path home) throws IOException {
+        Path bin = Files.createDirectories(home.resolve("bin"));
+        Files.write(bin.resolve("vcruntime140.dll"), library("KERNEL32.dll"));
+        Files.write(bin.resolve("vcruntime140_1.dll"), library("VCRUNTIME140.dll"));
+        Files.write(bin.resolve("msvcp140.dll"), library("KERNEL32.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll"));
+        return home;
+    }
+
+    /**
+     * native-image links every Windows executable with the Visual C++ runtime, which is not part of Windows : the image
+     * gets the libraries of the runtime that its executable and its libraries import, from the first JDK that has
+     * them, with the ones that they import.
+     */
+    @Test
+    void theVisualCppRuntimeOfAWindowsNativeExecutable(@TempDir Path project) throws IOException {
+        Path target = Files.createDirectories(project.resolve("target"));
+        Path executable = Files.write(target.resolve("acme-runner.exe"), library("KERNEL32.dll", "VCRUNTIME140.dll"));
+        Path jdk = vcRuntimeJdk(project.resolve("jdk"));
+        List<Path> homes = List.of(project.resolve("graalvm"), jdk);
+        PackagingContext context = context(project, TargetOs.WINDOWS, Map.of());
+
+        ApplicationImage image = NativeApplicationImage.build(context, executable, List.of(), homes);
+        assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("vcruntime140.dll")), FileTrees.files(image.root()));
+        assertArrayEquals(Files.readAllBytes(jdk.resolve("bin/vcruntime140.dll")),
+                Files.readAllBytes(image.root().resolve("vcruntime140.dll")));
+
+        // a library of the JDK that imports msvcp140.dll, which imports vcruntime140_1.dll
+        Files.write(target.resolve("awt.dll"), library("MSVCP140.dll"));
+        image = NativeApplicationImage.build(context, executable, List.of(), homes);
+        assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("awt.dll"), Path.of("msvcp140.dll"),
+                Path.of("vcruntime140.dll"), Path.of("vcruntime140_1.dll")), FileTrees.files(image.root()));
+        assertEquals(List.of(), NativeApplicationImage.missingVcRuntime(image.root()));
+
+        // no JDK has them : a warning
+        image = NativeApplicationImage.build(context, executable, List.of(), List.of());
+        assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("awt.dll")), FileTrees.files(image.root()));
+        assertEquals(List.of("msvcp140.dll", "vcruntime140.dll"), NativeApplicationImage.missingVcRuntime(image.root()));
+    }
+
+    /**
+     * A library of the Visual C++ runtime that the image has, in any case, stays as it is : the copy of Desktop AWT,
+     * the one of the content directory.
+     */
+    @Test
+    void theVisualCppRuntimeOfTheImageStays(@TempDir Path project) throws IOException {
+        Path target = Files.createDirectories(project.resolve("target"));
+        Path executable = Files.write(target.resolve("acme-runner.exe"),
+                library("VCRUNTIME140.dll", "VCRUNTIME140_1.dll"));
+        Files.writeString(target.resolve("VCRUNTIME140.dll"), "awt");
+        Files.createDirectories(project.resolve("src/main/packaging/content"));
+        Files.writeString(project.resolve("src/main/packaging/content/vcruntime140_1.dll"), "content");
+        PackagingContext context = context(project, TargetOs.WINDOWS, Map.of());
+        ApplicationImage image = NativeApplicationImage.build(context, executable, List.of(),
+                List.of(vcRuntimeJdk(project.resolve("jdk"))));
+        assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("VCRUNTIME140.dll"), Path.of("vcruntime140_1.dll")),
+                FileTrees.files(image.root()));
+        assertEquals("awt", Files.readString(image.root().resolve("VCRUNTIME140.dll")));
+        assertEquals("content", Files.readString(image.root().resolve("vcruntime140_1.dll")));
+    }
+
     @Test
     void theImageOfALinuxNativeExecutable(@TempDir Path project) throws IOException {
         Path target = nativeBuild(project);
         PackagingContext context = context(project, TargetOs.LINUX, Map.of("linux.package-name", "editor"));
-        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of());
+        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of(),
+                List.of());
         assertEquals(project.resolve("target/packaging/image/editor"), image.root());
         assertEquals("editor", image.launcher());
         assertEquals(List.of(Path.of("editor"), Path.of("libawt.so"), Path.of("libfreetype.so.6")),
@@ -78,7 +170,8 @@ class ApplicationImageTest {
         // a second build replaces the image
         Files.delete(target.resolve("libawt.so"));
         assertEquals(List.of(Path.of("editor"), Path.of("libfreetype.so.6")),
-                FileTrees.files(NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of()).root()));
+                FileTrees.files(NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of(), List.of())
+                        .root()));
     }
 
     @Test
@@ -89,7 +182,8 @@ class ApplicationImageTest {
         // not signed : codesign is a tool of macOS
         PackagingContext context = context(project, TargetOs.MACOS, Map.of("macos.sign.enabled", "false",
                 "content-directory", "content"));
-        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of());
+        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of(),
+                List.of());
         assertEquals(project.resolve("target/packaging/image/Acme Editor.app"), image.root());
         assertEquals("Contents/MacOS/Acme Editor", image.launcher());
         assertEquals(List.of(Path.of("Contents", "Info.plist"), Path.of("Contents", "MacOS", "Acme Editor"),
@@ -116,7 +210,8 @@ class ApplicationImageTest {
         ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"),
                 List.of(new NativeExecutableFileBuildItem(extra, "data"), new NativeExecutableFileBuildItem(icu),
                         new NativeExecutableFileBuildItem(library, "lib"),
-                        new NativeExecutableFileBuildItem(notes, "../Resources")));
+                        new NativeExecutableFileBuildItem(notes, "../Resources")),
+                List.of());
         Path contents = image.root().resolve("Contents");
         assertEquals(List.of(Path.of("Contents", "Info.plist"), Path.of("Contents", "MacOS", "Acme Editor"),
                 Path.of("Contents", "MacOS", "data", "extra.dat"), Path.of("Contents", "MacOS", "icudtl.dat"),
@@ -148,10 +243,10 @@ class ApplicationImageTest {
         Path target = nativeBuild(project);
         PackagingContext context = context(project, TargetOs.LINUX, Map.of());
         assertThrows(PackagingException.class, () -> NativeApplicationImage.build(context, target.resolve("acme-runner"),
-                List.of(new NativeExecutableFileBuildItem(project.resolve("missing.so")))));
+                List.of(new NativeExecutableFileBuildItem(project.resolve("missing.so"))), List.of()));
         PackagingContext missingContent = context(project, TargetOs.LINUX, Map.of("content-directory", "missing"));
         assertThrows(PackagingException.class,
-                () -> NativeApplicationImage.build(missingContent, target.resolve("acme-runner"), List.of()));
+                () -> NativeApplicationImage.build(missingContent, target.resolve("acme-runner"), List.of(), List.of()));
     }
 
     @Test
@@ -167,8 +262,98 @@ class ApplicationImageTest {
 
     @Test
     void theModulesOfTheJavaRuntimeIncludeTheOnesOfQuarkus() {
-        assertEquals(List.of("java.desktop", "java.logging", "java.naming", "jdk.unsupported", "jdk.zipfs"),
-                JvmApplicationImage.modules(List.of("java.desktop", " java.logging")));
+        assertEquals(List.of("java.desktop", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs"),
+                JvmApplicationImage.modules(List.of("java.desktop", " java.logging"), 25));
+        // the elliptic curve cryptography of JDK 21, which TLS needs : java.base has it from JDK 22
+        assertEquals(List.of("java.desktop", "java.net.http", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported",
+                "jdk.zipfs", "jdk.crypto.ec"), JvmApplicationImage.modules(List.of("java.desktop", "java.net.http"), 21));
+        assertEquals(List.of("jdk.crypto.ec", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs"),
+                JvmApplicationImage.modules(List.of("jdk.crypto.ec"), 21));
+        assertEquals(List.of("java.desktop", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs"),
+                JvmApplicationImage.modules(List.of("java.desktop"), 22));
+        assertEquals(List.of("java.desktop", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs"),
+                JvmApplicationImage.modules(List.of("java.desktop"), -1));
+    }
+
+    /**
+     * Without modules in the configuration, the default modules of {@code jpackage}, with the providers of services
+     * that the one of JDK 25 leaves out (the locale data, the charsets, the key stores of Windows...).
+     */
+    @Test
+    void theDefaultModulesOfTheJavaRuntimeHaveTheProvidersOfServices() {
+        String release = String.join("\n", "IMPLEMENTOR=\"Oracle Corporation\"", "JAVA_VERSION=\"25\"",
+                "MODULES=\"java.base java.logging java.naming jdk.charsets jdk.crypto.cryptoki jdk.jfr jdk.localedata"
+                        + " jdk.naming.dns jdk.naming.rmi jdk.unsupported jdk.zipfs\"",
+                "OS_NAME=\"Linux\"", "");
+        assertEquals(List.of("java.base", "java.logging", "java.naming", "jdk.charsets", "jdk.crypto.cryptoki", "jdk.jfr",
+                "jdk.localedata", "jdk.naming.dns", "jdk.naming.rmi", "jdk.unsupported", "jdk.zipfs"),
+                List.copyOf(JvmApplicationImage.releaseModules(release)));
+        assertEquals(25, JvmApplicationImage.releaseVersion(release));
+        assertEquals(21, JvmApplicationImage.releaseVersion("JAVA_VERSION=\"21.0.2\"\r\nMODULES=\"java.base\"\r\n"));
+        assertEquals(Set.of(), JvmApplicationImage.releaseModules("JAVA_VERSION=\"25\"\n"));
+        assertEquals(-1, JvmApplicationImage.releaseVersion(""));
+
+        // ALL-DEFAULT last, which jpackage ignores anywhere else ; jdk.crypto.mscapi only in the JDK of Windows
+        assertEquals(List.of("java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs", "jdk.localedata",
+                "jdk.charsets", "jdk.crypto.cryptoki", "jdk.naming.dns", "jdk.naming.rmi", "ALL-DEFAULT"),
+                JvmApplicationImage.defaultModules(JvmApplicationImage.releaseModules(release)));
+        assertEquals(List.of("java.logging", "jdk.charsets", "jdk.crypto.mscapi", "ALL-DEFAULT"),
+                JvmApplicationImage.defaultModules(Set.of("java.base", "java.logging", "jdk.charsets", "jdk.crypto.mscapi")));
+    }
+
+    /**
+     * The options of the JVM : the ones of the extensions for the operating system of the application, then the ones of
+     * the configuration.
+     */
+    @Test
+    void theOptionsOfTheJvmOfTheExtensionsAndOfTheConfiguration() {
+        List<PackagedJvmOptionBuildItem> extensions = List.of(
+                new PackagedJvmOptionBuildItem("--enable-native-access=ALL-UNNAMED"),
+                new PackagedJvmOptionBuildItem("-XstartOnFirstThread", io.smallrye.common.os.OS.MAC));
+        Optional<List<String>> configured = Optional.of(List.of("-Xmx64m"));
+        assertEquals(List.of("--enable-native-access=ALL-UNNAMED", "-XstartOnFirstThread", "-Xmx64m"),
+                JvmApplicationImage.javaOptions(extensions, TargetOs.MACOS, configured));
+        assertEquals(List.of("--enable-native-access=ALL-UNNAMED", "-Xmx64m"),
+                JvmApplicationImage.javaOptions(extensions, TargetOs.LINUX, configured));
+        assertEquals(List.of("--enable-native-access=ALL-UNNAMED", "-Xmx64m"),
+                JvmApplicationImage.javaOptions(extensions, TargetOs.WINDOWS, configured));
+        assertEquals(List.of("--enable-native-access=ALL-UNNAMED", "-XstartOnFirstThread"),
+                JvmApplicationImage.javaOptions(extensions, TargetOs.MACOS, Optional.empty()));
+    }
+
+    /**
+     * An option of the JVM is one argument of the JVM, which {@code jpackage} would split at white space and unquote.
+     */
+    @Test
+    void anOptionOfTheJvmIsOneArgument() {
+        assertEquals("-Xmx64m", JvmApplicationImage.javaOption("-Xmx64m"));
+        assertEquals("-Xmx64m", JvmApplicationImage.javaOption(" -Xmx64m "));
+        assertEquals("-Dlib=C:\\lib\\", JvmApplicationImage.javaOption("-Dlib=C:\\lib\\"));
+        assertEquals("'-Dtitle=Acme Editor'", JvmApplicationImage.javaOption("-Dtitle=Acme Editor"));
+        assertEquals("'-Downer=Bob\\'s'", JvmApplicationImage.javaOption("-Downer=Bob's"));
+        assertEquals("'-Dq=say \\\"hi\\\" a\\\\'b'", JvmApplicationImage.javaOption("-Dq=say \"hi\" a\\'b"));
+        // a backslash before the closing quote would escape it
+        assertEquals("'-Dhome=C:\\Program Files\\Acme'\\", JvmApplicationImage.javaOption("-Dhome=C:\\Program Files\\Acme\\"));
+        // the launcher takes the long form of an option as one argument with = only
+        assertEquals("--add-opens=java.base/java.lang=ALL-UNNAMED",
+                JvmApplicationImage.javaOption("--add-opens java.base/java.lang=ALL-UNNAMED"));
+        assertEquals("'--module-path=C:\\Program Files\\Acme'",
+                JvmApplicationImage.javaOption("--module-path  C:\\Program Files\\Acme"));
+        assertEquals("--enable-native-access=ALL-UNNAMED",
+                JvmApplicationImage.javaOption("--enable-native-access=ALL-UNNAMED"));
+    }
+
+    /**
+     * The arguments of {@code jpackage} in a file, in UTF-8 : each one in double quotes, which keep its white space, its
+     * single quotes, its first {@code #} or {@code @} and its emptiness.
+     */
+    @Test
+    void theArgumentFileOfJpackage() {
+        assertEquals(String.join("\n", "\"--name\"", "\"Редактор\"", "\"--vendor\"", "\"@stake \\\"Acme\\\" Spółka\"",
+                "\"--input\"", "\"C:\\\\a b\\\\\"", "\"--description\"", "\"a\\nb\\r\\tc\\f\"", "\"--copyright\"",
+                "\"#1 'Acme'\"", "\"\"", ""),
+                JvmApplicationImage.argumentFile(List.of("--name", "Редактор", "--vendor", "@stake \"Acme\" Spółka",
+                        "--input", "C:\\a b\\", "--description", "a\nb\r\tc\f", "--copyright", "#1 'Acme'", "")));
     }
 
     @Test
@@ -265,23 +450,39 @@ class ApplicationImageTest {
     @Test
     void aJavaRuntimeIsBuiltWithItsModulesOrGiven() {
         Path project = Path.of("project");
-        assertEquals(List.of("--add-modules", "java.desktop,java.logging,java.naming,jdk.unsupported,jdk.zipfs",
+        String jdk21 = "JAVA_VERSION=\"21.0.2\"\nMODULES=\"java.base java.logging jdk.crypto.ec jdk.localedata\"\n";
+        assertEquals(List.of("--add-modules", "java.desktop,java.logging,java.naming,jdk.jfr,jdk.unsupported,jdk.zipfs",
                 "--jlink-options", "--strip-debug --no-man-pages"),
                 JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")),
-                        Optional.of(List.of("--strip-debug", "--no-man-pages")), Optional.empty(), project));
+                        Optional.of(List.of("--strip-debug", "--no-man-pages")), Optional.empty(), project, ""));
+        assertEquals(List.of("--add-modules",
+                "java.desktop,java.logging,java.naming,jdk.jfr,jdk.unsupported,jdk.zipfs,jdk.crypto.ec"),
+                JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")), Optional.empty(),
+                        Optional.empty(), project, jdk21));
+        // the default modules of jpackage, with the ones of Quarkus and the providers of services that the JDK has
+        assertEquals(List.of("--add-modules", "java.logging,jdk.localedata,ALL-DEFAULT"), JvmApplicationImage
+                .runtimeArguments(Optional.empty(), Optional.empty(), Optional.empty(), project, jdk21));
+        assertEquals(List.of("--add-modules", "java.logging,jdk.localedata,ALL-DEFAULT", "--jlink-options",
+                "--strip-debug"),
+                JvmApplicationImage.runtimeArguments(Optional.of(List.of()),
+                        Optional.of(List.of("--strip-debug")), Optional.empty(), project, jdk21));
+        // without the release file of the JDK, the default modules of jpackage only
         assertEquals(List.of(), JvmApplicationImage.runtimeArguments(Optional.empty(), Optional.empty(), Optional.empty(),
-                project));
+                project, ""));
+        // jpackage rejects modules with a given runtime
         assertEquals(List.of("--runtime-image", project.resolve("runtime").toString()), JvmApplicationImage
-                .runtimeArguments(Optional.of(List.of()), Optional.of(List.of()), Optional.of("runtime"), project));
+                .runtimeArguments(Optional.of(List.of()), Optional.of(List.of()), Optional.of("runtime"), project, jdk21));
 
         // jpackage takes the given runtime as it is
-        PackagingException modules = assertThrows(PackagingException.class, () -> JvmApplicationImage
-                .runtimeArguments(Optional.of(List.of("java.desktop")), Optional.empty(), Optional.of("runtime"), project));
+        PackagingException modules = assertThrows(PackagingException.class,
+                () -> JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")), Optional.empty(),
+                        Optional.of("runtime"), project, jdk21));
         assertTrue(modules.getMessage().contains("quarkus.desktop.packaging.jvm.runtime-image"), modules.getMessage());
         assertTrue(modules.getMessage().contains("quarkus.desktop.packaging.jvm.modules"), modules.getMessage());
         assertFalse(modules.getMessage().contains("jlink-options"), modules.getMessage());
-        PackagingException options = assertThrows(PackagingException.class, () -> JvmApplicationImage
-                .runtimeArguments(Optional.empty(), Optional.of(List.of("--strip-debug")), Optional.of("runtime"), project));
+        PackagingException options = assertThrows(PackagingException.class,
+                () -> JvmApplicationImage.runtimeArguments(Optional.empty(), Optional.of(List.of("--strip-debug")),
+                        Optional.of("runtime"), project, jdk21));
         assertTrue(options.getMessage().contains("quarkus.desktop.packaging.jvm.jlink-options"), options.getMessage());
         assertFalse(options.getMessage().contains("jvm.modules"), options.getMessage());
     }

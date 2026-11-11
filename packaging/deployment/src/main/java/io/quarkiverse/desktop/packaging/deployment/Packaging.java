@@ -7,6 +7,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.function.Supplier;
 
 import org.jboss.logging.Logger;
 
@@ -33,8 +34,7 @@ final class Packaging {
     }
 
     /**
-     * The formats of the configuration that the operating system of the application has, without duplicates. The
-     * formats of the operating system of the build that a container build skips are logged as a warning.
+     * The formats of the configuration that the operating system of the application has, without duplicates.
      */
     static List<PackageFormat> formats(DesktopPackagingConfig config, TargetOs os) {
         List<PackageFormat> formats = new ArrayList<>();
@@ -45,14 +45,13 @@ final class Packaging {
                 LOGGER.debugf("The %s package is not built : it is not a format of %s", format, os);
             }
         }
-        containerBuildWarning(config, os, TargetOs.host()).ifPresent(LOGGER::warn);
         return formats;
     }
 
     /**
-     * The warning for the formats of the operating system of the build that are not built because the native
-     * executable is built in a container, for Linux ({@code quarkus.native.container-build}) : empty when there are
-     * none.
+     * The warning for the formats that are not built because the native executable is built in a container, for
+     * Linux ({@code quarkus.native.container-build}), on another operating system : the formats of the operating
+     * system of the build, and the ones of Linux, which are built on Linux. Empty when there are none.
      *
      * @param os the operating system of the application : Linux for a container build
      * @param host the operating system of the build
@@ -62,19 +61,33 @@ final class Packaging {
             return Optional.empty();
         }
         List<String> skipped = new ArrayList<>();
+        List<String> hostFormats = new ArrayList<>();
+        List<String> osFormats = new ArrayList<>();
         for (PackageFormat format : new LinkedHashSet<>(config.formats().orElse(List.of()))) {
-            if (format.supports(host) && !format.supports(os)) {
-                skipped.add(format.name().toLowerCase(Locale.ROOT));
+            String name = format.name().toLowerCase(Locale.ROOT);
+            if (format.supports(host)) {
+                hostFormats.add(name);
+                skipped.add(name);
+            } else if (format.supports(os)) {
+                osFormats.add(name);
+                skipped.add(name);
             }
         }
         if (skipped.isEmpty()) {
             return Optional.empty();
         }
-        String formats = String.join(", ", skipped);
-        return Optional.of("The " + formats + (skipped.size() == 1 ? " package is" : " packages are") + " not built :"
-                + " the native executable is built in a container (quarkus.native.container-build=true), for Linux, and"
-                + " only the Linux formats package it, with the tools of this machine. Build the native executable on"
-                + " this machine (quarkus.native.container-build=false) to package it as " + formats);
+        List<String> sentences = new ArrayList<>();
+        sentences.add("The " + String.join(", ", skipped) + (skipped.size() == 1 ? " package is" : " packages are")
+                + " not built : the native executable is built in a container (quarkus.native.container-build=true), for"
+                + " Linux, and a package is built on its operating system");
+        if (!hostFormats.isEmpty()) {
+            sentences.add("Build the native executable on this machine (quarkus.native.container-build=false) to package"
+                    + " it as " + String.join(", ", hostFormats));
+        }
+        if (!osFormats.isEmpty()) {
+            sentences.add("Build it on Linux to package it as " + String.join(", ", osFormats));
+        }
+        return Optional.of(String.join(". ", sentences));
     }
 
     /**
@@ -85,12 +98,15 @@ final class Packaging {
      * @param groupId the group ID of the project
      * @param projectDirectory the directory of the relative paths of the configuration
      * @param buildDirectory the build directory ({@code target})
+     * @param arch reads the architecture of the application, when a packager asks for it : the one of its native
+     *        executable ({@link Arch#executable}), or of the build in JVM mode ({@link Arch#host})
      */
     static PackagingContext context(DesktopPackagingConfig config, String applicationName, String applicationVersion,
-            String groupId, Path projectDirectory, Path buildDirectory, TargetOs os) throws IOException {
+            String groupId, Path projectDirectory, Path buildDirectory, TargetOs os, Supplier<Arch> arch)
+            throws IOException {
         AppInfo app = AppInfo.of(config, applicationName, applicationVersion, groupId, projectDirectory);
         AppInfo.checkName(app.name(), config.windows().installDirectory(), os);
-        return new PackagingContext(config, app, os, new Tools(config.tools()),
+        return new PackagingContext(config, app, os, arch, new Tools(config.tools(), projectDirectory),
                 IconSet.load(config.icon().map(String::trim).filter(value -> !value.isEmpty()), projectDirectory),
                 projectDirectory, buildDirectory.resolve(config.outputDirectory()).toAbsolutePath().normalize());
     }

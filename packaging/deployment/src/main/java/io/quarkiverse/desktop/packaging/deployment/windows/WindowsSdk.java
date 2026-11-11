@@ -10,14 +10,17 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Stream;
 
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.Tools;
@@ -41,7 +44,48 @@ public final class WindowsSdk {
      */
     private static final int HEADERS = 64 * 1024;
 
+    /**
+     * The length of a path that the WiX Toolset and Inno Setup do not read, even where Windows allows longer paths : the
+     * {@code MAX_PATH} of Windows.
+     */
+    static final int MAX_PATH = 260;
+
     private WindowsSdk() {
+    }
+
+    /**
+     * The file name of a Windows package : the name of the application, its version and the architecture of the
+     * package ({@code Acme-Editor-1.2.3-x64.msi}).
+     */
+    static String packageFileName(AppInfo app, Arch arch, PackageFormat format) {
+        return app.fileName() + "-" + app.version() + "-" + arch.windows() + "." + format.extension();
+    }
+
+    /**
+     * Checks that the tool of a package reads the files of the application image : the WiX Toolset and Inno Setup do
+     * not read a file whose path has {@link #MAX_PATH} characters or more, and their error does not name it.
+     *
+     * @param root the directory of the application image
+     * @param files the files of the application image, relative to its directory
+     * @param tool the name of the tool, for the message
+     * @throws PackagingException for such a path : the longest one, so that one change of the directories is enough
+     */
+    static void checkPathLengths(Path root, List<Path> files, String tool) {
+        String longest = "";
+        for (Path file : files) {
+            String path = root.resolve(file).toAbsolutePath().toString();
+            if (path.length() > longest.length()) {
+                longest = path;
+            }
+        }
+        if (longest.length() >= MAX_PATH) {
+            throw new PackagingException("The path of " + longest + " has " + longest.length() + " characters : " + tool
+                    + " does not read a file whose path has " + MAX_PATH + " characters or more, even where Windows"
+                    + " allows longer paths. Build the project in a directory whose path is shorter by "
+                    + (longest.length() - MAX_PATH + 1) + " characters or more, or set"
+                    + " quarkus.desktop.packaging.output-directory to a short absolute directory (C:\\packaging, for"
+                    + " instance)");
+        }
     }
 
     /**
@@ -114,14 +158,85 @@ public final class WindowsSdk {
     }
 
     /**
+     * What signs, as the log names it : the certificate file, the subject or the thumbprint of the certificate, or the
+     * arguments of {@code signtool}, whose values are not logged (they may have a secret).
+     */
+    static String signer(DesktopPackagingConfig.Sign sign) {
+        if (sign.certificateFile().isPresent()) {
+            return "the certificate " + sign.certificateFile().get();
+        }
+        if (sign.subjectName().isPresent()) {
+            return "the certificate of subject " + sign.subjectName().get();
+        }
+        if (sign.thumbprint().isPresent()) {
+            return "the certificate of thumbprint " + sign.thumbprint().get();
+        }
+        return "the arguments of quarkus.desktop.packaging.windows.sign.arguments";
+    }
+
+    /**
+     * The warning of a configuration that does not sign, although it has another property of the signature : the
+     * certificate may be an expression of a variable that the build does not define, such as a secret of continuous
+     * integration, whose value is then empty.
+     *
+     * @return empty for a configuration that signs, or that has no property of the signature
+     */
+    static Optional<String> unsignedWarning(DesktopPackagingConfig.Sign sign) {
+        if (signs(sign)) {
+            return Optional.empty();
+        }
+        List<String> properties = new ArrayList<>();
+        sign.certificatePassword()
+                .ifPresent(password -> properties.add("quarkus.desktop.packaging.windows.sign.certificate-password"));
+        sign.timestampUrl().ifPresent(url -> properties.add("quarkus.desktop.packaging.windows.sign.timestamp-url"));
+        if (properties.isEmpty()) {
+            return Optional.empty();
+        }
+        return Optional.of("The application image and the Windows packages are not signed : "
+                + String.join(" and ", properties) + (properties.size() == 1 ? " is" : " are")
+                + " set, but no certificate (quarkus.desktop.packaging.windows.sign.certificate-file, subject-name,"
+                + " thumbprint or arguments). Check the value of the certificate : an expression of a variable that is"
+                + " not defined, such as a secret that the build does not have, is empty");
+    }
+
+    /**
+     * The warning of a configuration that signs without time stamp : the signatures become invalid when the
+     * certificate expires.
+     *
+     * @return empty for a configuration that does not sign, or that has a time stamp server
+     *         ({@code timestamp-url}, or {@code /tr} or {@code /t} in the arguments)
+     */
+    static Optional<String> timestampWarning(DesktopPackagingConfig.Sign sign) {
+        if (!signs(sign) || sign.timestampUrl().isPresent() || arguments(sign).stream()
+                .anyMatch(argument -> List.of("/tr", "-tr", "/t", "-t").contains(argument.toLowerCase(Locale.ROOT)))) {
+            return Optional.empty();
+        }
+        return Optional.of("The signatures of the application image and of the Windows packages have no time stamp :"
+                + " they become invalid when the certificate expires. Set"
+                + " quarkus.desktop.packaging.windows.sign.timestamp-url to the time stamp server of the certificate"
+                + " authority (http://timestamp.digicert.com, for instance)");
+    }
+
+    /**
      * Signs the executables of the application image, when the configuration signs : the launcher, and the libraries
      * and executables that have no signature, such as the {@code jvm.dll} and {@code java.dll} that native-image
-     * links. The packages then install signed files.
+     * links. The packages then install signed files. Logs why nothing is signed otherwise : once per build, before the
+     * packages.
      */
     public static void signImage(PackagingContext context, ApplicationImage image) throws IOException {
-        if (!signs(context)) {
+        DesktopPackagingConfig.Sign sign = context.config().windows().sign();
+        if (!signs(sign)) {
+            Optional<String> warning = unsignedWarning(sign);
+            if (warning.isPresent()) {
+                LOGGER.warn(warning.get());
+            } else {
+                LOGGER.info("The application image and the Windows packages are not signed : no certificate is set"
+                        + " (quarkus.desktop.packaging.windows.sign.certificate-file, subject-name, thumbprint or"
+                        + " arguments)");
+            }
             return;
         }
+        timestampWarning(sign).ifPresent(LOGGER::warn);
         List<Path> files = unsigned(image);
         for (Path file : files) {
             // jpackage writes a read-only launcher, and the libraries are copied with their attributes
@@ -195,7 +310,8 @@ public final class WindowsSdk {
     }
 
     /**
-     * Signs files with {@code signtool}, when the configuration signs : several files per command.
+     * Signs files with {@code signtool}, when the configuration signs : several files per command. Logs what is signed,
+     * and with what.
      *
      * @param description the description of the signed content, which Windows shows as the name of an MSI package
      *        when it asks for the rights of an administrator, or {@code null}
@@ -204,8 +320,8 @@ public final class WindowsSdk {
         if (!signs(context) || files.isEmpty()) {
             return;
         }
-        List<String> command = command(signtool(context), context.config().windows().sign(), context.projectDirectory(),
-                description);
+        DesktopPackagingConfig.Sign sign = context.config().windows().sign();
+        List<String> command = command(signtool(context), sign, context.projectDirectory(), description);
         int length = command.stream().mapToInt(argument -> argument.length() + 3).sum();
         List<Path> batch = new ArrayList<>();
         int batchLength = length;
@@ -220,6 +336,17 @@ public final class WindowsSdk {
             batchLength += fileLength;
         }
         sign(command, batch);
+        LOGGER.infof("Signed %s with %s", signed(files), signer(sign));
+        files.forEach(file -> LOGGER.debugf("Signed %s", file));
+    }
+
+    /**
+     * Signed files, as the log names them : the file name of the first one, and the number of the others.
+     */
+    static String signed(List<Path> files) {
+        String first = files.get(0).getFileName().toString();
+        int others = files.size() - 1;
+        return others == 0 ? first : first + " and " + others + (others == 1 ? " other file" : " other files");
     }
 
     private static void sign(List<String> command, List<Path> files) {

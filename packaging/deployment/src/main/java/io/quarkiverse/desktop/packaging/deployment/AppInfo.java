@@ -4,6 +4,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -41,6 +42,20 @@ public record AppInfo(String name, String packageName, String identifier, String
     private static final Pattern NUMBERS = Pattern.compile("^[vV]?(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?(?:\\.(\\d+))?");
 
     /**
+     * A letter or a digit of ASCII.
+     */
+    private static final Pattern ASCII_LETTER_OR_DIGIT = Pattern.compile("[A-Za-z0-9]");
+
+    /**
+     * The Latin letters that do not decompose into a letter of ASCII and accents, and their spelling in ASCII (a
+     * capital letter at the start of a word : {@code Æsir} is {@code Aesir}).
+     */
+    private static final String[][] LETTERS = { { "ß", "ss" }, { "ẞ", "SS" }, { "æ", "ae" }, { "Æ", "Ae" },
+            { "œ", "oe" }, { "Œ", "Oe" }, { "ø", "o" }, { "Ø", "O" }, { "ð", "d" }, { "Ð", "D" }, { "đ", "d" },
+            { "Đ", "D" }, { "þ", "th" }, { "Þ", "Th" }, { "ħ", "h" }, { "Ħ", "H" }, { "ı", "i" }, { "ł", "l" },
+            { "Ł", "L" }, { "ŋ", "ng" }, { "Ŋ", "Ng" }, { "ŧ", "t" }, { "Ŧ", "T" } };
+
+    /**
      * A dash, or a dot after a digit, before a pre-release qualifier ({@code -SNAPSHOT}, {@code -rc1}, {@code -M2},
      * {@code .Beta3}) : the versions that Maven sorts before the release.
      */
@@ -63,19 +78,30 @@ public record AppInfo(String name, String packageName, String identifier, String
             LOGGER.warnf("The version %s has no leading number : the Windows and macOS packages get the version 1.0.0"
                     + " (set quarkus.desktop.packaging.version to a version that starts with a number)", version);
         }
-        String packageName = config.linux().packageName().map(String::trim).filter(value -> !value.isEmpty())
-                .orElseGet(() -> packageName(name));
+        // the default package name and identifier are in ASCII : for a name without letters or digits there (a name in
+        // Arabic, Chinese or Russian), they come from quarkus.application.name (the artifact ID), rather than from the
+        // word application, which the other applications of the vendor would have too
+        String source = hasAsciiLetterOrDigit(name) || !isSet(applicationName) ? name : applicationName;
+        Optional<String> configuredPackageName = config.linux().packageName().map(String::trim)
+                .filter(value -> !value.isEmpty());
+        String packageName = configuredPackageName.orElseGet(() -> packageName(source));
         if (!packageName.matches("[a-z0-9][a-z0-9+.-]+")) {
             throw new PackagingException("quarkus.desktop.packaging.linux.package-name=\"" + packageName + "\" : a"
                     + " package name has at least two characters among lowercase letters, digits, dashes, dots and plus"
                     + " signs, and starts with a letter or a digit");
         }
-        String identifier = config.identifier().map(String::trim).filter(value -> !value.isEmpty())
-                .orElseGet(() -> identifier(groupId, name));
+        Optional<String> configuredIdentifier = config.identifier().map(String::trim).filter(value -> !value.isEmpty());
+        String identifier = configuredIdentifier.orElseGet(() -> identifier(groupId, source));
         if (!identifier.matches("[A-Za-z0-9_][A-Za-z0-9_-]*(\\.[A-Za-z0-9_][A-Za-z0-9_-]*)+")) {
             throw new PackagingException("quarkus.desktop.packaging.identifier=\"" + identifier + "\" : an identifier is"
                     + " a reverse domain name such as org.acme.editor, whose elements have letters, digits, dashes and"
                     + " underscores, and do not start with a dash");
+        }
+        if (!hasAsciiLetterOrDigit(source) && (configuredPackageName.isEmpty() || configuredIdentifier.isEmpty())) {
+            LOGGER.warnf("The name of the application, %s, has no letter or digit in ASCII, nor has"
+                    + " quarkus.application.name : its identifier is %s and its Linux package name %s, which other"
+                    + " applications may have too. Set quarkus.desktop.packaging.identifier and"
+                    + " quarkus.desktop.packaging.linux.package-name", name, identifier, packageName);
         }
         Optional<String> license = config.licenseFile().map(String::trim).filter(value -> !value.isEmpty());
         Optional<Path> licenseFile;
@@ -94,6 +120,26 @@ public record AppInfo(String name, String packageName, String identifier, String
 
     private static boolean isSet(String value) {
         return value != null && !value.isBlank() && !UNSET.equals(value);
+    }
+
+    /**
+     * A name in ASCII where it can be : without accents ({@code É} is {@code E}), with the compatibility characters
+     * decomposed ({@code ﬁ} is {@code fi}, {@code ²} is {@code 2}), and the Latin letters that do not decompose
+     * spelled in ASCII ({@code ß} is {@code ss}). The other characters stay as they are.
+     */
+    static String ascii(String name) {
+        String ascii = Normalizer.normalize(name, Normalizer.Form.NFKD).replaceAll("\\p{M}+", "");
+        for (String[] letter : LETTERS) {
+            ascii = ascii.replace(letter[0], letter[1]);
+        }
+        return ascii;
+    }
+
+    /**
+     * Whether a name has a letter or a digit in ASCII, once in ASCII where it can be.
+     */
+    private static boolean hasAsciiLetterOrDigit(String name) {
+        return ASCII_LETTER_OR_DIGIT.matcher(ascii(name)).find();
     }
 
     /**
@@ -137,19 +183,20 @@ public record AppInfo(String name, String packageName, String identifier, String
     }
 
     /**
-     * A name as a package name : {@code Acme Editor} is {@code acme-editor}.
+     * A name as a package name, in ASCII : {@code Acme Editor} is {@code acme-editor}, {@code Café Manager} is
+     * {@code cafe-manager}.
      */
     static String packageName(String name) {
-        String value = name.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        String value = ascii(name).toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
         return value.length() < 2 ? "application" : value;
     }
 
     /**
      * The default identifier : the group ID of the project and the name of the application, as an element of a
-     * reverse domain name.
+     * reverse domain name, in ASCII ({@code Acme Éditeur} is {@code AcmeEditeur}).
      */
     static String identifier(String groupId, String name) {
-        String element = name.replaceAll("[^A-Za-z0-9_]+", "");
+        String element = ascii(name).replaceAll("[^A-Za-z0-9_]+", "");
         if (element.isEmpty()) {
             element = "application";
         }
@@ -202,11 +249,13 @@ public record AppInfo(String name, String packageName, String identifier, String
     }
 
     /**
-     * The name of the application as the base name of a file : without the characters that file systems, shells or
-     * packaging tools reject.
+     * The name of the application as the base name of a file, in ASCII : without the characters that file systems,
+     * shells or packaging tools reject, and without separators at its ends ({@code Acme محرر} is {@code Acme}). The
+     * package name for a name without letters or digits there.
      */
     public String fileName() {
-        String value = name.trim().replaceAll("\\s+", "-").replaceAll("[^A-Za-z0-9._-]", "");
+        String value = ascii(name).trim().replaceAll("\\s+", "-").replaceAll("[^A-Za-z0-9._-]", "")
+                .replaceAll("-{2,}", "-").replaceAll("^[-._]+|[-._]+$", "");
         return value.isEmpty() ? packageName : value;
     }
 

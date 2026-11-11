@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment.windows;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -19,6 +20,7 @@ import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -63,6 +65,22 @@ public final class MsixPackager implements Packager {
             "removableStorage", "appointments", "contacts", "phoneCall", "blockedChatMessages", "objects3D", "voipCall",
             "chat");
 
+    /**
+     * The latest version of Windows that the package is tested on, unless the minimum version is later : the one of
+     * the Windows SDK that the extension is tested with.
+     */
+    private static final String MAX_VERSION_TESTED = "10.0.26100.0";
+
+    /**
+     * The length of a description in the manifest, as its schema allows it.
+     */
+    private static final int DESCRIPTION_LENGTH = 2048;
+
+    /**
+     * The length of a name in the manifest, as its schema allows it.
+     */
+    private static final int DISPLAY_NAME_LENGTH = 256;
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         Path makeappx = context.tools().require("makeappx", "install the Windows SDK", WindowsSdk.locations("makeappx.exe"));
@@ -78,7 +96,7 @@ public final class MsixPackager implements Packager {
         }
         Path mappingFile = FileTrees.write(work.resolve("mapping.txt"),
                 mapping(generated, image.root(), FileTrees.files(image.root())));
-        Path msix = context.output(context.app().fileName() + "-" + context.app().version() + ".msix");
+        Path msix = context.output(WindowsSdk.packageFileName(context.app(), context.arch(), PackageFormat.MSIX));
         WindowsSdk.warnEmptyDirectories(image, msix);
         Tools.exec(work, Map.of(), List.of(makeappx.toString(), "pack", "/o", "/f", mappingFile.toString(), "/p",
                 msix.toString()));
@@ -230,13 +248,72 @@ public final class MsixPackager implements Packager {
     }
 
     /**
+     * The minimum version of Windows that installs the package, as the manifest has it.
+     *
+     * @throws PackagingException for a version that is not four numbers of at most 65535, without leading zeros
+     */
+    static String minVersion(DesktopPackagingConfig.Msix config) {
+        String version = config.minVersion().strip();
+        if (!version.matches("(0|[1-9]\\d{0,4})(\\.(0|[1-9]\\d{0,4})){3}")
+                || Arrays.stream(version.split("\\.")).anyMatch(part -> Integer.parseInt(part) > 65535)) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.msix.min-version=" + config.minVersion()
+                    + " : the minimum version of Windows is four numbers of at most 65535, without leading zeros,"
+                    + " separated by dots, such as 10.0.17763.0 (Windows 10 1809) or 10.0.22000.0 (Windows 11)");
+        }
+        return version;
+    }
+
+    /**
+     * The latest version of Windows that the package is tested on : {@link #MAX_VERSION_TESTED}, or the minimum version
+     * when it is later, as {@code makeappx} refuses a package whose tested version is before its minimum version.
+     *
+     * @throws PackagingException for a minimum version that is not four numbers of at most 65535
+     */
+    static String maxVersionTested(DesktopPackagingConfig.Msix config) {
+        String minVersion = minVersion(config);
+        String[] minimum = minVersion.split("\\.");
+        String[] tested = MAX_VERSION_TESTED.split("\\.");
+        for (int i = 0; i < tested.length; i++) {
+            int order = Integer.compare(Integer.parseInt(minimum[i]), Integer.parseInt(tested[i]));
+            if (order != 0) {
+                return order > 0 ? minVersion : MAX_VERSION_TESTED;
+            }
+        }
+        return MAX_VERSION_TESTED;
+    }
+
+    /**
+     * A text of the manifest, as its schema allows it : on one line (a run of white space and control characters is
+     * one space), without white space around it, and cut to a length, between two characters.
+     *
+     * @param maxLength the length of the text, at most
+     * @param fallback the text when the value is only white space
+     */
+    static String text(String value, int maxLength, String fallback) {
+        String text = value.replaceAll("[\\s\\p{Cntrl}]+", " ").strip();
+        if (text.length() > maxLength) {
+            // not between the two halves of a character outside the Basic Multilingual Plane
+            text = text.substring(0, Character.isHighSurrogate(text.charAt(maxLength - 1)) ? maxLength - 1 : maxLength)
+                    .strip();
+        }
+        return text.isEmpty() ? fallback : text;
+    }
+
+    /**
      * The manifest of the package.
      *
      * @param launcher the path of the executable in the package, with {@code \} separators
+     * @throws PackagingException for an executable whose name the schema of the manifest refuses
      */
     static String manifest(AppInfo app, DesktopPackagingConfig.Msix config, Arch arch, String launcher) {
+        if (launcher.chars().anyMatch(c -> c < 0x20 || "<>\":%|?*".indexOf(c) >= 0)) {
+            throw new PackagingException("The executable " + launcher + " cannot be the one of an MSIX package : its"
+                    + " name has one of < > \" : % | ? * or a control character. Rename it with"
+                    + " quarkus.desktop.packaging.name, or with quarkus.package.output-name when the executable keeps"
+                    + " the name of the build");
+        }
         String name = Xml.escape(app.name());
-        String description = Xml.escape(app.description());
+        String description = Xml.escape(text(app.description(), DESCRIPTION_LENGTH, app.name()));
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
         xml.append("<Package xmlns=\"http://schemas.microsoft.com/appx/manifest/foundation/windows10\"\n");
@@ -249,14 +326,16 @@ public final class MsixPackager implements Packager {
                 .append("\" ProcessorArchitecture=\"").append(arch.windows()).append("\" />\n");
         xml.append("  <Properties>\n");
         xml.append("    <DisplayName>").append(name).append("</DisplayName>\n");
-        xml.append("    <PublisherDisplayName>").append(Xml.escape(config.publisherDisplayName().orElse(app.vendor())))
+        xml.append("    <PublisherDisplayName>")
+                .append(Xml.escape(text(config.publisherDisplayName().orElse(app.vendor()), DISPLAY_NAME_LENGTH,
+                        app.name())))
                 .append("</PublisherDisplayName>\n");
         xml.append("    <Description>").append(description).append("</Description>\n");
         xml.append("    <Logo>").append(ASSETS).append("\\StoreLogo.png</Logo>\n");
         xml.append("  </Properties>\n");
         xml.append("  <Dependencies>\n");
-        xml.append("    <TargetDeviceFamily Name=\"Windows.Desktop\" MinVersion=\"").append(Xml.escape(config.minVersion()))
-                .append("\" MaxVersionTested=\"10.0.26100.0\" />\n");
+        xml.append("    <TargetDeviceFamily Name=\"Windows.Desktop\" MinVersion=\"").append(minVersion(config))
+                .append("\" MaxVersionTested=\"").append(maxVersionTested(config)).append("\" />\n");
         xml.append("  </Dependencies>\n");
         xml.append("  <Resources>\n");
         xml.append("    <Resource Language=\"en-us\" />\n");

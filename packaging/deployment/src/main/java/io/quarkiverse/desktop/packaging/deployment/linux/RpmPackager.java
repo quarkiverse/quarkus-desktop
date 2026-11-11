@@ -16,6 +16,7 @@ import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -43,17 +44,8 @@ public final class RpmPackager implements Packager {
         FileTrees.normalizePermissions(root);
         String installPath = LinuxDesktop.installPath(context);
 
-        // the shared libraries of the application : their names are not requirements of the package
-        TreeSet<String> libraries = new TreeSet<>();
-        Path application = root.resolve(installPath.substring(1));
-        for (Path file : FileTrees.files(application)) {
-            String name = file.getFileName().toString();
-            if (name.contains(".so") && FileTrees.isElf(application.resolve(file))) {
-                libraries.add(name);
-            }
-        }
-        Path spec = FileTrees.write(work.resolve(app.packageName() + ".spec"),
-                spec(app, context.config().linux(), root, installPath, new ArrayList<>(libraries)));
+        Path spec = FileTrees.write(work.resolve(app.packageName() + ".spec"), spec(app, context.config().linux(), root,
+                installPath, libraries(root.resolve(installPath.substring(1)))));
         Path top = work.resolve("rpmbuild");
         Tools.exec(work, Map.of(), command(rpmbuild, top, context.arch(), spec));
 
@@ -74,6 +66,42 @@ public final class RpmPackager implements Packager {
     }
 
     /**
+     * The names of the shared libraries of the application, which are not requirements of the package : their file
+     * names, and the names of the links to them, such as the soname of a library whose file name has its full version
+     * ({@code libfoo.so.1 -> libfoo.so.1.2.3}), which the other files of the application require. A link to a file
+     * outside the application, or to nothing, is not a library of the application.
+     *
+     * @param application the directory of the application in the tree of the package
+     */
+    static List<String> libraries(Path application) throws IOException {
+        Path real = application.toRealPath();
+        TreeSet<String> libraries = new TreeSet<>();
+        for (Path file : FileTrees.files(application)) {
+            String name = file.getFileName().toString();
+            Path path = application.resolve(file);
+            if (name.contains(".so") && (FileTrees.isElf(path) || Files.isSymbolicLink(path) && linksToLibrary(path, real))) {
+                libraries.add(name);
+            }
+        }
+        return new ArrayList<>(libraries);
+    }
+
+    /**
+     * Whether a symbolic link leads to a shared library of the application.
+     *
+     * @param application the real path of the directory of the application
+     */
+    private static boolean linksToLibrary(Path link, Path application) {
+        try {
+            Path target = link.toRealPath();
+            return target.startsWith(application) && FileTrees.isElf(target);
+        } catch (IOException e) {
+            // a link to nothing
+            return false;
+        }
+    }
+
+    /**
      * The command that builds the package, without its {@code %clean} stage : the default one of {@code rpmbuild}
      * (before 4.20) removes the build root, under {@code target/packaging}, with a shell command that does not quote
      * its path. A {@code &}, {@code ;} or {@code |} in the path would make it remove another directory : the beginning
@@ -91,7 +119,7 @@ public final class RpmPackager implements Packager {
      *
      * @param root the tree of the files of the package
      * @param installPath the directory of the application ({@code /opt/acme-editor})
-     * @param libraries the file names of the shared libraries of the application
+     * @param libraries the names of the shared libraries of the application (see {@link #libraries})
      */
     static String spec(AppInfo app, DesktopPackagingConfig.Linux config, Path root, String installPath,
             List<String> libraries) {
@@ -140,7 +168,12 @@ public final class RpmPackager implements Packager {
         spec.append(installPath).append('\n');
         spec.append("/usr/bin/").append(name).append('\n');
         spec.append("/usr/share/applications/").append(name).append(".desktop\n");
-        spec.append("/usr/share/icons/hicolor/*/apps/").append(name).append(".png\n");
+        // the icons that LinuxDesktop.stage wrote, one by one : rpmbuild expands a glob in the build root, under the
+        // directory of the project, and splits it where the path of that directory has a space
+        for (int size : IconSet.LINUX_SIZES) {
+            spec.append("/usr/share/icons/hicolor/").append(size).append('x').append(size).append("/apps/").append(name)
+                    .append(".png\n");
+        }
         if (app.licenseFile().isPresent()) {
             spec.append("%dir /usr/share/licenses/").append(name).append('\n');
             spec.append("%license /usr/share/licenses/").append(name).append("/LICENSE\n");

@@ -338,10 +338,11 @@ public final class IconSet {
 
     /**
      * The types of the images of a macOS icon and their sizes in pixels : the PNG types, at both scales (ic11 is 16
-     * points at scale 2, ic10 is 512 points at scale 2).
+     * points at scale 2, ic10 is 512 points at scale 2). Not icp4 and icp5 (16 and 32 points at scale 1), whose PNG
+     * images macOS draws scrambled in the icon of an application : macOS scales those from the others.
      */
-    private static final Object[][] ICNS_TYPES = { { "icp4", 16 }, { "icp5", 32 }, { "ic07", 128 }, { "ic08", 256 },
-            { "ic09", 512 }, { "ic10", 1024 }, { "ic11", 32 }, { "ic12", 64 }, { "ic13", 256 }, { "ic14", 512 } };
+    private static final Object[][] ICNS_TYPES = { { "ic07", 128 }, { "ic08", 256 }, { "ic09", 512 }, { "ic10", 1024 },
+            { "ic11", 32 }, { "ic12", 64 }, { "ic13", 256 }, { "ic14", 512 } };
 
     /**
      * The icon as a macOS icon file ({@code .icns}).

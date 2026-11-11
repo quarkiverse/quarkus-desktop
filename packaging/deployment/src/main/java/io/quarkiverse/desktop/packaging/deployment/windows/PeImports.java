@@ -2,9 +2,11 @@ package io.quarkiverse.desktop.packaging.deployment.windows;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 
 /**
@@ -25,7 +27,49 @@ public final class PeImports {
 
     private static final int SECTION_SIZE = 40;
 
+    /**
+     * The encodings of an imported name that is not ASCII : UTF-8, which the linker of Visual Studio writes, and the
+     * ANSI code page of the build.
+     */
+    private static final List<Charset> ENCODINGS = encodings(System.getProperty("native.encoding"));
+
     private PeImports() {
+    }
+
+    /**
+     * The encodings of an imported name that is not ASCII : UTF-8, and the encoding of the platform when this JVM has
+     * it.
+     *
+     * @param nativeEncoding the encoding of the platform ({@code native.encoding} : the ANSI code page on Windows), or
+     *        {@code null}
+     */
+    static List<Charset> encodings(String nativeEncoding) {
+        List<Charset> encodings = new ArrayList<>(List.of(StandardCharsets.UTF_8));
+        try {
+            if (nativeEncoding != null && !encodings.contains(Charset.forName(nativeEncoding))) {
+                encodings.add(Charset.forName(nativeEncoding));
+            }
+        } catch (IllegalArgumentException e) {
+            // an encoding that this JVM does not have
+        }
+        return List.copyOf(encodings);
+    }
+
+    /**
+     * Whether a name that a library imports, a character per byte, is a file name in one of the encodings, whatever the
+     * case of its letters.
+     */
+    static boolean matches(String imported, String name, List<Charset> encodings) {
+        for (Charset encoding : encodings) {
+            if (imported.equalsIgnoreCase(new String(name.getBytes(encoding), StandardCharsets.ISO_8859_1))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean isAscii(String text) {
+        return text.chars().allMatch(c -> c < 0x80);
     }
 
     /**
@@ -49,7 +93,8 @@ public final class PeImports {
     }
 
     /**
-     * The names of the files that a library imports.
+     * The names of the files that a library imports, a character per byte (ISO-8859-1) : a name that is not ASCII is
+     * as the file has it, in the encoding of the linker.
      *
      * @return an empty list for a file that is not a PE file
      */
@@ -79,10 +124,22 @@ public final class PeImports {
     }
 
     /**
-     * Whether a library imports a file, whatever the case of its name.
+     * Whether a library imports a file, whatever the case of its name. A name that is not ASCII is compared in UTF-8,
+     * which the linker of Visual Studio writes, and in the ANSI code page of the build.
      */
     public static boolean imports(byte[] file, String name) {
-        return names(file).stream().anyMatch(name::equalsIgnoreCase);
+        return names(file).stream().anyMatch(imported -> matches(imported, name, ENCODINGS));
+    }
+
+    /**
+     * Whether a library may import a file whose name is not ASCII in another encoding than the ones that
+     * {@link #imports} compares : it does not import that name, but an executable whose name is not ASCII either.
+     */
+    public static boolean importsUnknownExecutable(byte[] file, String name) {
+        List<String> names = names(file);
+        return !isAscii(name) && names.stream().noneMatch(imported -> matches(imported, name, ENCODINGS))
+                && names.stream().anyMatch(imported -> !isAscii(imported)
+                        && imported.toLowerCase(Locale.ROOT).endsWith(".exe"));
     }
 
     /**
@@ -90,17 +147,18 @@ public final class PeImports {
      * is not longer, and otherwise in the unused bytes at the end of a section of the file.
      *
      * @return empty when the library cannot import the new name : a name with characters that are not ASCII, or a
-     *         name that is longer than the former one in a file whose sections have no room for it
+     *         name that is longer than the former one in a file whose sections have no room for it ; or when the former
+     *         name may be imported in an unknown encoding ({@link #importsUnknownExecutable})
      */
     public static Optional<byte[]> rename(byte[] file, String name, String newName) {
-        if (!StandardCharsets.US_ASCII.newEncoder().canEncode(newName)) {
+        if (!StandardCharsets.US_ASCII.newEncoder().canEncode(newName) || importsUnknownExecutable(file, name)) {
             return Optional.empty();
         }
         byte[] renamed = file.clone();
         ByteBuffer buffer = ByteBuffer.wrap(renamed).order(ByteOrder.LITTLE_ENDIAN);
         byte[] bytes = (newName + "\0").getBytes(StandardCharsets.US_ASCII);
         for (Import imported : imports(file)) {
-            if (!imported.name().equalsIgnoreCase(name)) {
+            if (!matches(imported.name(), name, ENCODINGS)) {
                 continue;
             }
             int length = imported.name().length() + 1;
@@ -218,8 +276,9 @@ public final class PeImports {
                 // a truncated file : a name without its terminating zero, which could not be renamed in place
                 break;
             }
+            // a character per byte : the length of the name is the one of its bytes, which it is renamed in
             imports.add(new Import(descriptor + 12, nameOffset,
-                    new String(file, nameOffset, end - nameOffset, StandardCharsets.US_ASCII)));
+                    new String(file, nameOffset, end - nameOffset, StandardCharsets.ISO_8859_1)));
             descriptor += DESCRIPTOR_SIZE;
         }
         return imports;

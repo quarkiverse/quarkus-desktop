@@ -1127,7 +1127,9 @@ By default (`quarkus.desktop.swt.native-libraries=embedded`), the native librari
 `libswt-gtk-<version>.so`... on Linux, `libswt-cocoa-<version>.jnilib` and `libswt-pi-cocoa-<version>.jnilib` on macOS)
 are resources of the native executable: a single file to distribute. SWT extracts them on the first run into
 `~/.swt/lib/<os>/<arch>` (or into the directory of the `swt.library.path` system property, when it is set), as it does
-in JVM mode, and loads them from there.
+in JVM mode, and loads them from there. A strictly confined snap cannot write the hidden directories of the home
+directory: there, in JVM mode too, the extension sets `swt.library.path` to `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>`,
+unless it is set.
 
 With `quarkus.desktop.swt.native-libraries=next-to-executable`, the libraries are not embedded in the executable: the
 native build copies them next to it, and the executable loads them from its directory (it sets the `swt.library.path`

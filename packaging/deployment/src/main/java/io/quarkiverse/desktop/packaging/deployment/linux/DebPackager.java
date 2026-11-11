@@ -3,11 +3,15 @@ package io.quarkiverse.desktop.packaging.deployment.linux;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.jboss.logging.Logger;
 
@@ -28,6 +32,12 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
 public final class DebPackager implements Packager {
 
     private static final Logger LOGGER = Logger.getLogger(DebPackager.class);
+
+    /**
+     * A package name of the 64-bit {@code time_t} transition : the former name with {@code t64} after its version
+     * ({@code libasound2t64}), before the suffix of a variant ({@code libcurl3t64-gnutls}).
+     */
+    private static final Pattern TIME64 = Pattern.compile("([a-z0-9][a-z0-9.+-]*[0-9])t64(-[a-z0-9.+-]+)?");
 
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
@@ -55,9 +65,19 @@ public final class DebPackager implements Packager {
 
         Path deb = context.output(app.packageName() + "_" + app.linuxVersion() + "-" + config.release() + "_"
                 + context.arch().debian() + ".deb");
-        // the files belong to root, whoever builds the package
-        Tools.exec(List.of(dpkgDeb.toString(), "--root-owner-group", "--build", root.toString(), deb.toString()));
+        Tools.exec(buildCommand(dpkgDeb, root, deb));
         return deb;
+    }
+
+    /**
+     * The command that builds the package : compressed with xz, which every {@code dpkg} reads (the default of
+     * {@code dpkg-deb} is zstd on Ubuntu, which the {@code dpkg} of Debian 11 and older cannot read), with files that
+     * belong to root, whoever builds the package.
+     *
+     * @param root the tree of the files of the package, with its {@code DEBIAN} directory
+     */
+    static List<String> buildCommand(Path dpkgDeb, Path root, Path deb) {
+        return List.of(dpkgDeb.toString(), "-Zxz", "--root-owner-group", "--build", root.toString(), deb.toString());
     }
 
     /**
@@ -98,7 +118,7 @@ public final class DebPackager implements Packager {
     /**
      * The packages of the shared libraries that the executables and the libraries of the application are linked
      * with, as {@code dpkg-shlibdeps} finds them : with the minimum versions that their symbols need. The libraries of
-     * the application itself are not dependencies.
+     * the application itself are not dependencies, nor the libraries that the machine of the build does not have.
      *
      * @param application the directory of the application in the tree of the package
      */
@@ -127,23 +147,76 @@ public final class DebPackager implements Packager {
         Path source = work.resolve("shlibdeps");
         FileTrees.write(source.resolve("debian/control"), "Source: " + context.app().packageName() + "\n\nPackage: "
                 + context.app().packageName() + "\nArchitecture: any\n");
-        List<String> command = new ArrayList<>(List.of(shlibdeps.get().toString(), "-O", "--ignore-missing-info"));
+        List<String> options = new ArrayList<>(List.of(shlibdeps.get().toString(), "-O", "--ignore-missing-info"));
         for (String directory : directories) {
-            command.add("-l" + directory);
+            options.add("-l" + directory);
         }
-        command.addAll(binaries);
-        Tools.Result result = Tools.run(source, Map.of(), command);
-        if (!result.succeeded()) {
-            LOGGER.warnf("dpkg-shlibdeps did not find the dependencies of the Debian package (list them in"
-                    + " quarkus.desktop.packaging.linux.deb.depends) :%n%s", result.output().strip());
+        // the output of the first run that failed : the run for all the binaries, which lists the missing libraries
+        List<String> failure = new ArrayList<>();
+        List<String> missing = new ArrayList<>();
+        List<String> depends = shlibDepends(binaries, files -> {
+            List<String> command = new ArrayList<>(options);
+            command.addAll(files);
+            Tools.Result result = Tools.run(source, Map.of(), command);
+            if (!result.succeeded()) {
+                if (failure.isEmpty()) {
+                    failure.add(result.output().strip());
+                }
+                return Optional.empty();
+            }
+            return Optional.of(parseShlibDepends(result.output()));
+        }, missing);
+        if (!missing.isEmpty()) {
+            LOGGER.warnf("dpkg-shlibdeps did not find the libraries of %s on the machine of the build : the Debian package"
+                    + " does not depend on their packages. Install them on the machine of the build, or list their"
+                    + " packages in quarkus.desktop.packaging.linux.deb.depends :%n%s",
+                    String.join(", ", missing.stream().map(file -> application.relativize(Path.of(file)).toString())
+                            .toList()),
+                    failure.get(0));
+        }
+        return depends;
+    }
+
+    /**
+     * The dependencies of the binaries of the application : one run of {@code dpkg-shlibdeps} for all of them. It
+     * fails when a binary is linked with a library that the machine of the build does not have : then one run for each
+     * binary, and one for the binaries whose run succeeded, which merges the versions of their dependencies. The other
+     * binaries add no dependency.
+     *
+     * @param depends runs {@code dpkg-shlibdeps} on binaries : their dependencies, or empty when it fails
+     * @param missing receives the binaries whose run failed
+     */
+    static List<String> shlibDepends(List<String> binaries, Function<List<String>, Optional<List<String>>> depends,
+            List<String> missing) {
+        Optional<List<String>> all = depends.apply(binaries);
+        if (all.isPresent()) {
+            return all.get();
+        }
+        if (binaries.size() == 1) {
+            missing.addAll(binaries);
             return List.of();
         }
-        return parseShlibDepends(result.output());
+        List<String> found = new ArrayList<>();
+        Set<String> union = new LinkedHashSet<>();
+        for (String binary : binaries) {
+            Optional<List<String>> one = depends.apply(List.of(binary));
+            if (one.isPresent()) {
+                found.add(binary);
+                union.addAll(one.get());
+            } else {
+                missing.add(binary);
+            }
+        }
+        if (found.size() < 2) {
+            return new ArrayList<>(union);
+        }
+        return depends.apply(found).orElseGet(() -> new ArrayList<>(union));
     }
 
     /**
      * The dependencies in the output of {@code dpkg-shlibdeps -O} : the {@code shlibs:Depends} variable, among the
-     * warnings.
+     * warnings, with the former names of the packages of the 64-bit {@code time_t} transition (see
+     * {@link #withFormerNames}).
      *
      * @return the dependencies, none when the output has no such variable : {@code dpkg-shlibdeps} writes none when the
      *         files are linked with no shared library (statically linked executables)
@@ -154,12 +227,47 @@ public final class DebPackager implements Packager {
                 List<String> depends = new ArrayList<>();
                 for (String dependency : line.substring("shlibs:Depends=".length()).split(",")) {
                     if (!dependency.isBlank()) {
-                        depends.add(dependency.trim());
+                        depends.add(withFormerNames(dependency.trim()));
                     }
                 }
                 return depends;
             }
         }
         return List.of();
+    }
+
+    /**
+     * A dependency with the former names of the packages that the transition to a 64-bit {@code time_t} of Ubuntu
+     * 24.04 and Debian 13 renamed, as alternatives of the same version : {@code libasound2t64 (>= 1.0.16)} is
+     * {@code libasound2t64 (>= 1.0.16) | libasound2 (>= 1.0.16)}, so that a package built there installs on the
+     * releases before them, which have the former names. The transition only renamed the libraries of the 64-bit
+     * architectures, the ones of the packages.
+     */
+    static String withFormerNames(String dependency) {
+        String[] alternatives = dependency.split("\\|");
+        Set<String> names = new HashSet<>();
+        for (String alternative : alternatives) {
+            names.add(packageName(alternative));
+        }
+        List<String> result = new ArrayList<>();
+        for (String alternative : alternatives) {
+            String name = packageName(alternative);
+            result.add(alternative.trim());
+            Matcher matcher = TIME64.matcher(name);
+            if (matcher.matches()) {
+                String former = matcher.group(1) + (matcher.group(2) == null ? "" : matcher.group(2));
+                if (names.add(former)) {
+                    result.add(former + alternative.trim().substring(name.length()));
+                }
+            }
+        }
+        return String.join(" | ", result);
+    }
+
+    /**
+     * The package name of an alternative of a dependency, without its version.
+     */
+    private static String packageName(String alternative) {
+        return alternative.trim().split("[\\s(]", 2)[0];
     }
 }

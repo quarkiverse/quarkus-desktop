@@ -59,12 +59,24 @@ public final class FlatpakPackager implements Packager {
         finish.add(build.toString());
         Tools.exec(work, Map.of(), finish);
         Path repository = work.resolve("repo");
-        Tools.exec(work, Map.of(), List.of(flatpak.toString(), "build-export", "--arch=" + arch, repository.toString(),
-                build.toString(), config.branch()));
+        Tools.exec(work, Map.of(), exportCommand(flatpak, arch, repository, build, config.branch()));
         Path bundle = context.output(app.fileName() + "-" + app.version() + "-" + arch + ".flatpak");
         Tools.exec(work, Map.of(), List.of(flatpak.toString(), "build-bundle", "--arch=" + arch,
                 "--runtime-repo=" + RUNTIME_REPOSITORY, repository.toString(), bundle.toString(), id, config.branch()));
         return bundle;
+    }
+
+    /**
+     * The command that exports the build directory to the repository. {@code flatpak build-export} validates the
+     * exported icons, by default in a sandbox ({@code bwrap}) that cannot create its namespaces in a container (Docker,
+     * Kubernetes) : they are the PNG files that the extension wrote, which are validated without it
+     * ({@code --disable-sandbox}, Flatpak 1.2.1 and later).
+     *
+     * @param branch the branch of the application
+     */
+    static List<String> exportCommand(Path flatpak, String arch, Path repository, Path build, String branch) {
+        return List.of(flatpak.toString(), "build-export", "--disable-sandbox", "--arch=" + arch, repository.toString(),
+                build.toString(), branch);
     }
 
     /**

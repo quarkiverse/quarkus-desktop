@@ -14,6 +14,7 @@ import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -42,14 +43,15 @@ public final class MsiPackager implements Packager {
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         // the directory of the .NET global tools is on the PATH of the sessions opened after the first installation
         Path wix = context.tools().require("wix",
-                "install the WiX Toolset 4 or later, with the .NET SDK : dotnet tool install --global wix",
+                "install the WiX Toolset 4 or later, with the .NET SDK : dotnet tool install --global wix --version 5.0.2",
                 Path.of(System.getProperty("user.home"), ".dotnet", "tools", "wix.exe"));
         Path work = context.workDirectory("msi");
         Path icon = FileTrees.write(work.resolve("application.ico"), context.icons().ico());
-        String source = wxs(context.app(), context.config().windows(), image.root(), image.launcher(), icon,
-                FileTrees.files(image.root()));
+        List<Path> files = FileTrees.files(image.root());
+        WindowsSdk.checkPathLengths(image.root(), files, "The WiX Toolset");
+        String source = wxs(context.app(), context.config().windows(), image.root(), image.launcher(), icon, files);
         Path wxs = FileTrees.write(work.resolve("application.wxs"), source);
-        Path msi = context.output(context.app().fileName() + "-" + context.app().version() + ".msi");
+        Path msi = context.output(WindowsSdk.packageFileName(context.app(), context.arch(), PackageFormat.MSI));
         WindowsSdk.warnEmptyDirectories(image, msi);
         Tools.exec(work, Map.of(), List.of(wix.toString(), "build", "-arch", context.arch().windows(), "-pdbtype", "none",
                 "-intermediatefolder", work.resolve("obj").toString(), "-o", msi.toString(), wxs.toString()));

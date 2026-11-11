@@ -4,19 +4,34 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.attribute.PosixFileAttributeView;
+import java.nio.file.attribute.PosixFilePermissions;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
+import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
+import io.quarkiverse.desktop.packaging.deployment.IconSet;
+import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
+import io.quarkiverse.desktop.packaging.deployment.TargetOs;
 import io.quarkiverse.desktop.packaging.deployment.TestConfig;
+import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * The files that the Linux packagers generate and the commands that they run : the desktop entry, the control file, the
@@ -121,6 +136,84 @@ class LinuxPackagesTest {
                 objdump: /app/bin/app: not a dynamic object
                 dpkg-shlibdeps: warning: couldn't parse dynamic symbol definition: no symbols
                 """));
+        // the packages that the 64-bit time_t transition of Ubuntu 24.04 renamed, with their former names
+        assertEquals(List.of("libasound2t64 (>= 1.0.16) | libasound2 (>= 1.0.16)", "libc6 (>= 2.34)",
+                "libcurl3t64-gnutls | libcurl3-gnutls", "libx11-6"),
+                DebPackager.parseShlibDepends(
+                        "shlibs:Depends=libasound2t64 (>= 1.0.16), libc6 (>= 2.34), libcurl3t64-gnutls, libx11-6\n"));
+    }
+
+    /**
+     * The package of a JVM application built on Ubuntu 24.04 installs on Ubuntu 22.04 and Debian 12, whose library
+     * packages have the names before the 64-bit time_t transition.
+     */
+    @Test
+    void theFormerNamesOfTheLibraryPackages() {
+        assertEquals("libglib2.0-0t64 (>= 2.75.3) | libglib2.0-0 (>= 2.75.3)",
+                DebPackager.withFormerNames("libglib2.0-0t64 (>= 2.75.3)"));
+        assertEquals("libgtk-3-0t64 | libgtk-3-0", DebPackager.withFormerNames("libgtk-3-0t64"));
+        // already there
+        assertEquals("libasound2t64 (>= 1.0.16) | libasound2 (>= 1.0.16)",
+                DebPackager.withFormerNames("libasound2t64 (>= 1.0.16) | libasound2 (>= 1.0.16)"));
+        assertEquals("libasound2t64 | libasound2", DebPackager.withFormerNames("libasound2t64 | libasound2"));
+        // not renamed : no t64 after a version
+        for (String dependency : List.of("libc6 (>= 2.34)", "zlib1g (>= 1:1.2.2)", "libx11-6", "libxt64")) {
+            assertEquals(dependency, DebPackager.withFormerNames(dependency));
+        }
+    }
+
+    /**
+     * One run of dpkg-shlibdeps for all the binaries, and when it fails (a library that the machine of the build does
+     * not have), one run for each binary, then one for the binaries whose run succeeded.
+     */
+    @Test
+    void theDependenciesOfTheBinariesThatDpkgShlibdepsFinds() {
+        List<List<String>> runs = new ArrayList<>();
+        // fails for a run with B, the merged dependencies of the files otherwise
+        Function<List<String>, Optional<List<String>>> depends = files -> {
+            runs.add(files);
+            return files.contains("B") ? Optional.empty() : Optional.of(List.of("deps of " + String.join("+", files)));
+        };
+        List<String> missing = new ArrayList<>();
+        assertEquals(List.of("deps of A+C"), DebPackager.shlibDepends(List.of("A", "C"), depends, missing));
+        assertEquals(List.of(List.of("A", "C")), runs);
+        assertEquals(List.of(), missing);
+
+        runs.clear();
+        assertEquals(List.of("deps of A+C"), DebPackager.shlibDepends(List.of("A", "B", "C"), depends, missing));
+        assertEquals(List.of(List.of("A", "B", "C"), List.of("A"), List.of("B"), List.of("C"), List.of("A", "C")), runs);
+        assertEquals(List.of("B"), missing);
+
+        // the run of a single binary is not repeated
+        runs.clear();
+        missing.clear();
+        assertEquals(List.of("deps of A"), DebPackager.shlibDepends(List.of("A", "B"), depends, missing));
+        assertEquals(List.of(List.of("A", "B"), List.of("A"), List.of("B")), runs);
+        assertEquals(List.of("B"), missing);
+        runs.clear();
+        missing.clear();
+        assertEquals(List.of(), DebPackager.shlibDepends(List.of("B"), depends, missing));
+        assertEquals(List.of(List.of("B")), runs);
+        assertEquals(List.of("B"), missing);
+
+        // the dependencies of each binary when the last run fails
+        Function<List<String>, Optional<List<String>>> separately = files -> files.size() == 1
+                ? Optional.of(List.of("libc6", "lib" + files.get(0)))
+                : Optional.empty();
+        missing.clear();
+        assertEquals(List.of("libc6", "libA", "libC"), DebPackager.shlibDepends(List.of("A", "C"), separately, missing));
+        assertEquals(List.of(), missing);
+    }
+
+    /**
+     * xz, which every dpkg reads : dpkg-deb compresses with zstd on Ubuntu, which the dpkg of Debian 11 cannot read.
+     */
+    @Test
+    void theCommandOfDpkgDeb() {
+        Path root = Path.of("work", "root");
+        Path deb = Path.of("acme-editor_1.2.3-1_amd64.deb");
+        assertEquals(List.of("dpkg-deb", "-Zxz", "--root-owner-group", "--build", root.toString(), deb.toString()),
+                DebPackager.buildCommand(Path.of("dpkg-deb"), root, deb));
     }
 
     @Test
@@ -138,8 +231,12 @@ class LinuxPackagesTest {
         assertTrue(spec.contains("%global __provides_exclude_from ^/opt/acme-editor/.*$\n"), spec);
         assertTrue(spec.contains("%global __requires_exclude ^(libawt[.]so|libjvm[.]so|libswt-gtk-4970r1[.]so)([(].*)?$\n"),
                 spec);
-        assertTrue(spec.contains("%files\n%defattr(-,root,root,-)\n/opt/acme-editor\n/usr/bin/acme-editor\n"), spec);
-        assertTrue(spec.contains("/usr/share/icons/hicolor/*/apps/acme-editor.png\n"), spec);
+        assertTrue(spec.contains("%files\n%defattr(-,root,root,-)\n/opt/acme-editor\n/usr/bin/acme-editor\n"
+                + "/usr/share/applications/acme-editor.desktop\n/usr/share/icons/hicolor/16x16/apps/acme-editor.png\n"), spec);
+        assertTrue(spec.contains("/usr/share/icons/hicolor/256x256/apps/acme-editor.png\n"
+                + "/usr/share/icons/hicolor/512x512/apps/acme-editor.png\n"), spec);
+        // no glob, which rpmbuild splits where the path of the build root has a space
+        assertFalse(spec.substring(spec.indexOf("%files\n")).contains("*"), spec);
         assertFalse(spec.contains("AutoReq: no"), spec);
         // a %clean stage that does nothing : an empty one would not replace the default one
         assertTrue(spec.contains("\n%clean\n:\n\n%files\n"), spec);
@@ -162,8 +259,48 @@ class LinuxPackagesTest {
         AppInfo app = new AppInfo("Acme Editor", "acme-editor", "org.acme.AcmeEditor", "1.2.3", "Acme", "Edits documents",
                 Optional.empty(), Optional.empty(), Optional.of(Path.of("LICENSE")));
         String spec = RpmPackager.spec(app, config.linux(), Path.of("/work/root"), "/opt/acme-editor", List.of());
-        assertTrue(spec.endsWith("/usr/share/icons/hicolor/*/apps/acme-editor.png\n%dir /usr/share/licenses/acme-editor\n"
-                + "%license /usr/share/licenses/acme-editor/LICENSE\n"), spec);
+        assertTrue(spec.endsWith("/usr/share/icons/hicolor/512x512/apps/acme-editor.png\n"
+                + "%dir /usr/share/licenses/acme-editor\n%license /usr/share/licenses/acme-editor/LICENSE\n"), spec);
+    }
+
+    /**
+     * A library whose file name has its full version is required by its soname, the name of a link to it : the names of
+     * the links are libraries of the application too.
+     */
+    @Test
+    void theLibrariesOfTheRpmPackage(@TempDir Path directory) throws IOException {
+        Path application = Files.createDirectories(directory.resolve("opt/acme-editor"));
+        Path lib = Files.createDirectories(application.resolve("lib"));
+        byte[] elf = { 0x7f, 'E', 'L', 'F', 2, 1, 1, 0 };
+        Files.write(lib.resolve("libfoo.so.1.2.3"), elf);
+        Files.write(lib.resolve("libbar.so"), elf);
+        Files.write(lib.resolve("fake.so"), "not a library".getBytes(StandardCharsets.UTF_8));
+        Files.write(lib.resolve("notes.so.txt"), "not a library".getBytes(StandardCharsets.UTF_8));
+        Files.write(directory.resolve("libsystem.so.3"), elf);
+        link(lib.resolve("libfoo.so.1"), Path.of("libfoo.so.1.2.3"));
+        link(lib.resolve("libfoo.so"), Path.of("libfoo.so.1"));
+        // a link to nothing, and a link to a library of the system
+        link(lib.resolve("libgone.so.2"), Path.of("libgone.so.2.0"));
+        link(lib.resolve("libsystem.so.3"), directory.resolve("libsystem.so.3"));
+        List<String> libraries = RpmPackager.libraries(application);
+        assertEquals(List.of("libbar.so", "libfoo.so", "libfoo.so.1", "libfoo.so.1.2.3"), libraries);
+        String spec = RpmPackager.spec(TestConfig.app(TestConfig.defaults()), TestConfig.defaults().linux(), directory,
+                "/opt/acme-editor", libraries);
+        assertTrue(spec.contains(
+                "%global __requires_exclude ^(libbar[.]so|libfoo[.]so|libfoo[.]so[.]1|libfoo[.]so[.]1[.]2[.]3)([(].*)?$\n"),
+                spec);
+    }
+
+    /**
+     * Creates a symbolic link, or skips the test where links need a privilege (Windows).
+     */
+    private static void link(Path link, Path target) throws IOException {
+        try {
+            Files.createSymbolicLink(link, target);
+        } catch (IOException | UnsupportedOperationException e) {
+            // Windows, without the privilege of creating symbolic links
+            Assumptions.abort("No symbolic links : " + e);
+        }
     }
 
     /**
@@ -211,14 +348,21 @@ class LinuxPackagesTest {
     @Test
     void theFlatpakApplication() {
         DesktopPackagingConfig config = TestConfig.of(Map.of("linux.flatpak.runtime", "org.gnome.Platform",
-                "linux.flatpak.sdk", "org.gnome.Sdk", "linux.flatpak.runtime-version", "48"));
+                "linux.flatpak.sdk", "org.gnome.Sdk", "linux.flatpak.runtime-version", "50"));
         assertEquals("org.acme.AcmeEditor", FlatpakPackager.applicationId(TestConfig.app(config)));
         assertEquals("""
                 [Application]
                 name=org.acme.AcmeEditor
-                runtime=org.gnome.Platform/aarch64/48
-                sdk=org.gnome.Sdk/aarch64/48
+                runtime=org.gnome.Platform/aarch64/50
+                sdk=org.gnome.Sdk/aarch64/50
                 """, FlatpakPackager.metadata("org.acme.AcmeEditor", config.linux().flatpak(), Arch.ARM64));
+        // a branch of the runtime that Flathub supports (24.08 reached its end of life)
+        assertEquals("""
+                [Application]
+                name=org.acme.AcmeEditor
+                runtime=org.freedesktop.Platform/x86_64/25.08
+                sdk=org.freedesktop.Sdk/x86_64/25.08
+                """, FlatpakPackager.metadata("org.acme.AcmeEditor", TestConfig.defaults().linux().flatpak(), Arch.X64));
         // two elements, or a dash before the last element
         assertThrows(PackagingException.class,
                 () -> FlatpakPackager.applicationId(TestConfig.app(TestConfig.of(Map.of("identifier", "acme.editor")))));
@@ -239,6 +383,18 @@ class LinuxPackagesTest {
         assertTrue(metainfo.contains("<launchable type=\"desktop-id\">org.acme.AcmeEditor.desktop</launchable>"), metainfo);
         // a release needs a date, which the build does not know
         assertFalse(metainfo.contains("<release"), metainfo);
+    }
+
+    /**
+     * Without the sandbox of the icon validator, which cannot create its namespaces in a container.
+     */
+    @Test
+    void theCommandOfTheFlatpakExport() {
+        Path repository = Path.of("work", "repo");
+        Path build = Path.of("work", "build");
+        List<String> command = FlatpakPackager.exportCommand(Path.of("flatpak"), "aarch64", repository, build, "stable");
+        assertEquals(List.of("flatpak", "build-export", "--disable-sandbox", "--arch=aarch64", repository.toString(),
+                build.toString(), "stable"), command);
     }
 
     @Test
@@ -263,6 +419,93 @@ class LinuxPackagesTest {
 
         AppInfo dotted = TestConfig.app(TestConfig.of(Map.of("linux.package-name", "acme.editor")));
         assertThrows(PackagingException.class, () -> SnapPackager.snapName(dotted));
+    }
+
+    /**
+     * A classic snap has no extension : the gnome extension supports the strict and devmode confinements only.
+     */
+    @Test
+    void theExtensionsOfTheSnap() {
+        AppInfo app = TestConfig.app(TestConfig.defaults());
+        DesktopPackagingConfig classic = TestConfig.of(Map.of("linux.snap.confinement", "classic",
+                "linux.snap.extensions", ""));
+        String yaml = SnapPackager.snapcraftYaml(app, classic.linux().snap(), Arch.X64, "acme-editor", "bin/acme-editor");
+        assertTrue(yaml.contains("confinement: classic\n"), yaml);
+        assertTrue(yaml.contains("    command: lib/acme-editor/bin/acme-editor\n    plugs:\n"), yaml);
+        assertFalse(yaml.contains("extensions:"), yaml);
+
+        DesktopPackagingConfig gnome = TestConfig.of(Map.of("linux.snap.confinement", "classic"));
+        PackagingException e = assertThrows(PackagingException.class, () -> SnapPackager.snapcraftYaml(app,
+                gnome.linux().snap(), Arch.X64, "acme-editor", "bin/acme-editor"));
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.linux.snap.confinement=classic :"), e.getMessage());
+        assertTrue(e.getMessage().contains("set quarkus.desktop.packaging.linux.snap.extensions to an empty value"),
+                e.getMessage());
+
+        DesktopPackagingConfig kde = TestConfig.of(Map.of("linux.snap.extensions", "kde-neon-6"));
+        assertTrue(SnapPackager.snapcraftYaml(app, kde.linux().snap(), Arch.X64, "acme-editor", "bin/acme-editor")
+                .contains("    extensions: [kde-neon-6]\n"));
+    }
+
+    /**
+     * The title has 2 to 40 characters, and the version at most 32, which end with a letter, a digit, + or ~.
+     */
+    @Test
+    void theTitleAndTheVersionOfTheSnap() {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("name",
+                "The Acme Corporation Document Editor Professional Edition", "version",
+                "1.0.0-SNAPSHOT-20261111.1234567.abc", "linux.package-name", "acme-editor"));
+        String yaml = SnapPackager.snapcraftYaml(TestConfig.app(config), config.linux().snap(), Arch.X64, "acme-editor",
+                "bin/acme-editor");
+        assertTrue(yaml.contains("title: 'The Acme Corporation Document Editor Pro'\n"), yaml);
+        // 1.0.0~SNAPSHOT.20261111.1234567.abc, cut after the period of .abc
+        assertTrue(yaml.contains("version: '1.0.0~SNAPSHOT.20261111.1234567'\n"), yaml);
+
+        // characters beyond the 16 bits of a char : not cut in the middle of one
+        String clef = Character.toString(0x1D11E);
+        String clefs = clef.repeat(41);
+        DesktopPackagingConfig music = TestConfig.of(Map.of("name", clefs, "version", "1.0_",
+                "linux.package-name", "acme-editor"));
+        String other = SnapPackager.snapcraftYaml(TestConfig.app(music), music.linux().snap(), Arch.X64, "acme-editor",
+                "bin/acme-editor");
+        assertTrue(other.contains("title: '" + clef.repeat(40) + "'\n"), other);
+        assertTrue(other.contains("version: '1.0'\n"), other);
+
+        DesktopPackagingConfig x = TestConfig.of(Map.of("name", "X", "linux.package-name", "acme-editor"));
+        String untitled = SnapPackager.snapcraftYaml(TestConfig.app(x), x.linux().snap(), Arch.X64, "acme-editor",
+                "bin/acme-editor");
+        assertFalse(untitled.contains("title:"), untitled);
+    }
+
+    /**
+     * snap pack refuses the files of meta/gui that are not readable by everyone, whatever the umask of the build :
+     * here, files of the project written before with the permissions of a umask of 077.
+     */
+    @Test
+    void theFilesOfTheSnapcraftProject(@TempDir Path directory) throws IOException {
+        Path project = directory.resolve("project");
+        assumeTrue(Files.getFileAttributeView(directory, PosixFileAttributeView.class) != null,
+                "No POSIX permissions");
+        Path image = Files.createDirectories(directory.resolve("image/bin"));
+        Files.writeString(image.resolve("acme-editor"), "#!/bin/sh\n");
+        Files.setPosixFilePermissions(image.resolve("acme-editor"), PosixFilePermissions.fromString("rwx------"));
+        for (String file : List.of("snap/snapcraft.yaml", "snap/gui/acme-editor.desktop", "snap/gui/acme-editor.png")) {
+            Files.createDirectories(project.resolve(file).getParent(),
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")));
+            Files.createFile(project.resolve(file),
+                    PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rw-------")));
+        }
+        DesktopPackagingConfig config = TestConfig.defaults();
+        PackagingContext context = new PackagingContext(config, TestConfig.app(config), TargetOs.LINUX, () -> Arch.X64,
+                new Tools(Map.of()), IconSet.generic(), directory, directory.resolve("packaging"));
+        SnapPackager.writeProject(context, new ApplicationImage(directory.resolve("image"), "bin/acme-editor", true),
+                project, "acme-editor");
+        for (String file : List.of("snap/snapcraft.yaml", "snap/gui/acme-editor.desktop", "snap/gui/acme-editor.png")) {
+            assertEquals("rw-r--r--", PosixFilePermissions.toString(Files.getPosixFilePermissions(project.resolve(file))),
+                    file);
+        }
+        assertEquals("rwxr-xr-x", PosixFilePermissions.toString(Files.getPosixFilePermissions(project.resolve("snap/gui"))));
+        assertEquals("rwxr-xr-x", PosixFilePermissions.toString(Files.getPosixFilePermissions(
+                project.resolve("payload/lib/acme-editor/bin/acme-editor"))));
     }
 
     /**

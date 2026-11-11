@@ -10,6 +10,9 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import javax.imageio.ImageIO;
@@ -117,6 +120,10 @@ class IconSetTest {
         assertEquals(ico.length, expectedOffset);
     }
 
+    /**
+     * The PNG types of a macOS icon, not icp4 and icp5, whose PNG images macOS draws scrambled in the icon of an
+     * application.
+     */
     @Test
     void theMacIconHasAPngOfEachType() {
         byte[] icns = IconSet.generic().icns();
@@ -124,14 +131,18 @@ class IconSetTest {
         assertEquals("icns", new String(icns, 0, 4, StandardCharsets.US_ASCII));
         assertEquals(icns.length, buffer.getInt(4));
         int offset = 8;
-        int entries = 0;
+        Map<String, Integer> sizes = new LinkedHashMap<>();
         while (offset < icns.length) {
+            String type = new String(icns, offset, 4, StandardCharsets.US_ASCII);
             int length = buffer.getInt(offset + 4);
-            assertEquals(0x89, icns[offset + 8] & 0xff, new String(icns, offset, 4, StandardCharsets.US_ASCII));
+            assertEquals(0x89, icns[offset + 8] & 0xff, type);
+            // the width in the IHDR chunk of the PNG image
+            sizes.put(type, buffer.getInt(offset + 8 + 16));
             offset += length;
-            entries++;
         }
         assertEquals(icns.length, offset);
-        assertEquals(10, entries);
+        assertEquals(List.of("ic07", "ic08", "ic09", "ic10", "ic11", "ic12", "ic13", "ic14"),
+                List.copyOf(sizes.keySet()));
+        assertEquals(List.of(128, 256, 512, 1024, 32, 64, 256, 512), List.copyOf(sizes.values()));
     }
 }

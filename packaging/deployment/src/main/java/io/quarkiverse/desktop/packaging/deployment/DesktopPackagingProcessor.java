@@ -1,14 +1,19 @@
 package io.quarkiverse.desktop.packaging.deployment;
 
+import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 import org.jboss.logging.Logger;
 
@@ -23,6 +28,7 @@ import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
 import io.quarkus.deployment.builditem.QuarkusBuildCloseablesBuildItem;
+import io.quarkus.deployment.configuration.NativeConfigUtils;
 import io.quarkus.deployment.pkg.NativeConfig;
 import io.quarkus.deployment.pkg.PackageConfig;
 import io.quarkus.deployment.pkg.builditem.ArtifactResultBuildItem;
@@ -86,7 +92,9 @@ class DesktopPackagingProcessor {
      * ({@code quarkus.desktop.packaging.windows.executable-resources}) : a compiled resource file that the linker adds
      * to the executable, with a {@code -H:NativeLinkerOption} option in a {@code native-image.properties} file
      * generated in the application jar. Not for native sources ({@code quarkus.native.sources-only}) : the option
-     * would name a file of this build, which the machine that compiles them may not have.
+     * would name a file of this build, which the machine that compiles them may not have. Nor when the application
+     * links a resource file itself ({@link #linkedResourceFile}) : the icons and the version information of two files
+     * have the same identifiers, and the linker fails on them.
      */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     void windowsExecutableResources(DesktopPackagingConfig config, NativeConfig nativeConfig,
@@ -104,7 +112,16 @@ class DesktopPackagingProcessor {
                     + " sources may not have");
             return;
         }
-        PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, TargetOs.WINDOWS);
+        Optional<String> linked = linkedResourceFile(NativeConfigUtils.getNativeAdditionalBuildArgs(nativeConfig));
+        if (linked.isPresent()) {
+            LOGGER.infof("The native executable has the resources of %s, which the application links itself : the"
+                    + " extension does not link the icon and the version of the application, which would conflict"
+                    + " with them (quarkus.desktop.packaging.windows.executable-resources=false hides this message)",
+                    linked.get());
+            return;
+        }
+        PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, TargetOs.WINDOWS,
+                Arch::host);
         byte[] resources = WindowsResources.res(context.icons(), context.app(), context.app().name() + ".exe");
         Path buildDirectory = outputTarget.getOutputDirectory().toAbsolutePath();
         Optional<Path> file = writeResources(buildDirectory, Path.of(System.getProperty("java.io.tmpdir")), resources);
@@ -118,6 +135,32 @@ class DesktopPackagingProcessor {
         }
         generatedResources.produce(new GeneratedResourceBuildItem(WINDOWS_NATIVE_IMAGE_PROPERTIES,
                 nativeImageProperties(List.of("-H:NativeLinkerOption=" + file.get())).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /**
+     * The compiled resource file that the application links itself, with the icon or the version information of its
+     * executable : the value of the first {@code -H:NativeLinkerOption} option that is a {@code .res} file. One that
+     * is linked in another way (the {@code native-image.properties} file of the application, a response file) is not
+     * seen.
+     *
+     * @param args the additional options of the native build ({@code quarkus.native.additional-build-args})
+     */
+    static Optional<String> linkedResourceFile(List<String> args) {
+        String option = "-H:NativeLinkerOption=";
+        for (String arg : args) {
+            String value = arg.trim();
+            if (!value.startsWith(option)) {
+                continue;
+            }
+            value = value.substring(option.length()).trim();
+            if (value.length() > 1 && value.startsWith("\"") && value.endsWith("\"")) {
+                value = value.substring(1, value.length() - 1);
+            }
+            if (value.toLowerCase(Locale.ROOT).endsWith(".res")) {
+                return Optional.of(value);
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -182,25 +225,97 @@ class DesktopPackagingProcessor {
      * integration tests run) : it makes this step part of the build.
      */
     @BuildStep(onlyIf = NativeBuild.class)
-    void packageNativeExecutable(DesktopPackagingConfig config, NativeImageBuildItem nativeImage,
-            NativeImageRunnerBuildItem nativeImageRunner, Optional<UpxCompressedBuildItem> upxCompressed,
-            List<NativeExecutableFileBuildItem> files, OutputTargetBuildItem outputTarget,
-            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
-            BuildProducer<ArtifactResultBuildItem> artifactResults) {
+    void packageNativeExecutable(DesktopPackagingConfig config, NativeConfig nativeConfig,
+            NativeImageBuildItem nativeImage, NativeImageRunnerBuildItem nativeImageRunner,
+            Optional<UpxCompressedBuildItem> upxCompressed, List<NativeExecutableFileBuildItem> files,
+            OutputTargetBuildItem outputTarget, ApplicationInfoBuildItem applicationInfo,
+            CurateOutcomeBuildItem curateOutcome, BuildProducer<ArtifactResultBuildItem> artifactResults) {
         TargetOs os = targetOs(nativeImageRunner.isContainerBuild());
-        List<PackageFormat> formats = config.enabled() ? Packaging.formats(config, os) : List.of();
+        List<PackageFormat> formats = config.enabled() ? nativeFormats(config, os, TargetOs.host()) : List.of();
         if (formats.isEmpty()) {
+            return;
+        }
+        Optional<String> unavailable = nativeExecutableUnavailable(nativeConfig.isCreateNativeBundle(),
+                nativeConfig.pgo().enabled(), nativeImage.isReused());
+        if (unavailable.isPresent()) {
+            LOGGER.warn(unavailable.get());
             return;
         }
         compressionWarning(config.linux(), formats, upxCompressed.isPresent()).ifPresent(LOGGER::warn);
         try {
-            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os);
-            ApplicationImage image = NativeApplicationImage.build(context, nativeImage.getPath(), files);
+            // the packages are built for the architecture of the executable, which the JVM of the build may not have
+            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os,
+                    () -> Arch.executable(nativeImage.getPath()));
+            ApplicationImage image = NativeApplicationImage.build(context, nativeImage.getPath(), files,
+                    jdkHomes(nativeConfig.graalvmHome(), nativeConfig.javaHome(), Path.of(System.getProperty("java.home"))));
             Packaging.build(context, image, formats);
         } catch (IOException e) {
             // the exception and its message : the message of some of them is a path alone
             throw new UncheckedIOException("Unable to package the native executable : " + e, e);
         }
+    }
+
+    /**
+     * The formats that package the native executable : none when it is built for another operating system than the
+     * one of the build (in a container, for Linux, on Windows or macOS), as a package is built on its operating system.
+     * The formats that are skipped then are logged as a warning.
+     *
+     * @param target the operating system of the native executable ({@link #targetOs})
+     * @param host the operating system of the build
+     */
+    static List<PackageFormat> nativeFormats(DesktopPackagingConfig config, TargetOs target, TargetOs host) {
+        if (target != host) {
+            Packaging.containerBuildWarning(config, target, host).ifPresent(LOGGER::warn);
+            return List.of();
+        }
+        return Packaging.formats(config, target);
+    }
+
+    /**
+     * Why the native executable of the build is not packaged : a native-image bundle ({@code quarkus.native.bundle.*})
+     * is built instead of it, or it is the instrumented executable of a build with profile-guided optimization
+     * ({@code quarkus.native.pgo.enabled}), whose optimized executable is built after the integration tests. An
+     * executable of a former build ({@code quarkus.native.reuse-existing}) is packaged : the optimized one, once it is
+     * built.
+     *
+     * @param bundle whether the native build writes a native-image bundle
+     * @param pgo whether the native build is instrumented for profile-guided optimization
+     * @param reused whether the native executable is the one of a former build, which the native build did not change
+     * @return the warning, or empty when the native executable is packaged
+     */
+    static Optional<String> nativeExecutableUnavailable(boolean bundle, boolean pgo, boolean reused) {
+        if (reused) {
+            return Optional.empty();
+        }
+        if (bundle) {
+            return Optional.of("No desktop package is built : the native build writes a native-image bundle"
+                    + " (quarkus.native.bundle.enabled, name or dry-run), not a native executable");
+        }
+        if (pgo) {
+            return Optional.of("No desktop package is built : with quarkus.native.pgo.enabled, the native executable of"
+                    + " this build is instrumented, and the optimized one is built after the integration tests (the"
+                    + " quarkus:build-enhanced-artifact goal). Package the optimized executable with a second build, with"
+                    + " -Dquarkus.native.reuse-existing=true");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The JDKs that the Visual C++ runtime of a Windows native executable is copied from, in this order : the GraalVM
+     * home of the native build ({@code quarkus.native.graalvm-home}), whose libraries the executable loads, the Java
+     * home of the native build ({@code quarkus.native.java-home}), then the JDK of the build. Every JDK for Windows has
+     * the runtime.
+     *
+     * @param buildJdk the home of the JDK of the build ({@code java.home})
+     */
+    static List<Path> jdkHomes(Optional<String> graalvmHome, File javaHome, Path buildJdk) {
+        Set<Path> homes = new LinkedHashSet<>();
+        graalvmHome.map(String::trim).filter(home -> !home.isEmpty()).map(Path::of).ifPresent(homes::add);
+        if (javaHome != null) {
+            homes.add(javaHome.toPath());
+        }
+        homes.add(buildJdk);
+        return List.copyOf(homes);
     }
 
     /**
@@ -249,16 +364,10 @@ class DesktopPackagingProcessor {
             throw new PackagingException("The packages of a JVM application are built from a fast-jar or an uber-jar, not"
                     + " from a " + jar.getType() + " (quarkus.package.jar.type)");
         }
-        List<String> options = new ArrayList<>();
-        for (PackagedJvmOptionBuildItem option : jvmOptions) {
-            if (option.getOs().isEmpty() || option.getOs().get() == os.os()) {
-                options.add(option.getOption());
-            }
-        }
         try {
-            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os);
+            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os, Arch::host);
             ApplicationImage image = JvmApplicationImage.build(context, jar.getPath(), uberJar,
-                    startupArchive.map(JvmStartupOptimizerArchiveResultBuildItem::getArchive), options);
+                    startupArchive.map(JvmStartupOptimizerArchiveResultBuildItem::getArchive), jvmOptions);
             Packaging.build(context, image, formats);
         } catch (IOException e) {
             throw new UncheckedIOException("Unable to package the application : " + e, e);
@@ -274,7 +383,8 @@ class DesktopPackagingProcessor {
     }
 
     private static PackagingContext context(DesktopPackagingConfig config, OutputTargetBuildItem outputTarget,
-            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome, TargetOs os) throws IOException {
+            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome, TargetOs os,
+            Supplier<Arch> arch) throws IOException {
         ApplicationModel model = curateOutcome.getApplicationModel();
         Path buildDirectory = outputTarget.getOutputDirectory().toAbsolutePath();
         // the directory of the project : the one of its build file, or the parent of the build directory
@@ -282,6 +392,6 @@ class DesktopPackagingProcessor {
         Path projectDirectory = module != null && module.getModuleDir() != null ? module.getModuleDir().toPath()
                 : buildDirectory.getParent();
         return Packaging.context(config, applicationInfo.getName(), applicationInfo.getVersion(),
-                model.getAppArtifact().getGroupId(), projectDirectory, buildDirectory, os);
+                model.getAppArtifact().getGroupId(), projectDirectory, buildDirectory, os, arch);
     }
 }

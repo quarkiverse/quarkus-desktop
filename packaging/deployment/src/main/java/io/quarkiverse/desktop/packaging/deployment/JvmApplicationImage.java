@@ -4,15 +4,19 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 import io.quarkiverse.desktop.packaging.deployment.macos.MacBundle;
+import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
 
 /**
  * The application image of JVM mode, built with {@code jpackage --type app-image} : the jar of the application, a Java
@@ -24,11 +28,29 @@ final class JvmApplicationImage {
 
     /**
      * The modules that Quarkus itself needs, whatever the extensions of the application : its logging, its
-     * {@code InitialContextFactoryBuilder} (which disables JNDI), the {@code Unsafe} class of its thread pools, and the
-     * file system of the jars, which the configuration is read with. They are added to the modules of the
-     * configuration : an application without them exits when it starts, without a message.
+     * {@code InitialContextFactoryBuilder} (which disables JNDI), the Flight Recorder events that ArC and Quarkus
+     * create when the application stops, the {@code Unsafe} class of its thread pools, and the file system of the
+     * jars, which the configuration is read with. They are added to the modules of the configuration : an application
+     * without them exits when it starts, without a message, or does not destroy its beans when it stops
+     * ({@code NoClassDefFoundError: jdk/jfr/Event}).
      */
-    static final List<String> QUARKUS_MODULES = List.of("java.logging", "java.naming", "jdk.unsupported", "jdk.zipfs");
+    static final List<String> QUARKUS_MODULES = List.of("java.logging", "java.naming", "jdk.jfr", "jdk.unsupported",
+            "jdk.zipfs");
+
+    /**
+     * The modules that provide services to Java SE and the JDK : the locale data of the languages other than English,
+     * the charsets that are not standard, PKCS#11, the key stores of Windows, and the DNS and RMI naming providers.
+     * They export no API : the {@code jpackage} of JDK 25 and later leaves them out of its default runtime, which the
+     * one of JDK 21 to 24 binds them to.
+     */
+    static final List<String> PROVIDER_MODULES = List.of("jdk.localedata", "jdk.charsets", "jdk.crypto.cryptoki",
+            "jdk.crypto.mscapi", "jdk.naming.dns", "jdk.naming.rmi");
+
+    /**
+     * The first JDK whose {@code java.base} has the elliptic curve cryptography, which TLS needs : the
+     * {@code jdk.crypto.ec} module of the JDK before has it.
+     */
+    static final int EC_IN_JAVA_BASE_JDK = 22;
 
     /**
      * The oldest JDK whose {@code jpackage} builds the application image : its {@code jlink} builds a Java runtime of
@@ -46,19 +68,162 @@ final class JvmApplicationImage {
      */
     private static final Pattern BUNDLE_NAME = Pattern.compile("<key>CFBundleName</key>\\s*<string>(.*?)</string>");
 
+    /**
+     * The long form of an option of the JVM, with its value after white space
+     * ({@code --add-opens java.base/java.lang=ALL-UNNAMED}).
+     */
+    private static final Pattern LONG_OPTION = Pattern.compile("(--[A-Za-z][A-Za-z0-9-]*)\\s+(\\S.*)", Pattern.DOTALL);
+
     private JvmApplicationImage() {
     }
 
     /**
-     * The modules of the Java runtime : the ones of the configuration, and the ones of Quarkus.
+     * The modules of the Java runtime : the ones of the configuration, the ones of Quarkus, and on a JDK older than
+     * {@link #EC_IN_JAVA_BASE_JDK} the elliptic curve cryptography, which TLS needs (ECDHE, ECDSA) : {@code jlink} does
+     * not bind the providers of services to a list of modules.
+     *
+     * @param jdkVersion the feature version of the JDK of {@code jpackage}, or {@code -1} when it is not known
      */
-    static List<String> modules(List<String> configured) {
+    static List<String> modules(List<String> configured, int jdkVersion) {
         LinkedHashSet<String> modules = new LinkedHashSet<>();
         for (String module : configured) {
             modules.add(module.trim());
         }
         modules.addAll(QUARKUS_MODULES);
+        if (jdkVersion >= 0 && jdkVersion < EC_IN_JAVA_BASE_JDK) {
+            modules.add("jdk.crypto.ec");
+        }
         return new ArrayList<>(modules);
+    }
+
+    /**
+     * The modules of the Java runtime when the configuration has none : the default ones of {@code jpackage}
+     * ({@code ALL-DEFAULT} : the modules of the JDK that export an API, and the ones that they require), with the ones
+     * of Quarkus and the providers of services ({@link #PROVIDER_MODULES}), which the {@code jpackage} of JDK 25 and
+     * later leaves out. {@code ALL-DEFAULT} is the last module : {@code jpackage} ignores it anywhere else.
+     *
+     * @param jdkModules the modules of the JDK of {@code jpackage} : the others are left out, as {@code jlink} fails on
+     *        a module that the JDK does not have ({@code jdk.crypto.mscapi} is in the JDK of Windows only)
+     */
+    static List<String> defaultModules(Set<String> jdkModules) {
+        List<String> modules = new ArrayList<>(Stream.concat(QUARKUS_MODULES.stream(), PROVIDER_MODULES.stream())
+                .filter(jdkModules::contains).toList());
+        modules.add("ALL-DEFAULT");
+        return modules;
+    }
+
+    /**
+     * The modules of a JDK : the {@code MODULES} line of its {@code release} file, or none when it has no such line.
+     */
+    static Set<String> releaseModules(String release) {
+        String modules = releaseValue(release, "MODULES").orElse("").trim();
+        return modules.isEmpty() ? Set.of() : new LinkedHashSet<>(Arrays.asList(modules.split("\\s+")));
+    }
+
+    /**
+     * The feature version of a JDK : the {@code JAVA_VERSION} line of its {@code release} file, or {@code -1} when it
+     * has no such line.
+     */
+    static int releaseVersion(String release) {
+        return releaseValue(release, "JAVA_VERSION").map(JvmApplicationImage::featureVersion).orElse(-1);
+    }
+
+    /**
+     * A value of the {@code release} file of a JDK ({@code KEY="value"}), without its quotes.
+     */
+    private static Optional<String> releaseValue(String release, String key) {
+        for (String line : release.split("\\R")) {
+            if (line.startsWith(key + "=")) {
+                return Optional.of(line.substring(key.length() + 1).trim().replaceAll("^\"|\"$", ""));
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The {@code release} file of the JDK of a {@code jpackage} ({@code <jdk>/bin/jpackage}), whose {@code jlink}
+     * builds the Java runtime from the modules of that JDK, or an empty text when there is none : a {@code jpackage}
+     * that is not in the {@code bin} directory of a JDK.
+     */
+    private static String jdkRelease(Path jpackage) {
+        try {
+            Path bin = jpackage.toRealPath().getParent();
+            Path release = bin == null || bin.getParent() == null ? null : bin.getParent().resolve("release");
+            return release != null && Files.isRegularFile(release) ? Files.readString(release) : "";
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
+    /**
+     * The options of the JVM of the application : the ones that the extensions ask for on its operating system, in
+     * their order, then the ones of the configuration.
+     *
+     * @param extensionOptions the options of the extensions, for an operating system or for all of them
+     * @param configured the options of the configuration ({@code quarkus.desktop.packaging.jvm.options})
+     */
+    static List<String> javaOptions(List<PackagedJvmOptionBuildItem> extensionOptions, TargetOs os,
+            Optional<List<String>> configured) {
+        List<String> options = new ArrayList<>();
+        for (PackagedJvmOptionBuildItem option : extensionOptions) {
+            if (option.getOs().isEmpty() || option.getOs().get() == os.os()) {
+                options.add(option.getOption());
+            }
+        }
+        configured.ifPresent(options::addAll);
+        return options;
+    }
+
+    /**
+     * An option of the JVM as {@code jpackage} takes it, for one argument of the JVM : {@code jpackage} splits the value
+     * of {@code --java-options} at white space and removes its quotes. The option loses its leading and trailing white
+     * space ; one with white space or a quote is quoted, its quotes escaped, and the backslashes at its end after the
+     * closing quote, which they would escape. The long form of an option with its value after white space
+     * ({@code --add-opens java.base/java.lang=ALL-UNNAMED}) is written with {@code =} : the launcher would not take it
+     * as one argument otherwise.
+     */
+    static String javaOption(String option) {
+        String argument = option.strip();
+        Matcher longOption = LONG_OPTION.matcher(argument);
+        if (longOption.matches()) {
+            argument = longOption.group(1) + "=" + longOption.group(2);
+        }
+        if (argument.chars().noneMatch(c -> Character.isWhitespace(c) || c == '\'' || c == '"')) {
+            return argument;
+        }
+        int end = argument.length();
+        while (end > 0 && argument.charAt(end - 1) == '\\') {
+            end--;
+        }
+        return "'" + argument.substring(0, end).replace("'", "\\'").replace("\"", "\\\"") + "'"
+                + argument.substring(end);
+    }
+
+    /**
+     * The argument file of {@code jpackage} ({@code jpackage @file}) : one argument per line, in double quotes, with
+     * {@code \} and {@code "} escaped, and the line breaks and tabs as {@code \n}, {@code \r}, {@code \t} and
+     * {@code \f}, as {@code jpackage} reads such files. Its arguments are not read as argument files themselves,
+     * whatever their first character.
+     */
+    static String argumentFile(List<String> arguments) {
+        StringBuilder file = new StringBuilder();
+        for (String argument : arguments) {
+            file.append('"');
+            for (int i = 0; i < argument.length(); i++) {
+                char c = argument.charAt(i);
+                switch (c) {
+                    case '\\' -> file.append("\\\\");
+                    case '"' -> file.append("\\\"");
+                    case '\n' -> file.append("\\n");
+                    case '\r' -> file.append("\\r");
+                    case '\t' -> file.append("\\t");
+                    case '\f' -> file.append("\\f");
+                    default -> file.append(c);
+                }
+            }
+            file.append("\"\n");
+        }
+        return file.toString();
     }
 
     /**
@@ -70,7 +235,7 @@ final class JvmApplicationImage {
      * @param extensionOptions the options of the JVM that the extensions of the application ask for
      */
     static ApplicationImage build(PackagingContext context, Path jar, boolean uberJar, Optional<Path> archive,
-            List<String> extensionOptions) throws IOException {
+            List<PackagedJvmOptionBuildItem> extensionOptions) throws IOException {
         AppInfo app = context.app();
         DesktopPackagingConfig.Jvm config = context.config().jvm();
         Path jpackage = jpackage(context);
@@ -88,7 +253,7 @@ final class JvmApplicationImage {
 
         // the description is the file description of the Windows launcher, which Windows shows as the name of the
         // program : the name there
-        List<String> command = new ArrayList<>(List.of(jpackage.toString(), "--type", "app-image", "--dest",
+        List<String> command = new ArrayList<>(List.of("--type", "app-image", "--dest",
                 images.toString(), "--name", name, "--input", input.toString(), "--main-jar", jar.getFileName().toString(),
                 "--vendor", app.vendor(), "--description",
                 context.os() == TargetOs.WINDOWS ? app.name() : app.description()));
@@ -102,22 +267,21 @@ final class JvmApplicationImage {
         command.add(version(context));
         if (context.os() == TargetOs.MACOS) {
             command.add("--mac-package-identifier");
-            command.add(app.identifier());
+            command.add(MacBundle.identifier(app));
             command.add("--mac-package-name");
             command.add(menuBarName);
             command.add("--mac-app-category");
             command.add(context.config().macos().category().replaceFirst("^public\\.app-category\\.", ""));
         }
         command.addAll(runtimeArguments(config.modules(), config.jlinkOptions(), config.runtimeImage(),
-                context.projectDirectory()));
+                context.projectDirectory(), jdkRelease(jpackage)));
         List<String> options = new ArrayList<>();
         // before the options of the configuration, which may set the version too
         versionOption(context.os(), MacBundle.version(app)).ifPresent(options::add);
-        options.addAll(extensionOptions);
-        config.options().ifPresent(options::addAll);
+        options.addAll(javaOptions(extensionOptions, context.os(), config.options()));
         for (String option : options) {
             command.add("--java-options");
-            command.add(option);
+            command.add(javaOption(option));
         }
         // jlink runs the objcopy of the PATH, whatever the configuration of the tools
         if (TargetOs.host() == TargetOs.LINUX
@@ -128,7 +292,16 @@ final class JvmApplicationImage {
                     + " binutils), or set quarkus.desktop.packaging.jvm.jlink-options without --strip-debug, such as"
                     + " --strip-native-commands,--strip-java-debug-attributes,--no-man-pages,--no-header-files");
         }
-        Tools.exec(work, Map.of(), command);
+        // in a file, in UTF-8, rather than on the command line : the launcher of jpackage reads its command line in the
+        // ANSI code page on Windows, which may not have the characters of the texts and of the paths
+        FileTrees.write(work.resolve("jpackage.args"), argumentFile(command));
+        Tools.Result result = Tools.run(work, Map.of(), List.of(jpackage.toString(), "-J-Dfile.encoding=UTF-8",
+                "@jpackage.args"));
+        if (!result.succeeded()) {
+            // the arguments of the file in the message
+            command.add(0, jpackage.toString());
+            throw Tools.failure(command, result);
+        }
 
         ApplicationImage image = switch (context.os()) {
             case WINDOWS -> new ApplicationImage(root, name + ".exe", false);
@@ -137,6 +310,10 @@ final class JvmApplicationImage {
         };
         if (!Files.isRegularFile(image.launcherPath())) {
             throw new PackagingException("jpackage did not write the launcher " + image.launcherPath());
+        }
+        if (context.os() == TargetOs.WINDOWS) {
+            // jpackage writes a read-only launcher, which mvn clean cannot delete
+            image.launcherPath().toFile().setWritable(true);
         }
         if (!uberJar) {
             Path application = switch (context.os()) {
@@ -158,6 +335,7 @@ final class JvmApplicationImage {
                 bundleName(root, name);
             }
             bundleVersion(context, root);
+            bundleEntries(context, root);
             MacBundle.sign(context, image);
         }
         return image;
@@ -171,17 +349,27 @@ final class JvmApplicationImage {
      * @param jlinkOptions the options of {@code jlink} ({@code quarkus.desktop.packaging.jvm.jlink-options})
      * @param runtimeImage the given runtime ({@code quarkus.desktop.packaging.jvm.runtime-image})
      * @param projectDirectory the directory of the relative path of the runtime
+     * @param jdkRelease the {@code release} file of the JDK of {@code jpackage}, whose modules {@code jlink} links, or
+     *        an empty text : then {@code jpackage} chooses the modules when the configuration has none
      * @throws PackagingException when a runtime is given with modules or options of {@code jlink}
      */
     static List<String> runtimeArguments(Optional<List<String>> modules, Optional<List<String>> jlinkOptions,
-            Optional<String> runtimeImage, Path projectDirectory) {
+            Optional<String> runtimeImage, Path projectDirectory, String jdkRelease) {
         List<String> arguments = new ArrayList<>();
         List<String> properties = new ArrayList<>();
-        modules.filter(list -> !list.isEmpty()).ifPresent(list -> {
+        Optional<List<String>> configured = modules.filter(list -> !list.isEmpty());
+        if (configured.isPresent()) {
             arguments.add("--add-modules");
-            arguments.add(String.join(",", modules(list)));
+            arguments.add(String.join(",", modules(configured.get(), releaseVersion(jdkRelease))));
             properties.add("quarkus.desktop.packaging.jvm.modules");
-        });
+        } else if (runtimeImage.isEmpty()) {
+            // jpackage rejects modules with a given runtime
+            Set<String> jdkModules = releaseModules(jdkRelease);
+            if (!jdkModules.isEmpty()) {
+                arguments.add("--add-modules");
+                arguments.add(String.join(",", defaultModules(jdkModules)));
+            }
+        }
         jlinkOptions.filter(list -> !list.isEmpty()).ifPresent(list -> {
             arguments.add("--jlink-options");
             arguments.add(String.join(" ", list));
@@ -434,5 +622,22 @@ final class JvmApplicationImage {
         for (String key : List.of("CFBundleShortVersionString", "CFBundleVersion")) {
             Tools.exec(List.of(plistBuddy.toString(), "-c", "Set :" + key + " " + version, plist.toString()));
         }
+    }
+
+    /**
+     * Writes the entries of the configuration in the bundle, as the bundle of a native executable has them : the
+     * minimum version of macOS and the entries of {@code quarkus.desktop.packaging.macos.info-plist}.
+     */
+    private static void bundleEntries(PackagingContext context, Path bundle) throws IOException {
+        Path plist = bundle.resolve("Contents/Info.plist");
+        String infoPlist = Files.readString(plist);
+        String withEntries = MacBundle.jvmInfoPlist(infoPlist, context.config().macos());
+        if (withEntries.equals(infoPlist)) {
+            return;
+        }
+        if (!plist.toFile().canWrite()) {
+            plist.toFile().setWritable(true);
+        }
+        Files.writeString(plist, withEntries);
     }
 }

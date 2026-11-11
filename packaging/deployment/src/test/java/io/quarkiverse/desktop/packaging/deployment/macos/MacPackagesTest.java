@@ -7,7 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,6 +20,7 @@ import java.util.Map;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
@@ -28,7 +33,7 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * The files that the macOS packagers generate : the information property list of the bundle, the entitlements and the
- * distribution file of the installer package. And the attempts of {@code hdiutil}.
+ * distribution file of the installer package. And the attempts of {@code hdiutil}, and its staging folder.
  */
 class MacPackagesTest {
 
@@ -120,6 +125,88 @@ class MacPackagesTest {
     }
 
     /**
+     * The bundle identifier has letters, digits, dashes and dots only, which macOS and {@code jpackage} require : the
+     * identifier of the application may have underscores, which Flatpak takes.
+     */
+    @Test
+    void theBundleIdentifierHasNoUnderscore() throws Exception {
+        assertEquals("org.acme.AcmeEditor", MacBundle.identifier(TestConfig.app(TestConfig.defaults())));
+        Map<String, String> identifiers = Map.of("org.acme.my_app", "org.acme.my-app", "org._7zip.Editor",
+                "org.7zip.Editor", "org.__acme_.editor", "org.acme-.editor", "org._.editor", "org.-.editor",
+                "com.acme-corp.Editor", "com.acme-corp.Editor");
+        for (Map.Entry<String, String> identifier : identifiers.entrySet()) {
+            DesktopPackagingConfig config = TestConfig.of(Map.of("identifier", identifier.getKey()));
+            assertEquals(identifier.getValue(), MacBundle.identifier(TestConfig.app(config)), identifier.getKey());
+        }
+        // the default identifier keeps the underscores of the name
+        DesktopPackagingConfig named = TestConfig.of(Map.of("name", "my_app"));
+        assertEquals("org.acme.my_app", TestConfig.app(named).identifier());
+        assertEquals("org.acme.my-app", entries(MacBundle.infoPlist(TestConfig.app(named), named.macos(), "my_app",
+                "my_app.icns")).get("CFBundleIdentifier"));
+    }
+
+    /**
+     * The information property list that {@code jpackage} writes in the bundle of a JVM application, with the entries
+     * of the configuration.
+     */
+    @Test
+    void theInformationPropertyListOfAJvmBundle() throws Exception {
+        // as the jpackage of JDK 21 to 25 writes it
+        String plist = String.join("\n", "<?xml version=\"1.0\" ?>",
+                "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"https://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+                "<plist version=\"1.0\">", " <dict>", "  <key>LSMinimumSystemVersion</key>", "  <string>10.11</string>",
+                "  <key>CFBundleAllowMixedLocalizations</key>", "  <true/>", "  <key>CFBundleName</key>",
+                "  <string>Acme Editor</string>",
+                "  <!-- See https://developer.apple.com/app-store/categories/ for list of AppStore categories -->",
+                "  <key>LSApplicationCategoryType</key>", "  <string>Unknown</string>", "  <key>NSHighResolutionCapable</key>",
+                "  <string>true</string>", "  <key>NSMicrophoneUsageDescription</key>",
+                "  <string>The application Acme Editor is requesting access to the microphone.</string>", " </dict>",
+                "</plist>", "");
+        DesktopPackagingConfig config = TestConfig.of(Map.of("macos.minimum-system-version", "13.0",
+                "macos.info-plist.NSCameraUsageDescription", "Scans <documents>",
+                "macos.info-plist.NSMicrophoneUsageDescription", "Records notes",
+                "macos.info-plist.NSHighResolutionCapable", "false", "macos.info-plist.LSUIElement", "true"));
+        String withEntries = MacBundle.jvmInfoPlist(plist, config.macos());
+        Map<String, String> entries = entries(withEntries);
+        assertEquals("13.0", entries.get("LSMinimumSystemVersion"));
+        assertEquals("Scans <documents>", entries.get("NSCameraUsageDescription"));
+        assertEquals("Records notes", entries.get("NSMicrophoneUsageDescription"));
+        assertEquals("false", entries.get("NSHighResolutionCapable"));
+        assertEquals("true", entries.get("LSUIElement"));
+        assertEquals("true", entries.get("CFBundleAllowMixedLocalizations"));
+        assertEquals("Acme Editor", entries.get("CFBundleName"));
+        assertEquals("Unknown", entries.get("LSApplicationCategoryType"));
+        // a key once, its value in place ; the new entries at the end of the dictionary, as indented as the others
+        for (String key : List.of("LSMinimumSystemVersion", "NSHighResolutionCapable", "NSMicrophoneUsageDescription",
+                "NSCameraUsageDescription")) {
+            assertEquals(2, withEntries.split("<key>" + key + "</key>", -1).length, withEntries);
+        }
+        assertTrue(withEntries.contains("  <key>LSMinimumSystemVersion</key>\n  <string>13.0</string>\n"
+                + "  <key>CFBundleAllowMixedLocalizations</key>"), withEntries);
+        assertTrue(withEntries.contains("  <key>NSHighResolutionCapable</key>\n  <false/>\n"
+                + "  <key>NSMicrophoneUsageDescription</key>\n  <string>Records notes</string>\n  <key>"), withEntries);
+        assertTrue(withEntries.contains("\n  <key>NSCameraUsageDescription</key>\n  <string>Scans &lt;documents&gt;"
+                + "</string>\n"), withEntries);
+        assertTrue(withEntries.contains("\n  <key>LSUIElement</key>\n  <true/>\n"), withEntries);
+        assertTrue(withEntries.endsWith(">\n </dict>\n</plist>\n"), withEntries);
+
+        // an entry of info-plist replaces the minimum version of macOS
+        DesktopPackagingConfig minimum = TestConfig.of(Map.of("macos.minimum-system-version", "13.0",
+                "macos.info-plist.LSMinimumSystemVersion", "14.0"));
+        assertEquals("14.0", entries(MacBundle.jvmInfoPlist(plist, minimum.macos())).get("LSMinimumSystemVersion"));
+        // without entries, the property list of jpackage as it is
+        assertSame(plist, MacBundle.jvmInfoPlist(plist, TestConfig.defaults().macos()));
+        // an array or a dictionary cannot be replaced
+        DesktopPackagingConfig types = TestConfig.of(Map.of("macos.info-plist.CFBundleDocumentTypes", "none"));
+        String withArray = plist.replace(" </dict>", "  <key>CFBundleDocumentTypes</key>\n  <array>\n  </array>\n </dict>");
+        PackagingException array = assertThrows(PackagingException.class,
+                () -> MacBundle.jvmInfoPlist(withArray, types.macos()));
+        assertTrue(array.getMessage().contains("quarkus.desktop.packaging.macos.info-plist.CFBundleDocumentTypes"),
+                array.getMessage());
+        assertThrows(PackagingException.class, () -> MacBundle.jvmInfoPlist("<plist version=\"1.0\"/>", config.macos()));
+    }
+
+    /**
      * hdiutil runs again when a disk image is busy, up to its last attempt, and not when it fails otherwise.
      */
     @Test
@@ -152,12 +239,56 @@ class MacPackagesTest {
         assertTrue(stillBusy.getMessage().endsWith(":\nhdiutil: create failed - Resource busy"), stillBusy.getMessage());
     }
 
+    /**
+     * The staging folder of the disk image is deleted once hdiutil has run, whether it built the image or not : its link
+     * to the Applications folder is deleted, not followed.
+     */
+    @Test
+    void theStagingFolderOfTheDiskImageIsDeleted(@TempDir Path directory) throws Exception {
+        Path applications = Files.createDirectories(directory.resolve("Applications"));
+        Path installed = Files.writeString(applications.resolve("Installed.txt"), "installed");
+        Path work = directory.resolve("work/dmg");
+        List<String> command = List.of("hdiutil", "create", "Acme.dmg");
+        for (Tools.Result result : List.of(new Tools.Result(0, "created: Acme.dmg\n"),
+                new Tools.Result(1, "hdiutil: create failed - No space left on device"))) {
+            Path volume = work.resolve("Acme-Editor");
+            Files.writeString(Files.createDirectories(volume.resolve("Acme Editor.app/Contents/MacOS"))
+                    .resolve("Acme Editor"), "executable");
+            try {
+                Files.createSymbolicLink(volume.resolve("Applications"), applications);
+            } catch (IOException | UnsupportedOperationException e) {
+                // Windows, without the privilege of creating symbolic links : the folder is deleted all the same
+            }
+            if (result.succeeded()) {
+                DmgPackager.create(volume, command, run -> result, 0);
+            } else {
+                assertThrows(PackagingException.class, () -> DmgPackager.create(volume, command, run -> result, 0));
+            }
+            assertFalse(Files.exists(volume, LinkOption.NOFOLLOW_LINKS));
+            assertTrue(Files.isDirectory(work));
+            assertEquals("installed", Files.readString(installed));
+        }
+    }
+
     @Test
     void theEntitlementsOfAJvm() throws Exception {
         Map<String, String> entries = entries(MacBundle.entitlements(MacBundle.JVM_ENTITLEMENTS));
         assertEquals(4, entries.size());
         assertEquals("true", entries.get("com.apple.security.cs.allow-jit"));
         assertEquals("true", entries.get("com.apple.security.cs.disable-library-validation"));
+        assertEquals(MacBundle.JVM_ENTITLEMENTS, MacBundle.defaultEntitlements(false, true));
+        assertEquals(MacBundle.JVM_ENTITLEMENTS, MacBundle.defaultEntitlements(false, false));
+    }
+
+    /**
+     * Signed with a certificate, a native executable loads the libraries that are not in its bundle, such as the ones
+     * that SWT extracts, which the hardened runtime refuses otherwise. An ad hoc signature has no hardened runtime.
+     */
+    @Test
+    void theEntitlementsOfANativeExecutable() throws Exception {
+        assertEquals(Map.of("com.apple.security.cs.disable-library-validation", "true"),
+                entries(MacBundle.entitlements(MacBundle.defaultEntitlements(true, true))));
+        assertEquals(List.of(), MacBundle.defaultEntitlements(true, false));
     }
 
     @Test

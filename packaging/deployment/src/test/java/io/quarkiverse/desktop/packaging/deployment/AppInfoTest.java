@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -67,7 +68,7 @@ class AppInfoTest {
         BufferedImage icon = new BufferedImage(48, 48, BufferedImage.TYPE_INT_ARGB);
         ImageIO.write(icon, "png", project.resolve("icon.png").toFile());
         assertEquals(48, Packaging.context(TestConfig.of(Map.of("icon", "icon.png ")), "Acme Editor", "1.0", "org.acme",
-                project, project, TargetOs.LINUX).icons().sourceSize());
+                project, project, TargetOs.LINUX, Arch::host).icons().sourceSize());
     }
 
     @Test
@@ -83,6 +84,22 @@ class AppInfoTest {
         assertEquals("acme-editor", AppInfo.packageName("Acme Editor"));
         assertEquals("acme-editor-2", AppInfo.packageName("  Acme_Editor (2)  "));
         assertEquals("application", AppInfo.packageName("É"));
+        // in ASCII : the accents removed, the letters that do not decompose spelled in ASCII
+        assertEquals("cafe-manager", AppInfo.packageName("Café Manager"));
+        assertEquals("muller-tools", AppInfo.packageName("Müller Tools"));
+        assertEquals("strasse", AppInfo.packageName("Straße"));
+        assertEquals("istanbul-app", AppInfo.packageName("İstanbul App"));
+        assertEquals("lodz", AppInfo.packageName("Łódź"));
+        assertEquals("aero", AppInfo.packageName("Ærø"));
+    }
+
+    @Test
+    void namesInAscii() {
+        assertEquals("Acme Editeur", AppInfo.ascii("Acme Éditeur"));
+        assertEquals("Wide file2", AppInfo.ascii("Ｗｉｄｅ ﬁle²"));
+        assertEquals("Strasse STRASSE Thorsdottir", AppInfo.ascii("Straße STRAẞE Þórsdóttir"));
+        assertEquals("Aesir Oeuvre Orsted", AppInfo.ascii("Æsir Œuvre Ørsted"));
+        assertEquals("محرر", AppInfo.ascii("محرر"));
     }
 
     @Test
@@ -91,9 +108,81 @@ class AppInfoTest {
         assertEquals("org.acme.3DViewer", AppInfo.identifier("org.acme", "3D Viewer"));
         assertEquals("com.3m.Editor", AppInfo.identifier("com.3m", "Editor"));
         assertEquals("local.application.Editor", AppInfo.identifier(null, "Editor"));
+        assertEquals("org.acme.AcmeEditeur", AppInfo.identifier("org.acme", "Acme Éditeur"));
+        assertEquals("org.acme.Lodz", AppInfo.identifier("org.acme", "Łódź"));
         // an element that starts with a digit : macOS and MSIX accept it, Flatpak does not
         assertEquals("com.1password.editor", TestConfig.app(TestConfig.of(Map.of("identifier", "com.1password.editor")))
                 .identifier());
+    }
+
+    /**
+     * The names that the files, the packages and the identifier derive from a name with accents : not misspelled.
+     */
+    @Test
+    void aNameWithAccents() {
+        AppInfo app = TestConfig.app(TestConfig.of(Map.of("name", "Acme Éditeur")));
+        assertEquals("Acme Éditeur", app.name());
+        assertEquals("acme-editeur", app.packageName());
+        assertEquals("org.acme.AcmeEditeur", app.identifier());
+        assertEquals("Acme-Editeur", app.fileName());
+    }
+
+    /**
+     * A name without letters or digits in ASCII : the derived names come from {@code quarkus.application.name}, so
+     * that the applications of a vendor do not share their identifier, upgrade code and Linux package.
+     */
+    @Test
+    void aNameInAnotherScript() {
+        AppInfo editor = AppInfo.of(TestConfig.of(Map.of("name", "محرر النصوص")), "acme-editor", "1.0", "org.acme",
+                Path.of("."));
+        assertEquals("محرر النصوص", editor.name());
+        assertEquals("acme-editor", editor.packageName());
+        assertEquals("org.acme.acmeeditor", editor.identifier());
+        assertEquals("acme-editor", editor.fileName());
+        AppInfo player = AppInfo.of(TestConfig.of(Map.of("name", "مشغل الوسائط")), "acme-player", "1.0", "org.acme",
+                Path.of("."));
+        assertEquals("acme-player", player.packageName());
+        assertEquals("org.acme.acmeplayer", player.identifier());
+        assertNotEquals(editor.guid("upgrade"), player.guid("upgrade"));
+        for (String name : List.of("编辑器", "Редактор текста")) {
+            AppInfo app = AppInfo.of(TestConfig.of(Map.of("name", name)), "acme-editor", "1.0", "org.acme", Path.of("."));
+            assertEquals("acme-editor", app.packageName(), name);
+            assertEquals("org.acme.acmeeditor", app.identifier(), name);
+        }
+        // the configuration still wins
+        AppInfo configured = AppInfo.of(TestConfig.of(Map.of("name", "محرر النصوص", "identifier", "org.acme.moharrir",
+                "linux.package-name", "moharrir")), "acme-editor", "1.0", "org.acme", Path.of("."));
+        assertEquals("moharrir", configured.packageName());
+        assertEquals("org.acme.moharrir", configured.identifier());
+        assertEquals("moharrir", configured.fileName());
+        // without quarkus.application.name : the last resort, with a warning
+        AppInfo unnamed = AppInfo.of(TestConfig.of(Map.of("name", "编辑器")), AppInfo.UNSET, "1.0", "org.acme",
+                Path.of("."));
+        assertEquals("application", unnamed.packageName());
+        assertEquals("org.acme.application", unnamed.identifier());
+        assertEquals("application", unnamed.fileName());
+    }
+
+    /**
+     * The base name of the packages : no separator at its ends (a leading dash is an option for the command lines),
+     * no repeated dashes.
+     */
+    @Test
+    void fileNames() {
+        assertEquals("Acme-Editor", fileName("Acme Editor"));
+        assertEquals("Acme", fileName("Acme محرر"));
+        assertEquals("Acme-Editor", fileName("Acme - Editor"));
+        assertEquals("Acme-Editor-2.0", fileName("Acme Editor 2.0"));
+        assertEquals("Acme-Corp", fileName("Acme Corp."));
+        assertEquals("Acme", fileName("-Acme-"));
+        assertEquals("Wide-file2", fileName("Ｗｉｄｅ ﬁle²"));
+        // nothing left : the package name
+        assertEquals("acme-editor", fileName(".."));
+        assertEquals("acme-editor", fileName("محرر النصوص"));
+    }
+
+    private static String fileName(String name) {
+        return TestConfig.app(TestConfig.of(Map.of("name", name))).fileName();
     }
 
     @Test
@@ -144,10 +233,10 @@ class AppInfoTest {
     void theNameIsCheckedForTheOperatingSystemOfTheApplication(@TempDir Path project) throws IOException {
         DesktopPackagingConfig config = TestConfig.of(Map.of("name", "What's Up?"));
         // before the native executable is built : the Windows executable gets the name in its resources
-        assertThrows(PackagingException.class,
-                () -> Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project, TargetOs.WINDOWS));
-        assertEquals("What's Up?",
-                Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project, TargetOs.MACOS).app().name());
+        assertThrows(PackagingException.class, () -> Packaging.context(config, "Acme Editor", "1.0", "org.acme", project,
+                project, TargetOs.WINDOWS, Arch::host));
+        assertEquals("What's Up?", Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project,
+                TargetOs.MACOS, Arch::host).app().name());
     }
 
     @Test
@@ -214,8 +303,8 @@ class AppInfoTest {
     }
 
     /**
-     * A native executable built in a container is a Linux executable, on any operating system : the formats of the
-     * operating system of the build are skipped, with a warning.
+     * A native executable built in a container is a Linux executable, on any operating system : on Windows and macOS,
+     * the formats of the operating system of the build and the ones of Linux are skipped, with a warning.
      */
     @Test
     void theFormatsOfAContainerBuild() {
@@ -223,12 +312,17 @@ class AppInfoTest {
         assertEquals(Optional.empty(), Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.LINUX));
         assertEquals(Optional.empty(), Packaging.containerBuildWarning(config, TargetOs.MACOS, TargetOs.MACOS));
         String warning = Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.MACOS).orElseThrow();
-        assertTrue(warning.startsWith("The dmg package is not built : "), warning);
-        assertTrue(warning.contains("quarkus.native.container-build"), warning);
-        assertFalse(warning.contains("msi") || warning.contains("deb"), warning);
+        assertTrue(warning.startsWith("The dmg, deb packages are not built : "), warning);
+        assertTrue(warning.contains("(quarkus.native.container-build=false) to package it as dmg. Build it on Linux to"
+                + " package it as deb"), warning);
+        assertFalse(warning.contains("msi"), warning);
         warning = Packaging.containerBuildWarning(config, TargetOs.LINUX, TargetOs.WINDOWS).orElseThrow();
-        assertTrue(warning.startsWith("The msi package is not built : "), warning);
-        assertEquals(Optional.empty(), Packaging.containerBuildWarning(TestConfig.of(Map.of("formats", "deb,rpm")),
+        assertTrue(warning.startsWith("The msi, deb packages are not built : "), warning);
+        warning = Packaging.containerBuildWarning(TestConfig.of(Map.of("formats", "deb,rpm")), TargetOs.LINUX,
+                TargetOs.WINDOWS).orElseThrow();
+        assertTrue(warning.startsWith("The deb, rpm packages are not built : "), warning);
+        assertFalse(warning.contains("container-build=false"), warning);
+        assertEquals(Optional.empty(), Packaging.containerBuildWarning(TestConfig.of(Map.of("formats", "dmg")),
                 TargetOs.LINUX, TargetOs.WINDOWS));
     }
 

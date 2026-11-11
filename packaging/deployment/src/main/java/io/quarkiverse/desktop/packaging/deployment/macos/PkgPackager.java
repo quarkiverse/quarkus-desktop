@@ -5,9 +5,13 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+
+import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
+import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
@@ -23,8 +27,11 @@ import io.quarkiverse.desktop.packaging.deployment.Xml;
  */
 public final class PkgPackager implements Packager {
 
+    private static final Logger LOGGER = Logger.getLogger(PkgPackager.class);
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
+        MacBundle.checkNotarization(context);
         Path pkgbuild = context.tools().require("pkgbuild", "pkgbuild is part of macOS", Path.of("/usr/bin/pkgbuild"));
         Path productbuild = context.tools().require("productbuild", "productbuild is part of macOS",
                 Path.of("/usr/bin/productbuild"));
@@ -60,7 +67,7 @@ public final class PkgPackager implements Packager {
         }
         Files.writeString(distribution, distribution(Files.readString(distribution), app.name(), license));
 
-        Path pkg = context.output(app.fileName() + "-" + app.version() + ".pkg");
+        Path pkg = context.output(app.fileName() + "-" + app.version() + "-" + context.arch().macos() + ".pkg");
         List<String> command = new ArrayList<>(List.of(productbuild.toString(), "--distribution", distribution.toString(),
                 "--resources", resources.toString(), "--package-path", packages.toString()));
         if (macos.sign().installerIdentity().isPresent()) {
@@ -74,8 +81,23 @@ public final class PkgPackager implements Packager {
         }
         command.add(pkg.toString());
         Tools.exec(command);
+        signatureWarning(macos, pkg.getFileName().toString()).ifPresent(LOGGER::warn);
         MacBundle.notarize(context, pkg);
         return pkg;
+    }
+
+    /**
+     * The warning of an installer package that is not signed while the application bundle is signed with a
+     * certificate : the installer identity is not set, or it resolves to nothing (a variable or a secret that is not
+     * defined). Empty for a bundle signed ad hoc, which only runs on the machine of the build anyway, and for a signed
+     * package.
+     */
+    static Optional<String> signatureWarning(DesktopPackagingConfig.Macos macos, String fileName) {
+        if (!MacBundle.hasIdentity(macos.sign()) || macos.sign().installerIdentity().isPresent()) {
+            return Optional.empty();
+        }
+        return Optional.of(fileName + " is not signed : Gatekeeper blocks it on the machines that download it. Set"
+                + " quarkus.desktop.packaging.macos.sign.installer-identity to a Developer ID Installer identity");
     }
 
     /**

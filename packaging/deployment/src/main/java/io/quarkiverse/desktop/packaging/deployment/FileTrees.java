@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -57,13 +58,28 @@ public final class FileTrees {
     }
 
     /**
-     * Deletes a file or a directory and its content, if it exists.
+     * Deletes a file or a directory and its content, if it exists. A link is deleted, not the files that it links to :
+     * a symbolic link, or a junction of Windows (a directory made with {@code mklink /J}).
      */
     public static void delete(Path path) throws IOException {
         if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
             return;
         }
         Files.walkFileTree(path, new SimpleFileVisitor<>() {
+
+            @Override
+            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+                if (attributes.isOther()) {
+                    // a junction, which Java takes for a directory : the link is deleted, the files of its target stay
+                    try {
+                        Files.delete(directory);
+                        return FileVisitResult.SKIP_SUBTREE;
+                    } catch (DirectoryNotEmptyException e) {
+                        // a directory with another reparse point (a folder of a cloud storage) : its content is deleted
+                    }
+                }
+                return FileVisitResult.CONTINUE;
+            }
 
             @Override
             public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {

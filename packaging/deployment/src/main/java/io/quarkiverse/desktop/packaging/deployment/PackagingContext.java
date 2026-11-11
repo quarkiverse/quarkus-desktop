@@ -3,6 +3,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.function.Supplier;
 
 /**
  * What the packages of a build share : the application, its target, the tools and the directories.
@@ -15,6 +16,16 @@ public final class PackagingContext {
 
     private final TargetOs os;
 
+    /**
+     * Reads the architecture of the application, when a packager first asks for it.
+     */
+    private final Supplier<Arch> archSupplier;
+
+    /**
+     * The architecture of the application, once read.
+     */
+    private Arch arch;
+
     private final Tools tools;
 
     private final IconSet icons;
@@ -23,11 +34,15 @@ public final class PackagingContext {
 
     private final Path outputDirectory;
 
-    public PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Tools tools, IconSet icons,
-            Path projectDirectory, Path outputDirectory) {
+    /**
+     * @param arch reads the architecture of the application : the one of its native executable, or of the build
+     */
+    public PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Supplier<Arch> arch, Tools tools,
+            IconSet icons, Path projectDirectory, Path outputDirectory) {
         this.config = config;
         this.app = app;
         this.os = os;
+        this.archSupplier = arch;
         this.tools = tools;
         this.icons = icons;
         this.projectDirectory = projectDirectory;
@@ -50,13 +65,16 @@ public final class PackagingContext {
     }
 
     /**
-     * The architecture of the application : the one of the build, which only the packagers ask for (the application
-     * image is built on any architecture).
+     * The architecture of the application : the one of its native executable, or of the build in JVM mode, which only
+     * the packagers ask for (the application image is built on any architecture).
      *
      * @throws PackagingException for an architecture other than x64 and arm64
      */
     public Arch arch() {
-        return Arch.host();
+        if (arch == null) {
+            arch = archSupplier.get();
+        }
+        return arch;
     }
 
     public Tools tools() {

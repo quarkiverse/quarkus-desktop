@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
 import java.util.jar.JarFile;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -32,11 +33,13 @@ import org.junit.jupiter.api.io.TempDir;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.TestConfig;
+import io.quarkiverse.desktop.packaging.deployment.Tools;
 import io.quarkiverse.desktop.packaging.deployment.macos.MachOTest.Signature;
 
 /**
  * The signature of the application bundle and its notarization : the macOS libraries inside the jars, the renewed ad
- * hoc signature of {@code jpackage}, the command of {@code notarytool}.
+ * hoc signature of {@code jpackage}, the command of {@code notarytool} and the answer of the notary service, the
+ * identities that it needs, and the warnings of the packages that are not notarized.
  */
 class MacSignatureTest {
 
@@ -236,5 +239,223 @@ class MacSignatureTest {
                 "--wait", "--timeout", "45m"),
                 MacBundle.notarizeCommand(xcrun, dmg, "acme",
                         config.macos().notarize().timeout()));
+    }
+
+    /**
+     * The identity of an application signed with a certificate.
+     */
+    static final String IDENTITY = "Developer ID Application: Acme (ABCDE12345)";
+
+    /**
+     * The identity of an installer package signed with a certificate.
+     */
+    static final String INSTALLER_IDENTITY = "Developer ID Installer: Acme (ABCDE12345)";
+
+    /**
+     * The identifier of a submission to the notary service.
+     */
+    static final String ID = "2efe2717-52ef-43a5-96dc-0797e4ca1041";
+
+    /**
+     * The output of {@code notarytool submit} when the upload fails.
+     */
+    static final String UNAUTHORIZED = """
+            Conducting pre-submission checks for Acme.dmg and initiating connection to the Apple notary service...
+            Error: HTTP status code: 401. Unable to authenticate. Invalid credentials.
+            """;
+
+    /**
+     * The log of a submission that the notary service did not accept.
+     */
+    static final String LOG = """
+            {
+              "jobId": "2efe2717-52ef-43a5-96dc-0797e4ca1041",
+              "status": "Invalid",
+              "issues": [
+                {
+                  "severity": "error",
+                  "path": "Acme.dmg/Acme Editor.app/Contents/MacOS/Acme Editor",
+                  "message": "The signature does not include a secure timestamp."
+                }
+              ]
+            }
+            """;
+
+    /**
+     * The output of {@code notarytool submit --wait}, with the given answer of the notary service.
+     */
+    static String submitted(String status) {
+        return """
+                Conducting pre-submission checks for Acme.dmg and initiating connection to the Apple notary service...
+                Submission ID received
+                  id: %1$s
+                Upload progress: 100.00%% (12.3 MB of 12.3 MB)
+                Successfully uploaded file
+                  id: %1$s
+                  path: /Users/acme/editor/target/packaging/Acme.dmg
+                Waiting for processing to complete.
+                Current status: In Progress.....
+                Current status: %2$s........Processing complete
+                  id: %1$s
+                  status: %2$s
+                """.formatted(ID, status);
+    }
+
+    /**
+     * A stand-in of the tools : the results of the given commands, and the commands that it ran.
+     */
+    static Function<List<String>, Tools.Result> tools(List<List<String>> runs, Map<List<String>, Tools.Result> results) {
+        return command -> {
+            runs.add(command);
+            Tools.Result result = results.get(command);
+            if (result == null) {
+                throw new AssertionError("Unexpected command : " + command);
+            }
+            return result;
+        };
+    }
+
+    /**
+     * The answer of the notary service is the last status of the output of {@code notarytool}, not the progress of the
+     * wait, and the identifier of the submission is the first one.
+     */
+    @Test
+    void theAnswerOfTheNotaryService() {
+        assertEquals(Optional.of("Accepted"), MacBundle.notarizationStatus(submitted("Accepted")));
+        assertEquals(Optional.of("Invalid"), MacBundle.notarizationStatus(submitted("Invalid")));
+        assertEquals(Optional.of("In Progress"), MacBundle.notarizationStatus(submitted("In Progress")));
+        assertEquals(Optional.of(ID), MacBundle.submissionId(submitted("Invalid")));
+        assertEquals(Optional.of("Invalid"), MacBundle.notarizationStatus(submitted("Invalid").replace("\n", "\r\n")));
+        // an upload that failed
+        assertEquals(Optional.empty(), MacBundle.notarizationStatus(UNAUTHORIZED));
+        assertEquals(Optional.empty(), MacBundle.submissionId(UNAUTHORIZED));
+        assertEquals(Optional.empty(), MacBundle.notarizationStatus(""));
+    }
+
+    /**
+     * The ticket is stapled to a file that the notary service accepted. The build fails with the log of the submission
+     * when the service did not accept it, whatever the exit code of {@code notarytool}, and with the output of
+     * {@code notarytool} when the upload or the wait failed.
+     */
+    @Test
+    void onlyAFileThatTheNotaryServiceAcceptedIsStapled() {
+        Path xcrun = Path.of("/usr/bin/xcrun");
+        Path dmg = Path.of("target", "packaging", "Acme.dmg");
+        List<String> submit = MacBundle.notarizeCommand(xcrun, dmg, "acme", Optional.empty());
+        List<String> staple = List.of(xcrun.toString(), "stapler", "staple", dmg.toString());
+        List<String> log = List.of(xcrun.toString(), "notarytool", "log", ID, "--keychain-profile", "acme");
+        Tools.Result stapled = new Tools.Result(0, "The staple and validate action worked!\n");
+        List<List<String>> runs = new ArrayList<>();
+        MacBundle.notarize(xcrun, dmg, "acme", Optional.empty(), tools(runs, Map.of(submit,
+                new Tools.Result(0, submitted("Accepted")), staple, stapled)));
+        assertEquals(List.of(submit, staple), runs);
+        // an output without a status, without an error : stapler checks that there is a ticket
+        runs.clear();
+        MacBundle.notarize(xcrun, dmg, "acme", Optional.empty(), tools(runs, Map.of(submit,
+                new Tools.Result(0, "Processing complete\n"), staple, stapled)));
+        assertEquals(List.of(submit, staple), runs);
+
+        for (int exitCode : new int[] { 0, 1 }) {
+            runs.clear();
+            PackagingException rejected = assertThrows(PackagingException.class, () -> MacBundle.notarize(xcrun, dmg,
+                    "acme", Optional.empty(), tools(runs, Map.of(submit, new Tools.Result(exitCode, submitted("Invalid")),
+                            log, new Tools.Result(0, LOG)))));
+            assertEquals(List.of(submit, log), runs);
+            assertEquals("The notary service did not accept Acme.dmg (status Invalid, submission " + ID + ") : fix the"
+                    + " problems of its log, and build again :\n" + LOG.strip(), rejected.getMessage());
+        }
+        // a log that cannot be fetched : the output of notarytool
+        runs.clear();
+        PackagingException withoutLog = assertThrows(PackagingException.class, () -> MacBundle.notarize(xcrun, dmg,
+                "acme", Optional.empty(), tools(runs, Map.of(submit, new Tools.Result(0, submitted("Rejected")), log,
+                        new Tools.Result(69, "Error: Submission log is not yet available.\n")))));
+        assertEquals(List.of(submit, log), runs);
+        assertTrue(withoutLog.getMessage().startsWith("The notary service did not accept Acme.dmg (status Rejected,"
+                + " submission " + ID + ")"), withoutLog.getMessage());
+        assertTrue(withoutLog.getMessage().endsWith(":\n" + submitted("Rejected").strip()), withoutLog.getMessage());
+
+        // the upload failed, or the wait ended before the answer (--timeout) : nothing else runs
+        for (String output : List.of(UNAUTHORIZED, submitted("In Progress"))) {
+            runs.clear();
+            Tools.Result failure = new Tools.Result(1, output);
+            PackagingException failed = assertThrows(PackagingException.class, () -> MacBundle.notarize(xcrun, dmg,
+                    "acme", Optional.empty(), tools(runs, Map.of(submit, failure))));
+            assertEquals(List.of(submit), runs);
+            assertEquals(Tools.failure(submit, failure).getMessage(), failed.getMessage());
+        }
+        runs.clear();
+        Tools.Result noTicket = new Tools.Result(65, "The staple and validate action failed! Error 65.\n");
+        PackagingException notStapled = assertThrows(PackagingException.class, () -> MacBundle.notarize(xcrun, dmg,
+                "acme", Optional.empty(), tools(runs, Map.of(submit, new Tools.Result(0, submitted("Accepted")), staple,
+                        noTicket))));
+        assertEquals(Tools.failure(staple, noTicket).getMessage(), notStapled.getMessage());
+    }
+
+    /**
+     * The notary service rejects a bundle that is not signed with a certificate, and an installer package that is not
+     * signed : the build fails before the packages are built, rather than after the upload and the wait.
+     */
+    @Test
+    void theNotarizationNeedsDeveloperIdIdentities() {
+        for (Map<String, String> properties : List.of(Map.<String, String> of(), Map.of("macos.sign.identity", IDENTITY))) {
+            DesktopPackagingConfig config = TestConfig.of(properties);
+            assertEquals(Optional.empty(), MacBundle.notarizationProblem(config.macos(), false));
+            assertEquals(Optional.empty(), MacBundle.notarizationProblem(config.macos(), true));
+        }
+
+        DesktopPackagingConfig adHoc = TestConfig.of(Map.of("macos.notarize.keychain-profile", "acme"));
+        assertEquals(Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the application"
+                + " bundle is signed ad hoc, which the notary service rejects : set"
+                + " quarkus.desktop.packaging.macos.sign.identity to a Developer ID Application identity"),
+                MacBundle.notarizationProblem(adHoc.macos(), false));
+        assertEquals(MacBundle.notarizationProblem(adHoc.macos(), false),
+                MacBundle.notarizationProblem(adHoc.macos(), true));
+        DesktopPackagingConfig unsigned = TestConfig.of(Map.of("macos.notarize.keychain-profile", "acme",
+                "macos.sign.identity", IDENTITY, "macos.sign.enabled", "false"));
+        assertEquals(Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the application"
+                + " bundle is not signed (quarkus.desktop.packaging.macos.sign.enabled=false), which the notary service"
+                + " rejects : sign it with a Developer ID Application identity"
+                + " (quarkus.desktop.packaging.macos.sign.identity)"),
+                MacBundle.notarizationProblem(unsigned.macos(), false));
+
+        DesktopPackagingConfig signed = TestConfig.of(Map.of("macos.notarize.keychain-profile", "acme",
+                "macos.sign.identity", IDENTITY));
+        assertEquals(Optional.empty(), MacBundle.notarizationProblem(signed.macos(), false));
+        assertEquals(Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the installer"
+                + " package is not signed, which the notary service rejects : set"
+                + " quarkus.desktop.packaging.macos.sign.installer-identity to a Developer ID Installer identity"),
+                MacBundle.notarizationProblem(signed.macos(), true));
+        DesktopPackagingConfig released = TestConfig.of(Map.of("macos.notarize.keychain-profile", "acme",
+                "macos.sign.identity", IDENTITY, "macos.sign.installer-identity", INSTALLER_IDENTITY));
+        assertEquals(Optional.empty(), MacBundle.notarizationProblem(released.macos(), true));
+    }
+
+    /**
+     * The packages of a bundle signed with a certificate get a warning when they are not notarized, or not signed : a
+     * property of a release build that resolves to nothing, such as a secret that is not defined. Not the ones of a
+     * bundle signed ad hoc, the default.
+     */
+    @Test
+    void thePackagesOfABundleSignedWithACertificateThatAreNotNotarizedGetAWarning() {
+        for (Map<String, String> properties : List.of(Map.<String, String> of(), Map.of("macos.sign.identity", IDENTITY,
+                "macos.sign.enabled", "false"))) {
+            DesktopPackagingConfig config = TestConfig.of(properties);
+            assertEquals(Optional.empty(), MacBundle.notarizationWarning(config.macos(), "Acme.dmg"));
+            assertEquals(Optional.empty(), PkgPackager.signatureWarning(config.macos(), "Acme.pkg"));
+        }
+
+        DesktopPackagingConfig signed = TestConfig.of(Map.of("macos.sign.identity", IDENTITY,
+                "macos.notarize.keychain-profile", "", "macos.sign.installer-identity", ""));
+        assertEquals(Optional.of("Acme.dmg is not notarized : Gatekeeper blocks it on the machines that download it. Set"
+                + " quarkus.desktop.packaging.macos.notarize.keychain-profile to the keychain profile of the credentials"
+                + " of the notary service"), MacBundle.notarizationWarning(signed.macos(), "Acme.dmg"));
+        assertEquals(Optional.of("Acme.pkg is not signed : Gatekeeper blocks it on the machines that download it. Set"
+                + " quarkus.desktop.packaging.macos.sign.installer-identity to a Developer ID Installer identity"),
+                PkgPackager.signatureWarning(signed.macos(), "Acme.pkg"));
+
+        DesktopPackagingConfig released = TestConfig.of(Map.of("macos.sign.identity", IDENTITY,
+                "macos.notarize.keychain-profile", "acme", "macos.sign.installer-identity", INSTALLER_IDENTITY));
+        assertEquals(Optional.empty(), MacBundle.notarizationWarning(released.macos(), "Acme.dmg"));
+        assertEquals(Optional.empty(), PkgPackager.signatureWarning(released.macos(), "Acme.pkg"));
     }
 }

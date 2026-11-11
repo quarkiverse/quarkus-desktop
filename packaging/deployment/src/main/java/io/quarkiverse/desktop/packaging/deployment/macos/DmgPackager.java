@@ -11,6 +11,7 @@ import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
+import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -38,6 +39,7 @@ public final class DmgPackager implements Packager {
 
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
+        MacBundle.checkNotarization(context);
         Path hdiutil = context.tools().require("hdiutil", "hdiutil is part of macOS", Path.of("/usr/bin/hdiutil"));
         AppInfo app = context.app();
         Path work = context.workDirectory("dmg");
@@ -45,15 +47,35 @@ public final class DmgPackager implements Packager {
         MacBundle.copy(context, image.root(), volume.resolve(image.root().getFileName().toString()));
         Files.createSymbolicLink(volume.resolve("Applications"), Path.of("/Applications"));
 
-        Path dmg = context.output(app.fileName() + "-" + app.version() + ".dmg");
+        Path dmg = context.output(app.fileName() + "-" + app.version() + "-" + context.arch().macos() + ".dmg");
         // a compressed image, of a file system that every version of macOS mounts
-        exec(List.of(hdiutil.toString(), "create", "-volname", app.name(), "-srcfolder", volume.toString(), "-ov",
-                "-format", "UDZO", "-fs", "HFS+", dmg.toString()), command -> Tools.run(null, Map.of(), command), PAUSE);
+        create(volume, List.of(hdiutil.toString(), "create", "-volname", app.name(), "-srcfolder", volume.toString(),
+                "-ov", "-format", "UDZO", "-fs", "HFS+", dmg.toString()), command -> Tools.run(null, Map.of(), command),
+                PAUSE);
         if (MacBundle.hasIdentity(context)) {
             MacBundle.codesign(context, dmg, null);
         }
         MacBundle.notarize(context, dmg);
         return dmg;
+    }
+
+    /**
+     * Builds the disk image with {@code hdiutil create}, then deletes its staging folder, whether the image is built or
+     * not : the link of the folder to {@code /Applications} would stay in the output directory otherwise, where a tool
+     * that archives the directory and follows the links would take {@code /Applications} with it. The link itself is
+     * deleted, not followed.
+     *
+     * @param volume the staging folder : the content of the disk image
+     * @param run runs a command, whatever its exit code
+     * @param pause the pause before the second attempt, in milliseconds
+     */
+    static void create(Path volume, List<String> command, Function<List<String>, Tools.Result> run, long pause)
+            throws IOException {
+        try {
+            exec(command, run, pause);
+        } finally {
+            FileTrees.delete(volume);
+        }
     }
 
     /**

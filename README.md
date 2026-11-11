@@ -255,7 +255,7 @@ tests.
 
 The `quarkus-desktop-packaging` extension builds the installers of the application at the end of the build, from its
 native executable (`./mvnw package -Dnative`) or from its jar with a Java runtime (`./mvnw package`, with `jpackage`). It
-does not depend on a toolkit: it packages AWT, Swing, SWT and JavaFX applications.
+does not depend on a toolkit: it packages AWT, Swing, SWT and JavaFX applications (JavaFX ones are not verified yet).
 
 ```properties
 quarkus.desktop.packaging.name=Acme Editor
@@ -265,14 +265,15 @@ quarkus.desktop.packaging.vendor=Acme
 quarkus.desktop.packaging.formats=msi,exe,msix,dmg,pkg,deb,rpm,appimage,flatpak,snap
 ```
 
-The packages are in `target/packaging`. Each format is built on its operating system with its tool (WiX, Inno Setup,
-the Windows SDK, `hdiutil`, `pkgbuild`, `dpkg-deb`, `rpmbuild`, `appimagetool`, `flatpak`, `snapcraft`); the icons of
-every format come from one PNG file (`src/main/packaging/icon.png`), and the Windows native executable gets the icon
-and the version information of the application. The page
+The packages are in `target/packaging` (`build/packaging` with Gradle). Each format is built on its operating system
+with its tool (WiX, Inno Setup, the Windows SDK, `hdiutil`, `pkgbuild`, `dpkg-deb`, `rpmbuild`, `appimagetool`,
+`flatpak`, `snapcraft`); the icons of every format come from one PNG file (`src/main/packaging/icon.png`), and the
+Windows native executable gets the icon and the version information of the application. Not verified yet: the snap,
+signing with a Developer ID certificate and the notarization, and Gradle builds. The page
 [Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)
 ([docs/modules/ROOT/pages/packaging.adoc](docs/modules/ROOT/pages/packaging.adoc)) covers the application image, the
-Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, and the dependencies of the Linux
-packages.
+Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, the dependencies of the Linux
+packages, and what is verified.
 
 ## Platforms
 

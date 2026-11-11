@@ -17,6 +17,9 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
@@ -27,6 +30,7 @@ import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.Tools;
@@ -46,12 +50,42 @@ public final class MacBundle {
     private static final String CATEGORY_PREFIX = "public.app-category.";
 
     /**
+     * The value of an entry of a property list that is not an array or a dictionary, after its key : a string, a
+     * number, a date, data or a Boolean.
+     */
+    private static final Pattern SCALAR = Pattern
+            .compile("\\s*(<(string|integer|real|date|data)>[^<]*</\\2>|<(?:string|data|true|false)\\s*/>)");
+
+    /**
+     * The indentation of the keys of a property list.
+     */
+    private static final Pattern KEY_INDENTATION = Pattern.compile("^([ \\t]*)<key>", Pattern.MULTILINE);
+
+    /**
      * The entitlements of a JVM with the hardened runtime : the just-in-time compiler writes executable memory, and
      * the JVM loads the native libraries of the jars, which other teams signed.
      */
     static final List<String> JVM_ENTITLEMENTS = List.of("com.apple.security.cs.allow-jit",
             "com.apple.security.cs.allow-unsigned-executable-memory", "com.apple.security.cs.disable-library-validation",
             "com.apple.security.cs.allow-dyld-environment-variables");
+
+    /**
+     * The entitlements of a native executable with the hardened runtime : it loads libraries that are not in the bundle,
+     * which the extension does not sign and the library validation of the hardened runtime refuses, such as the ones
+     * that SWT extracts to the home directory of the user.
+     */
+    static final List<String> NATIVE_ENTITLEMENTS = List.of("com.apple.security.cs.disable-library-validation");
+
+    /**
+     * The status of a submission in the output of {@code notarytool} ({@code status: Accepted}) : at the start of a
+     * line, unlike the progress of the wait ({@code Current status: In Progress...}).
+     */
+    private static final Pattern STATUS = Pattern.compile("(?m)^[ \\t]*status:[ \\t]*(\\S.*?)[ \\t]*$");
+
+    /**
+     * The identifier of a submission in the output of {@code notarytool} ({@code id: <UUID>}), at the start of a line.
+     */
+    private static final Pattern SUBMISSION_ID = Pattern.compile("(?m)^[ \\t]*id:[ \\t]*([0-9a-fA-F-]{36})[ \\t]*$");
 
     private MacBundle() {
     }
@@ -61,6 +95,21 @@ public final class MacBundle {
      */
     public static String version(AppInfo app) {
         return app.numericVersion(3);
+    }
+
+    /**
+     * The bundle identifier : the identifier of the application with letters, digits, dashes and dots only, as macOS
+     * and {@code jpackage} require it. An element loses its leading underscores, as an element of a bundle identifier
+     * may start with a digit ({@code org._7zip.Editor} is {@code org.7zip.Editor}), and its other underscores are
+     * dashes ({@code org.acme.my_app} is {@code org.acme.my-app}).
+     */
+    public static String identifier(AppInfo app) {
+        List<String> elements = new ArrayList<>();
+        for (String element : app.identifier().split("\\.", -1)) {
+            String stripped = element.replaceFirst("^_+", "");
+            elements.add((stripped.isEmpty() ? element : stripped).replace('_', '-'));
+        }
+        return String.join(".", elements);
     }
 
     /**
@@ -74,7 +123,7 @@ public final class MacBundle {
         strings.put("CFBundleDevelopmentRegion", "en");
         strings.put("CFBundleExecutable", executable);
         strings.put("CFBundleIconFile", icon);
-        strings.put("CFBundleIdentifier", app.identifier());
+        strings.put("CFBundleIdentifier", identifier(app));
         strings.put("CFBundleInfoDictionaryVersion", "6.0");
         strings.put("CFBundleName", app.name());
         strings.put("CFBundleDisplayName", app.name());
@@ -123,6 +172,58 @@ public final class MacBundle {
     }
 
     /**
+     * The information property list that {@code jpackage} wrote in the bundle of a JVM application, with the entries
+     * of the configuration that {@link #infoPlist} writes in the bundle of a native executable : the minimum version
+     * of macOS ({@code LSMinimumSystemVersion}), then the entries of {@code info-plist}, strings except {@code true}
+     * and {@code false}, which are Booleans. An entry replaces the value of its key, or is added at the end of the
+     * dictionary ; the property list is as it is without such entries.
+     *
+     * @throws PackagingException when the value of the key of an entry is an array or a dictionary, or when the
+     *         property list has no dictionary
+     */
+    public static String jvmInfoPlist(String plist, DesktopPackagingConfig.Macos config) {
+        Map<String, String> values = new LinkedHashMap<>();
+        config.minimumSystemVersion().ifPresent(
+                version -> values.put("LSMinimumSystemVersion", "<string>" + Xml.escape(version) + "</string>"));
+        for (Map.Entry<String, String> entry : config.infoPlist().entrySet()) {
+            String value = entry.getValue();
+            values.put(entry.getKey(), value.equals("true") || value.equals("false") ? "<" + value + "/>"
+                    : "<string>" + Xml.escape(value) + "</string>");
+        }
+        if (values.isEmpty()) {
+            return plist;
+        }
+        Matcher indentation = KEY_INDENTATION.matcher(plist);
+        String indent = indentation.find() ? indentation.group(1) : "    ";
+        StringBuilder result = new StringBuilder(plist);
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            String key = "<key>" + Xml.escape(entry.getKey()) + "</key>";
+            int index = result.indexOf(key);
+            if (index >= 0) {
+                Matcher value = SCALAR.matcher(result).region(index + key.length(), result.length());
+                if (!value.lookingAt()) {
+                    throw new PackagingException("quarkus.desktop.packaging.macos.info-plist." + entry.getKey() + " : the"
+                            + " value of " + entry.getKey() + " in the Info.plist of the bundle is an array or a"
+                            + " dictionary, which the configuration cannot replace : remove the property");
+                }
+                result.replace(value.start(1), value.end(1), entry.getValue());
+                continue;
+            }
+            int end = result.lastIndexOf("</dict>");
+            if (end < 0) {
+                throw new PackagingException("The Info.plist of the bundle has no dictionary, which"
+                        + " quarkus.desktop.packaging.macos.minimum-system-version and"
+                        + " quarkus.desktop.packaging.macos.info-plist are written in : remove them");
+            }
+            // at the start of the line of the end of the dictionary, or just before it
+            int line = result.lastIndexOf("\n", end) + 1;
+            result.insert(result.substring(line, end).isBlank() ? line : end,
+                    indent + key + "\n" + indent + entry.getValue() + "\n");
+        }
+        return result.toString();
+    }
+
+    /**
      * An entitlements property list.
      */
     static String entitlements(List<String> entitlements) {
@@ -135,10 +236,30 @@ public final class MacBundle {
     }
 
     /**
+     * The entitlements of the application when the configuration has none : the ones of a JVM, or the one of a native
+     * executable signed with a certificate. An ad hoc signature has no hardened runtime : a native executable needs none
+     * then.
+     *
+     * @param certificate whether the application is signed with a certificate, rather than ad hoc
+     */
+    static List<String> defaultEntitlements(boolean nativeExecutable, boolean certificate) {
+        if (!nativeExecutable) {
+            return JVM_ENTITLEMENTS;
+        }
+        return certificate ? NATIVE_ENTITLEMENTS : List.of();
+    }
+
+    /**
      * Whether the configuration signs with a certificate, rather than ad hoc.
      */
     static boolean hasIdentity(PackagingContext context) {
-        var sign = context.config().macos().sign();
+        return hasIdentity(context.config().macos().sign());
+    }
+
+    /**
+     * Whether the signature of the configuration is made with a certificate, rather than ad hoc.
+     */
+    static boolean hasIdentity(DesktopPackagingConfig.MacSign sign) {
         return sign.enabled() && !sign.identity().equals("-");
     }
 
@@ -186,9 +307,12 @@ public final class MacBundle {
                 throw new PackagingException("quarkus.desktop.packaging.macos.sign.entitlements : " + entitlements
                         + " not found");
             }
-        } else if (!image.nativeExecutable()) {
-            entitlements = FileTrees.write(context.workDirectory("macos-sign").resolve("entitlements.plist"),
-                    entitlements(JVM_ENTITLEMENTS));
+        } else {
+            List<String> defaults = defaultEntitlements(image.nativeExecutable(), hasIdentity(context));
+            if (!defaults.isEmpty()) {
+                entitlements = FileTrees.write(context.workDirectory("macos-sign").resolve("entitlements.plist"),
+                        entitlements(defaults));
+            }
         }
         codesign(context, bundle, entitlements);
     }
@@ -329,22 +453,151 @@ public final class MacBundle {
     }
 
     /**
+     * Fails the build before a macOS package is built, when the packages are to be notarized and the notary service
+     * would reject them : rather than after the upload of the first one and the wait for the answer.
+     *
+     * @throws PackagingException when the application bundle or the installer package is not signed with a certificate
+     */
+    static void checkNotarization(PackagingContext context) {
+        boolean installerPackage = context.config().formats().orElse(List.of()).contains(PackageFormat.PKG);
+        Optional<String> problem = notarizationProblem(context.config().macos(), installerPackage);
+        if (problem.isPresent()) {
+            throw new PackagingException(problem.get());
+        }
+    }
+
+    /**
+     * Why the notary service would reject the packages, when the configuration has the keychain profile of its
+     * credentials : it rejects an application bundle that is not signed with a certificate (a Developer ID Application
+     * identity), and an installer package that is not signed (with a Developer ID Installer identity).
+     *
+     * @param installerPackage whether an installer package is built
+     * @return the message, or empty when the packages are not notarized or are signed
+     */
+    static Optional<String> notarizationProblem(DesktopPackagingConfig.Macos macos, boolean installerPackage) {
+        if (macos.notarize().keychainProfile().isEmpty()) {
+            return Optional.empty();
+        }
+        if (!macos.sign().enabled()) {
+            return Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the application bundle"
+                    + " is not signed (quarkus.desktop.packaging.macos.sign.enabled=false), which the notary service"
+                    + " rejects : sign it with a Developer ID Application identity"
+                    + " (quarkus.desktop.packaging.macos.sign.identity)");
+        }
+        if (!hasIdentity(macos.sign())) {
+            return Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the application bundle"
+                    + " is signed ad hoc, which the notary service rejects : set"
+                    + " quarkus.desktop.packaging.macos.sign.identity to a Developer ID Application identity");
+        }
+        if (installerPackage && macos.sign().installerIdentity().isEmpty()) {
+            return Optional.of("quarkus.desktop.packaging.macos.notarize.keychain-profile is set, but the installer package"
+                    + " is not signed, which the notary service rejects : set"
+                    + " quarkus.desktop.packaging.macos.sign.installer-identity to a Developer ID Installer identity");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * The warning of a package that is not notarized while the application bundle is signed with a certificate : the
+     * keychain profile is not set, or it resolves to nothing (a variable or a secret that is not defined). Empty for a
+     * bundle signed ad hoc, which only runs on the machine of the build anyway, and for a notarized package.
+     */
+    static Optional<String> notarizationWarning(DesktopPackagingConfig.Macos macos, String fileName) {
+        if (!hasIdentity(macos.sign()) || macos.notarize().keychainProfile().isPresent()) {
+            return Optional.empty();
+        }
+        return Optional.of(fileName + " is not notarized : Gatekeeper blocks it on the machines that download it. Set"
+                + " quarkus.desktop.packaging.macos.notarize.keychain-profile to the keychain profile of the credentials of"
+                + " the notary service");
+    }
+
+    /**
      * Submits a disk image or an installer package to the notary service of Apple, waits for its answer and staples
      * the ticket to the file, when the configuration has the keychain profile of the credentials. The answer, with
-     * the identifier of the submission that {@code xcrun notarytool log} takes, is logged.
+     * the identifier of the submission, is logged. Without a keychain profile, the package of a bundle signed with a
+     * certificate gets a warning.
+     *
+     * @throws PackagingException when the notary service does not accept the file, with the log of the submission
      */
     static void notarize(PackagingContext context, Path file) {
-        var notarize = context.config().macos().notarize();
-        if (notarize.keychainProfile().isEmpty()) {
+        var macos = context.config().macos();
+        if (macos.notarize().keychainProfile().isEmpty()) {
+            notarizationWarning(macos, file.getFileName().toString()).ifPresent(LOGGER::warn);
             return;
         }
         Path xcrun = context.tools().require("xcrun", "install the Xcode command line tools : xcode-select --install",
                 Path.of("/usr/bin/xcrun"));
         LOGGER.infof("Submitting %s to the notary service of Apple : the build waits for its answer", file.getFileName());
-        Tools.Result result = Tools.exec(notarizeCommand(xcrun, file, notarize.keychainProfile().get(),
-                notarize.timeout()));
+        notarize(xcrun, file, macos.notarize().keychainProfile().get(), macos.notarize().timeout(),
+                command -> Tools.run(null, Map.of(), command));
+        LOGGER.infof("%s is notarized : the ticket of the notary service is stapled to it", file.getFileName());
+    }
+
+    /**
+     * Submits a file to the notary service, waits for its answer, and staples the ticket to the file. The answer is
+     * the status that {@code notarytool} writes, rather than its exit code : it is not always an error when the
+     * service does not accept the file.
+     *
+     * @param timeout how long it waits, as {@code notarytool} takes it ({@code 30m}), or empty to wait for the answer
+     * @param run runs a command, whatever its exit code
+     * @throws PackagingException when the notary service does not accept the file, with the log of the submission, and
+     *         when {@code notarytool} or {@code stapler} fails
+     */
+    static void notarize(Path xcrun, Path file, String keychainProfile, Optional<String> timeout,
+            Function<List<String>, Tools.Result> run) {
+        List<String> submit = notarizeCommand(xcrun, file, keychainProfile, timeout);
+        Tools.Result result = run.apply(submit);
         LOGGER.infof("notarytool : %s", result.output().strip());
-        Tools.exec(List.of(xcrun.toString(), "stapler", "staple", file.toString()));
+        Optional<String> status = notarizationStatus(result.output());
+        // the answer of the notary service, unless the wait ended before it (In Progress)
+        if (status.isPresent() && !status.get().equals("Accepted") && !status.get().equals("In Progress")) {
+            // the log of the submission lists the problems, the output of notarytool stands for it when it is missing
+            Optional<String> id = submissionId(result.output());
+            String log = result.output();
+            if (id.isPresent()) {
+                Tools.Result fetched = run.apply(List.of(xcrun.toString(), "notarytool", "log", id.get(),
+                        "--keychain-profile", keychainProfile));
+                if (fetched.succeeded()) {
+                    log = fetched.output();
+                }
+            }
+            throw new PackagingException("The notary service did not accept " + file.getFileName() + " (status "
+                    + status.get() + id.map(submission -> ", submission " + submission).orElse("")
+                    + ") : fix the problems of its log, and build again :\n" + log.strip());
+        }
+        if (!result.succeeded()) {
+            // the upload or the wait failed : the output has the identifier of the submission, when there is one
+            throw Tools.failure(submit, result);
+        }
+        // accepted, or an output without a status : stapler checks that the notary service has a ticket for the file
+        List<String> staple = List.of(xcrun.toString(), "stapler", "staple", file.toString());
+        Tools.Result stapled = run.apply(staple);
+        if (!stapled.succeeded()) {
+            throw Tools.failure(staple, stapled);
+        }
+    }
+
+    /**
+     * The status of a submission in the output of {@code notarytool submit --wait} : the last one, the answer of the
+     * notary service ({@code Accepted}, {@code Invalid}, {@code Rejected}) or {@code In Progress} when the wait ended
+     * before it, and empty when the output has none (an upload that failed).
+     */
+    static Optional<String> notarizationStatus(String output) {
+        Matcher matcher = STATUS.matcher(output);
+        String status = null;
+        while (matcher.find()) {
+            status = matcher.group(1);
+        }
+        return Optional.ofNullable(status);
+    }
+
+    /**
+     * The identifier of a submission in the output of {@code notarytool submit}, which {@code notarytool log} takes :
+     * empty when the output has none (an upload that did not start).
+     */
+    static Optional<String> submissionId(String output) {
+        Matcher matcher = SUBMISSION_ID.matcher(output);
+        return matcher.find() ? Optional.of(matcher.group(1)) : Optional.empty();
     }
 
     /**

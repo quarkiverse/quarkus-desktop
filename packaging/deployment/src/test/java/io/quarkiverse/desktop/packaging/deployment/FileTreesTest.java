@@ -8,9 +8,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledOnOs;
+import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
 class FileTreesTest {
@@ -62,6 +65,42 @@ class FileTreesTest {
         FileTrees.copy(tree, image);
         assertTrue(Files.isRegularFile(image.resolve("libacme.so.1"), LinkOption.NOFOLLOW_LINKS));
         assertEquals(Path.of("libacme.so.1"), Files.readSymbolicLink(image.resolve("libacme.so")));
+    }
+
+    /**
+     * A junction of Windows in an image (to try the application with a data directory) : the next build deletes the
+     * junction, not the files of its target.
+     */
+    @Test
+    @EnabledOnOs(OS.WINDOWS)
+    void aJunctionIsDeletedWithoutItsTarget(@TempDir Path directory) throws IOException, InterruptedException {
+        Path data = Files.createDirectories(directory.resolve("data"));
+        Files.writeString(data.resolve("file.txt"), "data");
+        Path image = Files.createDirectories(directory.resolve("image"));
+        Files.writeString(image.resolve("application.exe"), "application");
+        junction(image.resolve("data"), data);
+        assertTrue(Files.isRegularFile(image.resolve("data/file.txt")));
+
+        FileTrees.emptyDirectory(image);
+        assertEquals(List.of(), FileTrees.files(image));
+        assertEquals("data", Files.readString(data.resolve("file.txt")));
+
+        // a junction at the root of the tree
+        Path root = directory.resolve("root");
+        junction(root, data);
+        FileTrees.delete(root);
+        assertFalse(Files.exists(root, LinkOption.NOFOLLOW_LINKS));
+        assertEquals("data", Files.readString(data.resolve("file.txt")));
+    }
+
+    /**
+     * Makes a junction, which needs no privilege.
+     */
+    private static void junction(Path link, Path target) throws IOException, InterruptedException {
+        Process process = new ProcessBuilder("cmd", "/c", "mklink", "/J", link.toString(), target.toString())
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes());
+        assertEquals(0, process.waitFor(), output);
     }
 
     private static void link(Path link, Path target) throws IOException {

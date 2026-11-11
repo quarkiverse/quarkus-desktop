@@ -5,11 +5,14 @@ import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 
 import org.jboss.logging.Logger;
 
@@ -25,6 +28,13 @@ final class NativeApplicationImage {
 
     private static final Logger LOGGER = Logger.getLogger(NativeApplicationImage.class);
 
+    /**
+     * The Visual C++ runtime libraries of the {@code bin} directory of a JDK for Windows : native-image links every
+     * executable with {@code vcruntime140.dll}, and the libraries of the JDK need the others. They are not part of
+     * Windows : they come with the Visual C++ Redistributable.
+     */
+    static final List<String> VC_RUNTIME = List.of("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll");
+
     private NativeApplicationImage() {
     }
 
@@ -33,9 +43,10 @@ final class NativeApplicationImage {
      *
      * @param executable the native executable, in the build directory
      * @param files the files that the extensions of the application put next to the executable
+     * @param jdkHomes the JDKs that the Visual C++ runtime of a Windows executable is copied from, in this order
      */
-    static ApplicationImage build(PackagingContext context, Path executable, List<NativeExecutableFileBuildItem> files)
-            throws IOException {
+    static ApplicationImage build(PackagingContext context, Path executable, List<NativeExecutableFileBuildItem> files,
+            List<Path> jdkHomes) throws IOException {
         AppInfo app = context.app();
         Path images = context.outputDirectory().resolve("image");
         Path root;
@@ -98,6 +109,10 @@ final class NativeApplicationImage {
             launcher = renameWindowsExecutable(directory, executable.getFileName().toString(), launcher);
         }
         copyContent(context, content);
+        if (context.os() == TargetOs.WINDOWS) {
+            // after the content : a library of the content is copied as it is, and may need the runtime too
+            copyVcRuntime(directory, jdkHomes);
+        }
 
         ApplicationImage image = new ApplicationImage(root, launcher, true);
         if (context.os() == TargetOs.MACOS) {
@@ -131,15 +146,17 @@ final class NativeApplicationImage {
         try (DirectoryStream<Path> libraries = Files.newDirectoryStream(directory, "*.dll")) {
             for (Path library : libraries) {
                 byte[] bytes = Files.readAllBytes(library);
-                if (!PeImports.imports(bytes, built)) {
+                if (!PeImports.imports(bytes, built) && !PeImports.importsUnknownExecutable(bytes, built)) {
                     continue;
                 }
                 Optional<byte[]> changed = PeImports.rename(bytes, built, launcher);
                 if (changed.isEmpty()) {
                     LOGGER.warnf("The executable of the application image is named %s rather than %s : %s is linked with"
                             + " the executable by its file name, which cannot be changed to that one. Name the"
-                            + " executable in the build (quarkus.package.output-name, with"
-                            + " quarkus.package.jar.add-runner-suffix=false)", built, launcher, library.getFileName());
+                            + " executable in the build, with an ASCII name (quarkus.package.output-name, with"
+                            + " quarkus.package.jar.add-runner-suffix=false) : Windows loads the libraries of an"
+                            + " executable whose name is not ASCII only where the ANSI code page is the one of the build",
+                            built, launcher, library.getFileName());
                     Files.move(directory.resolve(launcher), directory.resolve(built));
                     return built;
                 }
@@ -151,6 +168,63 @@ final class NativeApplicationImage {
             Files.write(library.getKey(), library.getValue());
         }
         return launcher;
+    }
+
+    /**
+     * Copies the Visual C++ runtime libraries that the executables and the libraries of the directory import, and that
+     * it does not have (in any case : the ones that Desktop AWT copies stay), from the first JDK that has them, until
+     * the copies need no other ({@code msvcp140.dll} imports {@code vcruntime140.dll} and {@code vcruntime140_1.dll}).
+     * The universal C runtime ({@code ucrtbase.dll}, {@code api-ms-win-crt-*}) is part of Windows.
+     *
+     * @param directory the directory of the executable and of its libraries, in the application image
+     * @param jdkHomes the JDKs that the libraries are copied from, in this order
+     */
+    static void copyVcRuntime(Path directory, List<Path> jdkHomes) throws IOException {
+        Set<String> done = new HashSet<>();
+        boolean copied;
+        do {
+            copied = false;
+            for (String library : missingVcRuntime(directory)) {
+                if (!done.add(library)) {
+                    continue;
+                }
+                Optional<Path> source = jdkHomes.stream().map(home -> home.resolve("bin").resolve(library))
+                        .filter(Files::isRegularFile).findFirst();
+                if (source.isEmpty()) {
+                    LOGGER.warnf("The application image has no %s, which its executable or its libraries import, and no"
+                            + " JDK of the build has it : the application only starts where the Visual C++"
+                            + " Redistributable is installed. Add %s to src/main/packaging/content (or to the"
+                            + " quarkus.desktop.packaging.content-directory)", library, library);
+                    continue;
+                }
+                LOGGER.debugf("Visual C++ runtime of the application image : %s", source.get());
+                FileTrees.copy(source.get(), directory.resolve(library));
+                copied = true;
+            }
+        } while (copied);
+    }
+
+    /**
+     * The Visual C++ runtime libraries that the executables and the libraries of a directory import, and that it does
+     * not have : in lower case, sorted.
+     */
+    static List<String> missingVcRuntime(Path directory) throws IOException {
+        Set<String> files = new HashSet<>();
+        Set<String> imported = new TreeSet<>();
+        try (DirectoryStream<Path> entries = Files.newDirectoryStream(directory)) {
+            for (Path entry : entries) {
+                String name = entry.getFileName().toString().toLowerCase(Locale.ROOT);
+                files.add(name);
+                if ((name.endsWith(".exe") || name.endsWith(".dll")) && Files.isRegularFile(entry)) {
+                    for (String library : PeImports.names(Files.readAllBytes(entry))) {
+                        imported.add(library.toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+        }
+        imported.retainAll(VC_RUNTIME);
+        imported.removeAll(files);
+        return List.copyOf(imported);
     }
 
     /**
