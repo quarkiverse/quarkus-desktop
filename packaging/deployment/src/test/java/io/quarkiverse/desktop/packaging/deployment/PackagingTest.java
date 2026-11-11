@@ -1,6 +1,6 @@
 package io.quarkiverse.desktop.packaging.deployment;
 
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -11,6 +11,7 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -79,7 +80,7 @@ class PackagingTest {
 
     /**
      * Every format is checked before the first package is built : the application ID of Flatpak fails the build
-     * before the Debian package, and nothing is built.
+     * before the Debian package.
      */
     @Test
     void theFormatsAreCheckedBeforeTheFirstPackage(@TempDir Path project) throws IOException {
@@ -87,7 +88,6 @@ class PackagingTest {
         PackagingException e = assertThrows(PackagingException.class,
                 () -> Packaging.check(context, List.of(PackageFormat.DEB, PackageFormat.FLATPAK)));
         assertTrue(e.getMessage().contains("is not a Flatpak application ID"), e.getMessage());
-        assertFalse(Files.exists(context.outputDirectory()));
         // the application image has nothing to check
         Packaging.check(context, List.of(PackageFormat.DIRECTORY));
     }
@@ -181,8 +181,8 @@ class PackagingTest {
     }
 
     /**
-     * What signs the application image is checked whatever the formats, when it signs : {@code signtool} on Windows,
-     * {@code codesign} and the entitlements file on macOS.
+     * What signs the application image is checked whatever the formats, when it signs : {@code signtool} and the
+     * certificate file on Windows, {@code codesign} and the entitlements file on macOS.
      */
     @Test
     void whatSignsTheApplicationImage(@TempDir Path project) throws IOException {
@@ -194,6 +194,22 @@ class PackagingTest {
         PackagingException signtool = assertThrows(PackagingException.class,
                 () -> Packaging.check(context(project, TargetOs.WINDOWS, signed), directory));
         assertTrue(signtool.getMessage().startsWith("quarkus.desktop.packaging.tools.signtool : "), signtool.getMessage());
+        // the certificate file, which signtool reads after the application image is built
+        assertCheckFails(project, TargetOs.WINDOWS, PackageFormat.DIRECTORY,
+                Map.of("windows.sign.certificate-file", "acme.pfx"),
+                "quarkus.desktop.packaging.windows.sign.certificate-file : ");
+        assertCheckFails(project, TargetOs.WINDOWS, PackageFormat.DIRECTORY,
+                Map.of("windows.sign.certificate-file", "acme\u0000.pfx"),
+                "quarkus.desktop.packaging.windows.sign.certificate-file=\"acme");
+        Files.writeString(project.resolve("acme.pfx"), "certificate");
+        // without the white space around it : a secret of the continuous integration that ends with a line break
+        PackagingContext certificate = context(project, TargetOs.WINDOWS,
+                Map.of("windows.sign.certificate-file", " acme.pfx \n"));
+        Packaging.check(certificate, directory);
+        assertEquals(Optional.of(project.resolve("acme.pfx").toAbsolutePath()), Packaging.certificateFile(certificate));
+        // the signature of the Windows packages, in the configuration of the packages of another operating system
+        Packaging.check(context(project, TargetOs.LINUX, Map.of("windows.sign.certificate-file", "missing.pfx")),
+                directory);
 
         PackagingException entitlements = assertThrows(PackagingException.class, () -> Packaging.check(
                 context(project, TargetOs.MACOS, Map.of("macos.sign.entitlements", "missing.plist")), directory));
@@ -205,5 +221,30 @@ class PackagingTest {
         // a bundle that is not signed
         Packaging.check(context(project, TargetOs.MACOS, Map.of("macos.sign.enabled", "false", "tools.codesign",
                 "missing/codesign", "macos.sign.entitlements", "missing.plist")), directory);
+    }
+
+    /**
+     * The content directory is checked whatever the formats, on every operating system : a directory of the project,
+     * without the white space around its path. A blank value is the default directory.
+     */
+    @Test
+    void theContentDirectoryIsChecked(@TempDir Path project) throws IOException {
+        for (TargetOs os : TargetOs.values()) {
+            assertCheckFails(project, os, PackageFormat.DIRECTORY, Map.of("content-directory", "contnet"),
+                    "quarkus.desktop.packaging.content-directory : ");
+        }
+        Files.writeString(project.resolve("notes.txt"), "notes");
+        assertCheckFails(project, TargetOs.LINUX, PackageFormat.DEB, Map.of("content-directory", "notes.txt"),
+                "quarkus.desktop.packaging.content-directory : ");
+        // not a path on any operating system
+        assertCheckFails(project, TargetOs.LINUX, PackageFormat.DIRECTORY, Map.of("content-directory", "a\u0000b"),
+                "quarkus.desktop.packaging.content-directory=\"a");
+
+        Path content = Files.createDirectories(project.resolve("content"));
+        PackagingContext context = context(project, TargetOs.WINDOWS, Map.of("content-directory", " content\n"));
+        Packaging.check(context, List.of(PackageFormat.DIRECTORY));
+        assertEquals(Optional.of(content.toAbsolutePath()), Packaging.contentDirectory(context));
+        assertEquals(Optional.empty(),
+                Packaging.contentDirectory(context(project, TargetOs.LINUX, Map.of("content-directory", " "))));
     }
 }

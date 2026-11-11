@@ -8,13 +8,17 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.regex.Pattern;
@@ -33,8 +37,12 @@ import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
+import io.quarkiverse.desktop.packaging.deployment.Packager;
+import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
+import io.quarkiverse.desktop.packaging.deployment.TargetOs;
 import io.quarkiverse.desktop.packaging.deployment.TestConfig;
+import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * The files that the Windows packagers generate : the WiX source, the Inno Setup script, the MSIX manifest and the
@@ -325,6 +333,7 @@ class WindowsPackagesTest {
         assertFalse(script.contains("recursesubdirs"), script);
         // a native executable : no directory of jpackage to delete
         assertFalse(script.contains("[InstallDelete]"), script);
+        assertFalse(script.contains("InstallsOverPreviousVersion"), script);
         assertTrue(script.contains("Name: \"{autoprograms}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\""), script);
         assertTrue(script.contains("Name: \"{autodesktop}\\Acme Editor\""), script);
         assertTrue(script.contains("[Tasks]"), script);
@@ -347,10 +356,16 @@ class WindowsPackagesTest {
         assertTrue(userScript.contains("ArchitecturesAllowed=arm64\n"), userScript);
         assertFalse(userScript.contains("{autoprograms}"), userScript);
         assertFalse(userScript.contains("[Tasks]"), userScript);
-        // the launcher of jpackage : the setup program deletes the jars and the Java runtime of the installed version
-        assertTrue(userScript.contains("[InstallDelete]\nType: filesandordirs; Name: \"{app}\\app\"\n"
-                + "Type: filesandordirs; Name: \"{app}\\runtime\"\n"), userScript);
+        // the launcher of jpackage : the setup program deletes the jars and the Java runtime of the installed version,
+        // when it installs over it in its directory, and nothing in another one
+        assertTrue(userScript.contains("[InstallDelete]\n"
+                + "Type: filesandordirs; Name: \"{app}\\app\"; Check: InstallsOverPreviousVersion\n"
+                + "Type: filesandordirs; Name: \"{app}\\runtime\"; Check: InstallsOverPreviousVersion\n"), userScript);
         assertTrue(userScript.indexOf("[InstallDelete]") < userScript.indexOf("[Files]"), userScript);
+        assertTrue(userScript.endsWith("end;\n\nfunction InstallsOverPreviousVersion(): Boolean;\nbegin\n"
+                + "  Result := (WizardForm.PrevAppDir <> '') and SameText(RemoveBackslashUnlessRoot(WizardForm.PrevAppDir),"
+                + " RemoveBackslashUnlessRoot(ExpandConstant('{app}')));\nend;\n"), userScript);
+        assertTrue(userScript.indexOf("function InstallsOverPreviousVersion") > userScript.indexOf("[Code]"), userScript);
     }
 
     /**
@@ -472,6 +487,72 @@ class WindowsPackagesTest {
                 + " $qC:\\acme\\acme.pfx$q $q/p$q $qPa$$$$w0rd $$f$q $q/n$q $qAcme \\$qEditor\\$q Inc\\\\$q $f",
                 InnoSetupPackager.signTool(List.of("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\signtool.exe", "sign",
                         "/fd", "SHA256", "/f", "C:\\acme\\acme.pfx", "/p", "Pa$$w0rd $f", "/n", "Acme \"Editor\" Inc\\")));
+        // the compiler prints the command, whose lines are left out of its output : not a password on two lines
+        for (String password : List.of("hunter\n2", "hunter\r2")) {
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> InnoSetupPackager.signTool(List.of("signtool.exe", "sign", "/p", password)));
+            assertTrue(e.getMessage().contains("quarkus.desktop.packaging.windows.sign.certificate-password"),
+                    e.getMessage());
+            assertFalse(e.getMessage().contains("hunter"), e.getMessage());
+        }
+    }
+
+    /**
+     * The failure of the compiler of Inno Setup when it signs, from its output (Inno Setup 6.7, which runs the sign
+     * tool three times) : what signtool printed the last time and the error, without the command of signtool, which has
+     * the password of the certificate.
+     */
+    @Test
+    void theFailureOfTheSignatureOfTheSetupProgram() {
+        String signtool = "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64\\signtool.exe";
+        String command = "\"" + signtool + "\" \"sign\" \"/fd\" \"SHA256\" \"/f\" \"C:\\acme\\acme.pfx\" \"/p\" \"hunter2\""
+                + " \"/tr\" \"http://timestamp.acme.org\" \"/td\" \"SHA256\" \"C:\\work\\out\\uninst.e32.tmp\"";
+        String attempt = "   Done Adding Additional Store\r\n"
+                + "   Number of errors: 1\r\n"
+                + "   SignTool Error: The specified timestamp server either could not be reached or\r\n"
+                + "   returned an invalid response.\r\n"
+                + "   SignTool Error: An error occurred while attempting to sign: C:\\work\\out\\uninst.e32.tmp\r\n";
+        String output = "Inno Setup 6 Command-Line Compiler\r\n\r\nCompiler engine version: Inno Setup 6.7.3\r\n\r\n"
+                + "Preprocessing\r\nParsing [Setup] section, line 3\r\nPreparing Setup program executable\r\n"
+                + "   Updating version info (Setup.e32)\r\n"
+                + "   Running Sign Tool quarkus: " + command + "\r\n" + attempt
+                + "   Sign Tool command failed (Sign Tool command failed with exit code 0x1). Will retry (2 tries left).\r\n"
+                + "   Running Sign Tool quarkus in 500 milliseconds: " + command + "\r\n" + attempt
+                + "   Sign Tool command failed (Sign Tool command failed with exit code 0x1). Will retry (1 tries left).\r\n"
+                + "   Running Sign Tool quarkus: " + command + "\r\n" + attempt.replace("Done", "Done again")
+                + "Error in C:\\work\\application.iss: Sign Tool command failed with exit code 0x1.\r\n"
+                + "Compile aborted.\r\n";
+        String logged = InnoSetupPackager.withoutCommands(output, signtool);
+        assertFalse(logged.contains("hunter2"), logged);
+        assertFalse(logged.contains("Running Sign Tool"), logged);
+        assertTrue(logged.contains("   SignTool Error: The specified timestamp server either could not be reached or\n"
+                + "   returned an invalid response.\n"), logged);
+        assertEquals("Done again Adding Additional Store\n"
+                + "Number of errors: 1\n"
+                + "SignTool Error: The specified timestamp server either could not be reached or\n"
+                + "returned an invalid response.\n"
+                + "SignTool Error: An error occurred while attempting to sign: C:\\work\\out\\uninst.e32.tmp\n"
+                + "Error in C:\\work\\application.iss: Sign Tool command failed with exit code 0x1.\n"
+                + "Compile aborted.", InnoSetupPackager.failureReason(output, signtool));
+        // a line of the command that does not name the sign tool, if Inno Setup changes its message
+        assertEquals("SignTool Error: The specified PFX password is not correct.\n"
+                + "Error in C:\\work\\application.iss: Sign Tool command failed with exit code 0x1.",
+                InnoSetupPackager.failureReason("   Running Sign Tool quarkus: " + command + "\r\n   Signing: " + command
+                        + "\r\n   SignTool Error: The specified PFX password is not correct.\r\nError in"
+                        + " C:\\work\\application.iss: Sign Tool command failed with exit code 0x1.\r\n", signtool));
+
+        // another error, once the uninstaller is signed : the error alone
+        String compile = "Preparing Setup program executable\r\n   Running Sign Tool quarkus: " + command + "\r\n"
+                + "   Done Adding Additional Store\r\n   Successfully signed: C:\\work\\out\\uninst.e32.tmp\r\n"
+                + "Reading [Code] section\r\nParsing [Files] section, line 13\r\nParsing [Files] section, line 14\r\n"
+                + "Error on line 14 in C:\\work\\application.iss: Source file \"C:\\image\\a.txt\" does not exist.\r\n"
+                + "Compile aborted.\r\n";
+        assertEquals("Error on line 14 in C:\\work\\application.iss: Source file \"C:\\image\\a.txt\" does not exist.\n"
+                + "Compile aborted.", InnoSetupPackager.failureReason(compile, signtool));
+        // no error : the output, without the command
+        assertEquals("Preparing Setup program executable\n   Done Adding Additional Store",
+                InnoSetupPackager.failureReason("Preparing Setup program executable\r\n   Running Sign Tool quarkus: "
+                        + command + "\r\n   Done Adding Additional Store\r\n", signtool));
     }
 
     /**
@@ -507,6 +588,52 @@ class WindowsPackagesTest {
                 "windows.sign.arguments", "/sm,/d,Acme")).windows().sign();
         assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256", "/sha1", "0123ABCD", "/sm",
                 "/d", "Acme"), WindowsSdk.command(signtool, described, project, "Acme Editor"));
+        DesktopPackagingConfig.Sign dashed = TestConfig.of(Map.of("windows.sign.arguments", "/sm,-D,Acme")).windows()
+                .sign();
+        assertFalse(WindowsSdk.command(signtool, dashed, project, "Acme Editor").contains("Acme Editor"));
+
+        // the file digest of the arguments, as the command of a signing service has it
+        DesktopPackagingConfig.Sign trusted = TestConfig.of(Map.of("windows.sign.timestamp-url",
+                "http://timestamp.acs.microsoft.com", "windows.sign.arguments",
+                "/fd,SHA256,/dlib,C:/tools/Azure.CodeSigning.Dlib.dll,/dmdf,C:/tools/metadata.json")).windows().sign();
+        List<String> command = WindowsSdk.command(signtool, trusted, project, null);
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/tr", "http://timestamp.acs.microsoft.com",
+                "/td", "SHA256", "/fd", "SHA256", "/dlib", "C:/tools/Azure.CodeSigning.Dlib.dll", "/dmdf",
+                "C:/tools/metadata.json"), command);
+        assertEquals(1, Collections.frequency(command, "/fd"));
+        DesktopPackagingConfig.Sign sha384 = TestConfig.of(Map.of("windows.sign.thumbprint", "0123ABCD",
+                "windows.sign.arguments", "/FD,SHA384")).windows().sign();
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/sha1", "0123ABCD", "/FD", "SHA384"),
+                WindowsSdk.command(signtool, sha384, project, null));
+        // the digest of the time stamp of the arguments, with the server of the configuration
+        DesktopPackagingConfig.Sign digest = TestConfig.of(Map.of("windows.sign.timestamp-url",
+                "http://timestamp.acme.org", "windows.sign.arguments", "/sm,-td,SHA384")).windows().sign();
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256", "/tr",
+                "http://timestamp.acme.org", "/sm", "-td", "SHA384"), WindowsSdk.command(signtool, digest, project, null));
+        assertEquals("SHA256", WindowsSdk.fileDigest(file));
+        assertEquals("SHA384", WindowsSdk.fileDigest(sha384));
+        assertEquals("SHA512", WindowsSdk.fileDigest(TestConfig.of(Map.of("windows.sign.arguments", "/sm,-fd,sha512"))
+                .windows().sign()));
+    }
+
+    /**
+     * The arguments of signtool and the time stamp server of the configuration : signtool takes one.
+     */
+    @Test
+    void theTimeStampServerOfTheArguments() {
+        WindowsSdk.checkArguments(TestConfig.of(Map.of("windows.sign.arguments", "/sm,/tr,http://timestamp.acme.org"))
+                .windows().sign());
+        WindowsSdk.checkArguments(TestConfig.of(Map.of("windows.sign.timestamp-url", "http://timestamp.acme.org",
+                "windows.sign.arguments", "/sm,/td,SHA384")).windows().sign());
+        for (String server : List.of("/tr", "-TR", "/t")) {
+            DesktopPackagingConfig.Sign sign = TestConfig.of(Map.of("windows.sign.timestamp-url",
+                    "http://timestamp.acme.org", "windows.sign.arguments", "/sm," + server + ",http://timestamp.acme.com"))
+                    .windows().sign();
+            PackagingException e = assertThrows(PackagingException.class, () -> WindowsSdk.checkArguments(sign), server);
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.sign.timestamp-url and the " + server
+                    + " of quarkus.desktop.packaging.windows.sign.arguments both set a time stamp server"),
+                    e.getMessage());
+        }
     }
 
     /**
@@ -575,6 +702,50 @@ class WindowsPackagesTest {
         assertEquals("Acme-Editor-1.2.3-SNAPSHOT-x64.exe", WindowsSdk.packageFileName(app, Arch.X64, PackageFormat.EXE));
         assertEquals("Acme-Editor-1.2.3-SNAPSHOT-arm64.msix",
                 WindowsSdk.packageFileName(app, Arch.ARM64, PackageFormat.MSIX));
+        // the name in ASCII
+        assertEquals("Acme-Editeur-1.2.3-x64.msi", WindowsSdk.packageFileName(TestConfig.app(TestConfig.of(Map.of("name",
+                "Acme Éditeur", "version", "1.2.3"))), Arch.X64, PackageFormat.MSI));
+    }
+
+    /**
+     * The tools of the Windows SDK that run on the JVM of the build, which sign the application image on any
+     * architecture : only the packages are built for x64 and arm64, and refused for another architecture before
+     * anything is built.
+     */
+    @Test
+    void theApplicationImageIsSignedOnAnyArchitecture(@TempDir Path project) throws IOException {
+        assertEquals("x64", WindowsSdk.sdkArchitecture("amd64"));
+        assertEquals("x64", WindowsSdk.sdkArchitecture("AMD64"));
+        assertEquals("arm64", WindowsSdk.sdkArchitecture("aarch64"));
+        assertEquals("x86", WindowsSdk.sdkArchitecture("x86"));
+        assertEquals("x64", WindowsSdk.sdkArchitecture("riscv64"));
+        String osArch = System.getProperty("os.arch");
+        System.setProperty("os.arch", "x86");
+        try {
+            PackagingContext context = context(project, Map.of("windows.sign.thumbprint", "0123ABCD"));
+            WindowsSdk.checkSignature(context);
+            for (Packager packager : List.of(new MsiPackager(), new InnoSetupPackager(), new MsixPackager())) {
+                PackagingException e = assertThrows(PackagingException.class, () -> packager.check(context),
+                        packager.getClass().getSimpleName());
+                assertTrue(e.getMessage().contains("not for x86 :"), e.getMessage());
+            }
+        } finally {
+            System.setProperty("os.arch", osArch);
+        }
+    }
+
+    /**
+     * The context of a Windows build whose tools are a file of the project, with the given properties.
+     */
+    static PackagingContext context(Path project, Map<String, String> properties) throws IOException {
+        Files.writeString(project.resolve("tool"), "tool");
+        Map<String, String> configuration = new HashMap<>(properties);
+        for (String tool : List.of("wix", "iscc", "makeappx", "signtool")) {
+            configuration.putIfAbsent("tools." + tool, "tool");
+        }
+        DesktopPackagingConfig config = TestConfig.of(configuration);
+        return new PackagingContext(config, TestConfig.app(config), TargetOs.WINDOWS, Arch::host,
+                new Tools(config.tools(), project), IconSet.generic(), project, project.resolve("target/packaging"));
     }
 
     /**
@@ -815,6 +986,24 @@ class WindowsPackagesTest {
                 + "SignTool Error: The specified timestamp server either could not be reached or\n"
                 + "returned an invalid response.");
         assertSame(timestamp, MsixPackager.signatureFailure(timestamp, "CN=Acme"));
+    }
+
+    /**
+     * The block map of an MSIX package has the hash of the file digest of its signature, which signtool requires :
+     * {@code SHA256}, or the one of the arguments of signtool.
+     */
+    @Test
+    void theHashOfTheBlockMapOfAnMsixPackage(@TempDir Path project) throws IOException {
+        assertEquals("SHA256", MsixPackager.blockMapHash(TestConfig.defaults().windows().sign()));
+        assertEquals("SHA384", MsixPackager.blockMapHash(TestConfig.of(Map.of("windows.sign.arguments",
+                "/dlib,C:/tools/Azure.CodeSigning.Dlib.dll,/fd,sha384")).windows().sign()));
+        new MsixPackager().check(context(project, Map.of("windows.sign.arguments", "/sm,/fd,SHA512")));
+        for (String digest : List.of("SHA1", "certHash")) {
+            PackagingException e = assertThrows(PackagingException.class, () -> new MsixPackager()
+                    .check(context(project, Map.of("windows.sign.arguments", "/sm,/fd," + digest))), digest);
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.sign.arguments : the file digest /fd "
+                    + digest.toUpperCase(Locale.ROOT) + " "), e.getMessage());
+        }
     }
 
     /**

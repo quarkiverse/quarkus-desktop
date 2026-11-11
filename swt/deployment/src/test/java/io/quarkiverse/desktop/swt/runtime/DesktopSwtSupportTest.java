@@ -2,6 +2,7 @@ package io.quarkiverse.desktop.swt.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
@@ -121,6 +122,56 @@ class DesktopSwtSupportTest {
         assumeTrue(executable.isPresent(), "The executable of the process is not known");
         DesktopSwtSupport.useLibrariesNextToExecutable(executable.get().getFileName().toString());
         assertEquals("/opt/libraries", System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH));
+    }
+
+    /**
+     * A library that is missing next to the native executable, in a strictly confined snap : SWT looks for it in the
+     * directory of the snap, which the service of the libraries applies before the service of the user interface, in
+     * either order.
+     */
+    @Test
+    void aMissingLibraryInASnap(@TempDir Path common) {
+        Path directory = common.resolve(".swt/lib").resolve(SwtUi.swtOs(System.getProperty("os.name")))
+                .resolve(SwtUi.swtArch(System.getProperty("os.arch")));
+        DesktopSwtSupport.useLibrariesNextToExecutable("libswt-missing.so", strict(common));
+        assertEquals(directory.toString(), System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH));
+        assertTrue(Files.isDirectory(directory), directory + " is a directory");
+        assertNull(DesktopSwtSupport.librariesNextToExecutable);
+        // the service of the user interface, afterwards
+        DesktopSwtSupport.useSnapLibraryPath(strict(common));
+        assertEquals(directory.toString(), System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH));
+        // the services in the other order
+        DesktopSwtSupport.useLibrariesNextToExecutable("libswt-missing.so", strict(common));
+        assertEquals(directory.toString(), System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH));
+        assertNull(DesktopSwtSupport.librariesNextToExecutable);
+    }
+
+    /**
+     * Outside a snap, a library that is missing next to the native executable leaves {@code swt.library.path} unset :
+     * SWT looks for it in {@code ~/.swt}.
+     */
+    @Test
+    void aMissingLibraryOutsideASnap() {
+        DesktopSwtSupport.useLibrariesNextToExecutable("libswt-missing.so", Map.of("HOME", USER_HOME));
+        assertNull(System.getProperty(DesktopSwtSupport.SWT_LIBRARY_PATH));
+        assertNull(DesktopSwtSupport.librariesNextToExecutable);
+    }
+
+    /**
+     * The warning of a library that is missing next to the native executable names the places where SWT looks for it,
+     * in its order : the directory of a snap ({@code swt.library.path}) when it is set, {@code ~/.swt} otherwise.
+     */
+    @Test
+    void theWarningOfAMissingLibrary() {
+        String executable = "/snap/acme-editor/x1/lib/acme-editor";
+        String snap = "/home/jane/snap/acme-editor/common/.swt/lib/linux/x86_64";
+        assertEquals("The native library libswt-gtk-4974r10.so of SWT is not next to the native executable (" + executable
+                + ") : SWT looks for it in " + snap + " (swt.library.path) and in java.library.path",
+                DesktopSwtSupport.missingLibraryMessage("libswt-gtk-4974r10.so", executable, snap, "Linux", "amd64"));
+        assertEquals("The native library libswt-gtk-4974r10.so of SWT is not next to the native executable"
+                + " (/opt/acme-editor) : SWT looks for it in java.library.path and in ~/.swt/lib/linux/x86_64",
+                DesktopSwtSupport.missingLibraryMessage("libswt-gtk-4974r10.so", "/opt/acme-editor", null, "Linux",
+                        "amd64"));
     }
 
     /**

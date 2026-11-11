@@ -2,17 +2,36 @@ package io.quarkiverse.desktop.packaging.deployment;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Properties;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
+import io.quarkus.bootstrap.model.ApplicationModel;
+import io.quarkus.bootstrap.model.ApplicationModelBuilder;
+import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
+import io.quarkus.deployment.pkg.NativeConfig;
+import io.quarkus.deployment.pkg.PackageConfig.JarConfig.JarType;
+import io.quarkus.deployment.pkg.builditem.CurateOutcomeBuildItem;
+import io.quarkus.deployment.pkg.builditem.NativeImageBuildItem;
+import io.quarkus.deployment.pkg.builditem.NativeImageRunnerBuildItem;
+import io.quarkus.deployment.pkg.builditem.OutputTargetBuildItem;
+import io.quarkus.deployment.pkg.steps.NativeImageBuildLocalRunner;
+import io.quarkus.maven.dependency.ResolvedDependencyBuilder;
+import io.smallrye.config.PropertiesConfigSource;
+import io.smallrye.config.SmallRyeConfigBuilder;
 
 /**
  * The build steps of the packages.
@@ -50,6 +69,41 @@ class DesktopPackagingProcessorTest {
     }
 
     /**
+     * Quarkus does not compress the executable of a former build, which the former build compressed in place : its
+     * header shows it, not the configuration.
+     */
+    @Test
+    void theCompressionOfAReusedNativeExecutable(@TempDir Path directory) throws IOException {
+        // the ELF header, then the magic number of UPX after the headers of its loader
+        byte[] compressed = new byte[4096];
+        compressed[0] = 0x7f;
+        compressed[1] = 'E';
+        compressed[2] = 'L';
+        compressed[3] = 'F';
+        System.arraycopy("UPX!".getBytes(StandardCharsets.US_ASCII), 0, compressed, 448, 4);
+        assertTrue(DesktopPackagingProcessor.hasUpxMagic(compressed));
+        byte[] atTheEnd = new byte[4096];
+        System.arraycopy("UPX!".getBytes(StandardCharsets.US_ASCII), 0, atTheEnd, 4092, 4);
+        assertTrue(DesktopPackagingProcessor.hasUpxMagic(atTheEnd));
+        byte[] cut = new byte[4096];
+        System.arraycopy("UPX".getBytes(StandardCharsets.US_ASCII), 0, cut, 4093, 3);
+        assertFalse(DesktopPackagingProcessor.hasUpxMagic(cut));
+        assertFalse(DesktopPackagingProcessor.hasUpxMagic(new byte[4096]));
+        assertFalse(DesktopPackagingProcessor.hasUpxMagic(new byte[0]));
+
+        // compressed by this build : the file is not read
+        Path missing = directory.resolve("missing-runner");
+        assertTrue(DesktopPackagingProcessor.isUpxCompressed(true, false, missing));
+        // an executable of this build that Quarkus did not compress, and the executables of a former build
+        Path upx = Files.write(directory.resolve("upx-runner"), compressed);
+        Path plain = Files.write(directory.resolve("plain-runner"), cut);
+        assertFalse(DesktopPackagingProcessor.isUpxCompressed(false, false, upx));
+        assertTrue(DesktopPackagingProcessor.isUpxCompressed(false, true, upx));
+        assertFalse(DesktopPackagingProcessor.isUpxCompressed(false, true, plain));
+        assertFalse(DesktopPackagingProcessor.isUpxCompressed(false, true, missing));
+    }
+
+    /**
      * A resource file that the application links itself has the identifiers of the icon and of the version
      * information of the one of the extension : the extension does not link its own then.
      */
@@ -66,6 +120,36 @@ class DesktopPackagingProcessorTest {
                 DesktopPackagingProcessor.linkedResourceFile(List.of("-H:NativeLinkerOption=user32.lib")));
         assertEquals(Optional.empty(), DesktopPackagingProcessor.linkedResourceFile(List.of("-H:Name=app.res")));
         assertEquals(Optional.empty(), DesktopPackagingProcessor.linkedResourceFile(List.of()));
+    }
+
+    /**
+     * The resources of the Windows executable are linked from a file of the build : not for native sources nor for a
+     * native-image bundle, which are compiled or applied later, maybe on another machine.
+     */
+    @Test
+    void theResourcesOfAnExecutableThatIsLinkedLater() {
+        assertEquals(Optional.empty(), DesktopPackagingProcessor.executableResourcesUnavailable(false, false));
+        String sources = DesktopPackagingProcessor.executableResourcesUnavailable(true, false).orElseThrow();
+        assertTrue(sources.startsWith("The native sources do not give the native executable"), sources);
+        String bundle = DesktopPackagingProcessor.executableResourcesUnavailable(false, true).orElseThrow();
+        assertTrue(bundle.startsWith("The native-image bundle does not give the native executable"), bundle);
+        assertTrue(DesktopPackagingProcessor.executableResourcesUnavailable(true, true).isPresent());
+    }
+
+    /**
+     * The directory of its own that the resource file has in the temporary directory is deleted at the end of the
+     * build : not with profile-guided optimization, whose optimized executable is linked from the same file after the
+     * integration tests, and never the build directory.
+     */
+    @Test
+    void theResourcesOfTheTemporaryDirectoryAreDeleted() {
+        Path build = Path.of("my project", "target").toAbsolutePath();
+        Path temporary = Path.of("tmp", "quarkus-desktop-packaging-1", "application.res").toAbsolutePath();
+        assertTrue(DesktopPackagingProcessor.deletesResources(temporary, build, false));
+        assertFalse(DesktopPackagingProcessor.deletesResources(temporary, build, true));
+        Path inBuild = build.resolve("quarkus-desktop-packaging").resolve("application.res");
+        assertFalse(DesktopPackagingProcessor.deletesResources(inBuild, build, false));
+        assertFalse(DesktopPackagingProcessor.deletesResources(inBuild, build, true));
     }
 
     /**
@@ -126,6 +210,67 @@ class DesktopPackagingProcessorTest {
         // the executable of a former build, which the native build returns without building a bundle or an executable
         assertEquals(Optional.empty(), DesktopPackagingProcessor.nativeExecutableUnavailable(false, true, true));
         assertEquals(Optional.empty(), DesktopPackagingProcessor.nativeExecutableUnavailable(true, false, true));
+    }
+
+    /**
+     * A JVM application is packaged from a fast-jar, from an aot-jar, which has its layout (the default type with
+     * {@code quarkus.package.jar.aot.enabled}), or from an uber-jar.
+     */
+    @Test
+    @SuppressWarnings("deprecation")
+    void theJarsThatArePackaged() {
+        DesktopPackagingProcessor.checkJarType(JarType.FAST_JAR, false);
+        DesktopPackagingProcessor.checkJarType(JarType.AOT_JAR, false);
+        DesktopPackagingProcessor.checkJarType(JarType.UBER_JAR, true);
+        for (JarType type : List.of(JarType.MUTABLE_JAR, JarType.LEGACY_JAR)) {
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> DesktopPackagingProcessor.checkJarType(type, false), type.toString());
+            assertTrue(e.getMessage().contains("not from a " + type + " : set quarkus.package.jar.type to"),
+                    e.getMessage());
+        }
+    }
+
+    /**
+     * A build that packages the executable of a former build ({@code quarkus.native.reuse-existing}), the optimized one
+     * of a build with profile-guided optimization, checks the packages before the application image : the step that
+     * checks them before native-image checks nothing then, and a missing tool fails the step that packages the
+     * executable, before anything is written in the output directory.
+     */
+    @Test
+    void theReusedExecutableIsCheckedBeforeItsImage(@TempDir Path project) throws IOException {
+        Path target = ApplicationImageTest.nativeBuild(project);
+        TargetOs os = TargetOs.host();
+        DesktopPackagingConfig config = TestConfig.of(Map.of("formats", "msi,dmg,deb", "tools.wix", "missing/wix",
+                "tools.hdiutil", "missing/hdiutil", "tools.dpkg-deb", "missing/dpkg-deb"));
+        NativeConfig nativeConfig = new SmallRyeConfigBuilder().addDefaultInterceptors().withMapping(NativeConfig.class)
+                .withSources(new PropertiesConfigSource(Map.of("quarkus.native.pgo.enabled", "true",
+                        "quarkus.native.java-home", System.getProperty("java.home"),
+                        "platform.quarkus.native.builder-image", "mandrel"), "test", 100))
+                .build().getConfigMapping(NativeConfig.class);
+        assertEquals(List.of(), DesktopPackagingProcessor.checkedFormats(config, os, os,
+                nativeConfig.isCreateNativeBundle(), nativeConfig.pgo().enabled()));
+
+        NativeImageBuildItem executable = new NativeImageBuildItem(
+                target.resolve(os == TargetOs.WINDOWS ? "acme-runner.exe" : "acme-runner"),
+                NativeImageBuildItem.GraalVMVersion.unknown(), true);
+        ApplicationModel model = new ApplicationModelBuilder().setAppArtifact(ResolvedDependencyBuilder.newInstance()
+                .setGroupId("org.acme").setArtifactId("acme").setVersion("1.2.3")).build();
+        PackagingException e = assertThrows(PackagingException.class,
+                () -> new DesktopPackagingProcessor().packageNativeExecutable(config, nativeConfig, executable,
+                        new NativeImageRunnerBuildItem(new NativeImageBuildLocalRunner("native-image")), Optional.empty(),
+                        List.of(), Optional.empty(),
+                        new OutputTargetBuildItem(target, target, "acme", "acme", false, new Properties(),
+                                Optional.empty()),
+                        new ApplicationInfoBuildItem(Optional.of("Acme Editor"), Optional.of("1.2.3")),
+                        new CurateOutcomeBuildItem(model), result -> {
+                        }));
+        String tool = switch (os) {
+            case WINDOWS -> "wix";
+            case MACOS -> "hdiutil";
+            case LINUX -> "dpkg-deb";
+        };
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.tools." + tool + " : "), e.getMessage());
+        assertFalse(Files.exists(target.resolve("packaging")), "the application image was built");
     }
 
     /**

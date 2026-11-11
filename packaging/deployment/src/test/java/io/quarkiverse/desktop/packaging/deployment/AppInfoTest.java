@@ -254,14 +254,25 @@ class AppInfoTest {
         assertDoesNotThrow(() -> AppInfo.checkName("Tools", Optional.of("Tools;Utilities"), TargetOs.LINUX));
     }
 
+    /**
+     * The name is checked with the packages, before the application image is built (and before the native executable
+     * when the build packages it) : a Windows native executable that is not packaged gets it in its resources, whatever
+     * it is.
+     */
     @Test
     void theNameIsCheckedForTheOperatingSystemOfTheApplication(@TempDir Path project) throws IOException {
-        DesktopPackagingConfig config = TestConfig.of(Map.of("name", "What's Up?"));
-        // before the native executable is built : the Windows executable gets the name in its resources
-        assertThrows(PackagingException.class, () -> Packaging.context(config, "Acme Editor", "1.0", "org.acme", project,
-                project, TargetOs.WINDOWS, Arch::host));
-        assertEquals("What's Up?", Packaging.context(config, "Acme Editor", "1.0", "org.acme", project, project,
-                TargetOs.MACOS, Arch::host).app().name());
+        Map<String, String> name = Map.of("name", "What's Up?");
+        PackagingContext windows = PackagingTest.context(project, TargetOs.WINDOWS, name);
+        assertEquals("What's Up?", windows.app().name());
+        PackagingException e = assertThrows(PackagingException.class,
+                () -> Packaging.check(windows, List.of(PackageFormat.DIRECTORY)));
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.name=\"What's Up?\" :"), e.getMessage());
+        Packaging.check(PackagingTest.context(project, TargetOs.MACOS, name), List.of(PackageFormat.DIRECTORY));
+
+        PackagingContext semicolon = PackagingTest.context(project, TargetOs.WINDOWS,
+                Map.of("windows.install-directory", "Tools;Utilities"));
+        e = assertThrows(PackagingException.class, () -> Packaging.check(semicolon, List.of(PackageFormat.DIRECTORY)));
+        assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.install-directory="), e.getMessage());
     }
 
     @Test

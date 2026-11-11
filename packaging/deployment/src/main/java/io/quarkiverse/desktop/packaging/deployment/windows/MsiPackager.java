@@ -48,10 +48,12 @@ public final class MsiPackager implements Packager {
     static final int MAX_APP_USER_MODEL_ID = 127;
 
     /**
-     * Checks the WiX Toolset, the version, the upgrade code, the installation directory and the Start menu group.
+     * Checks the architecture of the application, the WiX Toolset, the version, the upgrade code, the installation
+     * directory and the Start menu group.
      */
     @Override
     public void check(PackagingContext context) {
+        context.arch();
         DesktopPackagingConfig.Windows config = context.config().windows();
         wix(context);
         version(context.app());

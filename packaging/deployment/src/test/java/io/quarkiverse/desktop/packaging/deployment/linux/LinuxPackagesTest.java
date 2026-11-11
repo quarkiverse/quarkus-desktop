@@ -367,14 +367,16 @@ class LinuxPackagesTest {
     }
 
     /**
-     * Without the %clean stage of rpmbuild, whose command does not quote the build root.
+     * Without the %clean stage of rpmbuild, whose command does not quote the build root, and with the build root quoted
+     * for check-files, whose command rpmbuild splits at white space.
      */
     @Test
     void theCommandOfRpmbuild() {
         Path top = Path.of("work", "rpmbuild");
         Path spec = Path.of("work", "acme-editor.spec");
-        assertEquals(List.of("rpmbuild", "-bb", "--noclean", "--define", "_topdir " + top, "--target", "aarch64",
-                spec.toString()), RpmPackager.command(Path.of("rpmbuild"), top, Arch.ARM64, spec));
+        assertEquals(List.of("rpmbuild", "-bb", "--noclean", "--define", "_topdir " + top, "--define",
+                "__check_files %{_rpmconfigdir}/check-files \"%{buildroot}\"", "--target", "aarch64", spec.toString()),
+                RpmPackager.command(Path.of("rpmbuild"), top, Arch.ARM64, spec));
     }
 
     @Test

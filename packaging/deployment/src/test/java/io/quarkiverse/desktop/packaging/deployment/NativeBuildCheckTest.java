@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkus.test.QuarkusProdModeTest;
+import io.quarkus.test.common.PathTestHelper;
 
 /**
  * The packages of a native build are checked before the native executable is built : a missing tool fails the build
@@ -19,10 +20,14 @@ import io.quarkus.test.QuarkusProdModeTest;
 class NativeBuildCheckTest {
 
     /**
-     * The production build of a native executable, with a format of each operating system, whose tool is missing.
+     * The production build of a native executable, with a format of each operating system, whose tool is missing. The
+     * configuration of the test has the ordinal 500 : above the system properties (400), into which Surefire copies
+     * every {@code -D} of the Maven command line (the formats of the packaging jobs, which build this module with
+     * {@code -am}), and above the environment (300).
      */
     @RegisterExtension
     static final QuarkusProdModeTest TEST = new QuarkusProdModeTest().withEmptyApplication().setBuildNative(true)
+            .overrideConfigKey("config_ordinal", "500")
             .overrideConfigKey("quarkus.native.graalvm-home", graalvmHome().toString())
             .overrideConfigKey("quarkus.desktop.packaging.formats", "msi,dmg,deb")
             .overrideConfigKey("quarkus.desktop.packaging.tools.wix", "missing/wix")
@@ -31,11 +36,12 @@ class NativeBuildCheckTest {
             .assertBuildException(e -> PackagingTest.assertBuildFailed(e, "checkPackages"));
 
     /**
-     * The GraalVM of the build, in the temporary directory (the build directory of the module) : a native-image that
-     * fails, whose name is native-image.cmd on Windows. Quarkus only checks that it exists, until native-image runs.
+     * The GraalVM of the build, in the build directory of the module : a native-image that fails, whose name is
+     * native-image.cmd on Windows. Quarkus only checks that it exists, until native-image runs.
      */
     private static Path graalvmHome() {
-        Path home = Path.of(System.getProperty("java.io.tmpdir"), "quarkus-desktop-packaging-graalvm").toAbsolutePath();
+        Path home = PathTestHelper.getTestClassesLocation(NativeBuildCheckTest.class).getParent()
+                .resolve("quarkus-desktop-packaging-graalvm").toAbsolutePath();
         try {
             Path bin = Files.createDirectories(home.resolve("bin"));
             for (String name : List.of("native-image", "native-image.cmd")) {

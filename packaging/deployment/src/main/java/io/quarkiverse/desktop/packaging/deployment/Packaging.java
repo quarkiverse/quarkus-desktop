@@ -1,6 +1,8 @@
 package io.quarkiverse.desktop.packaging.deployment;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -106,7 +108,6 @@ final class Packaging {
             String groupId, Path projectDirectory, Path buildDirectory, TargetOs os, Supplier<Arch> arch)
             throws IOException {
         AppInfo app = AppInfo.of(config, applicationName, applicationVersion, groupId, projectDirectory);
-        AppInfo.checkName(app.name(), config.windows().installDirectory(), os);
         return new PackagingContext(config, app, os, arch, new Tools(config.tools(), projectDirectory),
                 IconSet.load(config.icon().map(String::trim).filter(value -> !value.isEmpty()), projectDirectory),
                 projectDirectory, buildDirectory.resolve(config.outputDirectory()).toAbsolutePath().normalize());
@@ -114,14 +115,19 @@ final class Packaging {
 
     /**
      * Checks what the packages need, before the application image and the first package are built, so that nothing is
-     * built when one of them cannot be : what signs the application image, and for each format its tools and what it
-     * derives from the configuration (see {@link Packager#check}).
+     * built when one of them cannot be : the name of the application, which names the files of the image and of the
+     * packages ({@link AppInfo#checkName}), the content directory, what signs the application image (with the
+     * certificate file on Windows), and for each format its tools and what it derives from the configuration (see
+     * {@link Packager#check}).
      *
      * @throws PackagingException when a package cannot be built
      */
     static void check(PackagingContext context, List<PackageFormat> formats) {
+        AppInfo.checkName(context.app().name(), context.config().windows().installDirectory(), context.os());
+        contentDirectory(context);
         if (context.os() == TargetOs.WINDOWS) {
             WindowsSdk.checkSignature(context);
+            certificateFile(context);
         } else if (context.os() == TargetOs.MACOS) {
             MacBundle.checkSignature(context);
         }
@@ -129,6 +135,53 @@ final class Packaging {
             if (format != PackageFormat.DIRECTORY) {
                 packager(format).check(context);
             }
+        }
+    }
+
+    /**
+     * The content directory of the configuration ({@code quarkus.desktop.packaging.content-directory}), which the
+     * application image copies, if any.
+     *
+     * @throws PackagingException when it is not a valid path, or not a directory
+     */
+    static Optional<Path> contentDirectory(PackagingContext context) {
+        Optional<Path> directory = configuredPath("quarkus.desktop.packaging.content-directory",
+                context.config().contentDirectory(), context.projectDirectory());
+        if (directory.isPresent() && !Files.isDirectory(directory.get())) {
+            throw new PackagingException("quarkus.desktop.packaging.content-directory : " + directory.get()
+                    + " is not a directory");
+        }
+        return directory;
+    }
+
+    /**
+     * The certificate file of the configuration that signs the Windows executables and packages
+     * ({@code quarkus.desktop.packaging.windows.sign.certificate-file}), if any.
+     *
+     * @throws PackagingException when it is not a valid path, or not a file
+     */
+    static Optional<Path> certificateFile(PackagingContext context) {
+        Optional<Path> file = configuredPath("quarkus.desktop.packaging.windows.sign.certificate-file",
+                context.config().windows().sign().certificateFile(), context.projectDirectory());
+        if (file.isPresent() && !Files.isRegularFile(file.get())) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.sign.certificate-file : " + file.get()
+                    + " not found");
+        }
+        return file;
+    }
+
+    /**
+     * The absolute path of a path of the configuration, relative to the directory of the project.
+     *
+     * @param property the property of the path
+     * @throws PackagingException when the value is not a valid path
+     */
+    private static Optional<Path> configuredPath(String property, Optional<String> value, Path projectDirectory) {
+        try {
+            return value.map(projectDirectory::resolve).map(Path::toAbsolutePath);
+        } catch (InvalidPathException e) {
+            throw new PackagingException(property + "=\"" + value.get() + "\" : not a valid path (" + e.getReason()
+                    + ")");
         }
     }
 

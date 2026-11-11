@@ -22,8 +22,8 @@ import io.quarkiverse.desktop.packaging.deployment.Xml;
 /**
  * A macOS installer package ({@code .pkg}), built with {@code pkgbuild} and {@code productbuild} : a component package
  * that installs the application bundle in {@code /Applications}, in a product archive with the title and the license of
- * the application. Signed with the installer identity of the configuration, and notarized when the configuration has
- * the credentials of the notary service.
+ * the application. Signed with the installer identity of the configuration, unless {@code macos.sign.enabled} is
+ * {@code false}, and notarized when the configuration has the credentials of the notary service.
  */
 public final class PkgPackager implements Packager {
 
@@ -81,15 +81,7 @@ public final class PkgPackager implements Packager {
         Path pkg = context.output(app.fileName() + "-" + app.version() + "-" + context.arch().macos() + ".pkg");
         List<String> command = new ArrayList<>(List.of(productbuild.toString(), "--distribution", distribution.toString(),
                 "--resources", resources.toString(), "--package-path", packages.toString()));
-        if (macos.sign().installerIdentity().isPresent()) {
-            command.add("--sign");
-            command.add(macos.sign().installerIdentity().get());
-            command.add("--timestamp");
-            macos.sign().keychain().ifPresent(keychain -> {
-                command.add("--keychain");
-                command.add(keychain);
-            });
-        }
+        command.addAll(signArguments(macos.sign()));
         command.add(pkg.toString());
         Tools.exec(command);
         signatureWarning(macos, pkg.getFileName().toString()).ifPresent(LOGGER::warn);
@@ -116,6 +108,22 @@ public final class PkgPackager implements Packager {
      */
     private static Path plistBuddy(PackagingContext context) {
         return context.tools().require("PlistBuddy", "PlistBuddy is part of macOS", Path.of("/usr/libexec/PlistBuddy"));
+    }
+
+    /**
+     * The options of {@code productbuild} that sign the installer package with the installer identity, with a secure
+     * time stamp : none when the identity is not set, or when nothing is signed ({@code macos.sign.enabled=false}).
+     */
+    static List<String> signArguments(DesktopPackagingConfig.MacSign sign) {
+        if (!sign.enabled() || sign.installerIdentity().isEmpty()) {
+            return List.of();
+        }
+        List<String> arguments = new ArrayList<>(List.of("--sign", sign.installerIdentity().get(), "--timestamp"));
+        sign.keychain().ifPresent(keychain -> {
+            arguments.add("--keychain");
+            arguments.add(keychain);
+        });
+        return arguments;
     }
 
     /**

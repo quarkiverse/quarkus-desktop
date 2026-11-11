@@ -1137,7 +1137,8 @@ system property before the `StartupEvent` observers; a `swt.library.path` set by
 the home directory, and the libraries can be signed with the executable (a macOS application bundle). Distribute them
 with the executable. Only a full native build copies them, not a build of the native sources
 (`quarkus.native.sources-only=true`). When they are missing next to the executable, it logs a warning, and SWT looks
-for them in `java.library.path` and `~/.swt`, and fails when it does not find them there.
+for them in `java.library.path` and `~/.swt` (in a strictly confined snap, in `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>`),
+and fails when it does not find them there.
 
 The library of the SWT_AWT bridge is never included (see <<limitations>>).
 

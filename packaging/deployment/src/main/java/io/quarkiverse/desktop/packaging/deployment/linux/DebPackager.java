@@ -40,12 +40,18 @@ public final class DebPackager implements Packager {
     private static final Pattern TIME64 = Pattern.compile("([a-z0-9][a-z0-9.+-]*[0-9])t64(-[a-z0-9.+-]+)?");
 
     /**
-     * Checks {@code dpkg-deb} and the installation directory.
+     * Checks {@code dpkg-deb}, the installation directory, and the {@code dpkg-shlibdeps} of the configuration when the
+     * package gets the dependencies that it finds : a configured path that does not exist fails at once. Without one,
+     * a {@code dpkg-shlibdeps} missing from the {@code PATH} is not an error : the package has no automatic
+     * dependencies then, with a warning.
      */
     @Override
     public void check(PackagingContext context) {
         dpkgDeb(context);
         LinuxDesktop.installPath(context);
+        if (context.config().linux().deb().autoDepends()) {
+            context.tools().find("dpkg-shlibdeps");
+        }
     }
 
     @Override

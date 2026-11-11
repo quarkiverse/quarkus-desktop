@@ -121,13 +121,16 @@ public final class RpmPackager implements Packager {
      * The command that builds the package, without its {@code %clean} stage : the default one of {@code rpmbuild}
      * (before 4.20) removes the build root, under {@code target/packaging}, with a shell command that does not quote
      * its path. A {@code &}, {@code ;} or {@code |} in the path would make it remove another directory : the beginning
-     * of the path.
+     * of the path. The build root is quoted in the command of {@code check-files}, which reports the files of the build
+     * root that the package does not have : {@code rpmbuild} splits that command at white space, and where the path
+     * has a space, {@code check-files} would search the beginning of the path (the project {@code editor}, next to
+     * {@code editor (copy)}) and report its files, or search nothing.
      *
      * @param top the directory of the build of {@code rpmbuild} ({@code _topdir})
      */
     static List<String> command(Path rpmbuild, Path top, Arch arch, Path spec) {
-        return List.of(rpmbuild.toString(), "-bb", "--noclean", "--define", "_topdir " + top, "--target", arch.gnu(),
-                spec.toString());
+        return List.of(rpmbuild.toString(), "-bb", "--noclean", "--define", "_topdir " + top, "--define",
+                "__check_files %{_rpmconfigdir}/check-files \"%{buildroot}\"", "--target", arch.gnu(), spec.toString());
     }
 
     /**

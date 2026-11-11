@@ -267,9 +267,10 @@ public final class MacBundle {
      * Signs the application bundle : its libraries and executables first, each on its own, then the Java runtime of a
      * JVM application, then the bundle itself, which signs its main executable with the entitlements. With a
      * certificate, the signatures have a secure time stamp and the hardened runtime, which the notary service
-     * requires, and the macOS libraries inside the jars that are not signed with a certificate are signed too. When
-     * the bundle is not signed, the ad hoc signature that {@code jpackage} gave it (on Apple silicon) is renewed, as
-     * the extension changed the bundle.
+     * requires, and the macOS libraries inside the jars that are not signed with a certificate are signed too, except
+     * in a signed jar, which cannot change : the build fails then when the packages are notarized, and warns
+     * otherwise. When the bundle is not signed, the ad hoc signature that {@code jpackage} gave it (on Apple silicon)
+     * is renewed, as the extension changed the bundle.
      */
     public static void sign(PackagingContext context, ApplicationImage image) throws IOException {
         var sign = context.config().macos().sign();
@@ -281,7 +282,8 @@ public final class MacBundle {
             return;
         }
         if (hasIdentity(context)) {
-            signJarLibraries(bundle, context.workDirectory("macos-jars"), library -> codesign(context, library, null));
+            signJarLibraries(bundle, context.workDirectory("macos-jars"), notarized(context.config()),
+                    library -> codesign(context, library, null));
         }
         Path main = image.launcherPath();
         List<Path> code = new ArrayList<>();
@@ -391,13 +393,16 @@ public final class MacBundle {
 
     /**
      * Signs the macOS libraries inside the jars of the bundle that are not signed with a certificate, which the notary
-     * service checks as it checks the other files : each one is extracted, signed, and put back in its jar.
+     * service checks as it checks the other files : each one is extracted, signed, and put back in its jar. A signed
+     * jar stays as it is.
      *
      * @param work the directory of the extracted libraries
+     * @param notarized whether the packages are notarized
      * @param codesign signs a file
-     * @throws PackagingException when a signed jar has a library that is not signed with a certificate
+     * @throws PackagingException when the packages are notarized and a signed jar has a library that is not signed
+     *         with a certificate
      */
-    static void signJarLibraries(Path bundle, Path work, Consumer<Path> codesign) throws IOException {
+    static void signJarLibraries(Path bundle, Path work, boolean notarized, Consumer<Path> codesign) throws IOException {
         int count = 0;
         for (Path file : FileTrees.files(bundle)) {
             Path jar = bundle.resolve(file);
@@ -406,7 +411,7 @@ public final class MacBundle {
             }
             List<String> libraries;
             try {
-                libraries = jarLibraries(jar);
+                libraries = jarLibraries(jar, notarized);
             } catch (ZipException e) {
                 LOGGER.warnf("%s is not a jar that can be read (%s) : the macOS libraries that it may have are not"
                         + " signed", jar, e.getMessage());
@@ -435,12 +440,15 @@ public final class MacBundle {
     /**
      * The macOS libraries of a jar to sign : its entries that are Mach-O executables, libraries or bundles (not its
      * class files, which start with the magic number of a universal file too), and that are not signed with a
-     * certificate. The ones that are keep the signature of their vendor, with its entitlements.
+     * certificate. The ones that are keep the signature of their vendor, with its entitlements. None in a signed jar,
+     * which cannot change without breaking its signature : such libraries get a warning when the packages are not
+     * notarized.
      *
-     * @throws PackagingException when the jar is signed and has such a library : it cannot change without breaking
-     *         the signature of the jar, and the notary service rejects it
+     * @param notarized whether the packages are notarized
+     * @throws PackagingException when the packages are notarized and the jar is signed and has such a library, which
+     *         the notary service rejects
      */
-    static List<String> jarLibraries(Path jar) throws IOException {
+    static List<String> jarLibraries(Path jar, boolean notarized) throws IOException {
         try (ZipFile zip = new ZipFile(jar.toFile())) {
             List<String> libraries = new ArrayList<>();
             Optional<String> signature = Optional.empty();
@@ -464,14 +472,33 @@ public final class MacBundle {
                 }
             }
             if (signature.isPresent() && !libraries.isEmpty()) {
-                throw new PackagingException("quarkus.desktop.packaging.macos.sign.identity : " + jar.getFileName()
-                        + " is a signed jar (" + signature.get() + "), and its macOS libraries " + libraries
-                        + " are not signed with a certificate. The notary service rejects them, and signing them would"
-                        + " break the signature of the jar : depend on a version of the library whose jar is not"
-                        + " signed, or build a native executable");
+                if (notarized) {
+                    throw new PackagingException("quarkus.desktop.packaging.macos.sign.identity : " + jar.getFileName()
+                            + " is a signed jar (" + signature.get() + "), and its macOS libraries " + libraries
+                            + " are not signed with a certificate. The notary service rejects them, and signing them"
+                            + " would break the signature of the jar : depend on a version of the library whose jar is"
+                            + " not signed, or build a native executable");
+                }
+                LOGGER.warnf("%s is a signed jar (%s), and its macOS libraries %s are not signed with a certificate :"
+                        + " they stay as they are, as signing them would break the signature of the jar. The hardened"
+                        + " runtime loads them only with the com.apple.security.cs.disable-library-validation"
+                        + " entitlement, which a JVM has by default, and the notary service would reject them : to"
+                        + " notarize the packages, depend on a version of the library whose jar is not signed, or build a"
+                        + " native executable", jar.getFileName(), signature.get(), libraries);
+                return List.of();
             }
             return libraries;
         }
+    }
+
+    /**
+     * Whether the packages are notarized : the configuration has the keychain profile of the credentials of the notary
+     * service, and a disk image or an installer package is built.
+     */
+    static boolean notarized(DesktopPackagingConfig config) {
+        List<PackageFormat> formats = config.formats().orElse(List.of());
+        return config.macos().notarize().keychainProfile().isPresent()
+                && (formats.contains(PackageFormat.DMG) || formats.contains(PackageFormat.PKG));
     }
 
     /**

@@ -21,13 +21,19 @@ import java.util.Properties;
 import java.util.jar.Attributes;
 import java.util.jar.JarFile;
 import java.util.jar.Manifest;
+import java.util.stream.Stream;
 
+import org.jboss.jandex.DotName;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
+import io.quarkiverse.desktop.swt.SwtLifecycle;
+import io.quarkiverse.desktop.swt.UiThread;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
+import io.quarkiverse.desktop.swt.runtime.SwtApplication;
+import io.quarkiverse.desktop.swt.runtime.SwtUi;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.maven.dependency.ResolvedDependencyBuilder;
@@ -485,6 +491,34 @@ class DesktopSwtProcessorTest {
         assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.of(" "), Optional.of("Acme Editor")));
         assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.of("swt"), Optional.of("Acme Editor")));
         assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.empty(), Optional.of("SWT")));
+    }
+
+    /**
+     * The extension names the application, whose packages then get an application id, when it creates its
+     * {@code Display} : the application observes SwtStartupEvent, or a class of the application uses SwtLifecycle (a
+     * {@code @QuarkusMain}, a Picocli command). Not for the classes of the extension, which use SwtLifecycle themselves.
+     */
+    @Test
+    void namesApplication() {
+        assertFalse(DesktopSwtProcessor.namesApplication(false, List.of()));
+        assertTrue(DesktopSwtProcessor.namesApplication(true, List.of()));
+        assertTrue(DesktopSwtProcessor.namesApplication(false, List.of(DotName.createSimple("org.acme.Main"))));
+        assertTrue(DesktopSwtProcessor.namesApplication(false, List.of(DotName.createSimple("org.acme.App$Command"))));
+        assertTrue(DesktopSwtProcessor.namesApplication(false, List.of(DotName.createSimple("Main"))));
+        // the other packages under the one of the extension : its integration tests, its tests
+        assertTrue(DesktopSwtProcessor.namesApplication(false,
+                List.of(DotName.createSimple("io.quarkiverse.desktop.swt.it.SwtItMain"))));
+        assertTrue(DesktopSwtProcessor.namesApplication(false,
+                List.of(DotName.createSimple(DesktopSwtProcessorTest.class))));
+
+        // the classes of the extension (were its jar indexed)
+        List<DotName> extension = List.of(DotName.createSimple(SwtApplication.class), DotName.createSimple(SwtUi.class),
+                DotName.createSimple(SwtLifecycle.class), DotName.createSimple(UiThread.class),
+                DotName.createSimple(SwtUi.class.getName() + "$State"));
+        assertFalse(DesktopSwtProcessor.namesApplication(false, extension));
+        assertTrue(DesktopSwtProcessor.namesApplication(true, extension));
+        assertTrue(DesktopSwtProcessor.namesApplication(false,
+                Stream.concat(extension.stream(), Stream.of(DotName.createSimple("org.acme.Main"))).toList()));
     }
 
     // ----------------------------------------------------------------------------------------------------- helpers

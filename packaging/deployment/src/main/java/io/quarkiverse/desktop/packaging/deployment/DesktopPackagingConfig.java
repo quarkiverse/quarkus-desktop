@@ -105,7 +105,7 @@ public interface DesktopPackagingConfig {
      * in {@code Contents/Resources} on macOS, and at the root of the image in JVM mode on Linux, where the launcher is
      * in the {@code bin} directory. Defaults to {@code src/main/packaging/content} when the directory exists.
      */
-    Optional<String> contentDirectory();
+    Optional<@WithConverter(TrimmedStringConverter.class) String> contentDirectory();
 
     /**
      * The directory of the packages, relative to the build directory ({@code target}, {@code build} with Gradle), or
@@ -152,8 +152,9 @@ public interface DesktopPackagingConfig {
          * Whether the native executable gets the icon of the application and its version information (the Details tab
          * of its properties : product name, version, vendor, copyright). They are resources linked in the executable
          * when it is built : the extension has to be in the application then, with or without packages. Native sources
-         * ({@code quarkus.native.sources-only=true}) do not get them : they are linked from a file of the build
-         * directory. An application that links a resource file of its own ({@code -H:NativeLinkerOption=app.res} in
+         * ({@code quarkus.native.sources-only=true}) and native-image bundles ({@code quarkus.native.bundle.*}) do not
+         * get them : they are linked from a file of the build directory. An application that links a resource file of its own
+         * ({@code -H:NativeLinkerOption=app.res} in
          * {@code quarkus.native.additional-build-args}) keeps it, without them ; one linked in another way conflicts
          * with them (the link fails with {@code CVT1100: duplicate resource}) unless this is {@code false}. In JVM
          * mode, {@code jpackage} gives them to its launcher.
@@ -259,7 +260,7 @@ public interface DesktopPackagingConfig {
          * The certificate file ({@code .pfx}) that signs the executables and the packages. Nothing is signed without
          * a certificate file, a subject name, a thumbprint or arguments. An unsigned MSIX package cannot be installed.
          */
-        Optional<String> certificateFile();
+        Optional<@WithConverter(TrimmedStringConverter.class) String> certificateFile();
 
         /**
          * The password of the certificate file.
@@ -285,8 +286,10 @@ public interface DesktopPackagingConfig {
          * More arguments of {@code signtool sign}, after the ones of the other properties : {@code /sm} (a certificate
          * of the machine store), {@code /csp} and {@code /kc} (a key of a cryptographic provider), {@code /dlib} and
          * {@code /dmdf} (a signing service such as Azure Trusted Signing). They sign on their own, without a
-         * certificate file, a subject name or a thumbprint. Write the paths with {@code /} : in a list, {@code \}
-         * escapes the next character.
+         * certificate file, a subject name or a thumbprint. The extension adds {@code /fd SHA256} unless they have
+         * {@code /fd}, and with {@code timestamp-url} it adds {@code /tr} and, unless they have {@code /td},
+         * {@code /td SHA256}. Write the paths absolute (the setup program is signed in the directory of Inno Setup) and
+         * with {@code /} : in a list, {@code \} escapes the next character.
          */
         Optional<List<@WithConverter(TrimmedStringConverter.class) String>> arguments();
     }
@@ -342,9 +345,9 @@ public interface DesktopPackagingConfig {
     interface MacSign {
 
         /**
-         * Whether the application bundle is signed. When it is not, the bundle of a JVM application that
-         * {@code jpackage} signed ad hoc (on Apple silicon) is signed ad hoc again after the changes of the extension,
-         * so that its signature stays valid.
+         * Whether the application bundle and the packages are signed. When they are not, whatever the identities, the
+         * bundle of a JVM application that {@code jpackage} signed ad hoc (on Apple silicon) is signed ad hoc again
+         * after the changes of the extension, so that its signature stays valid.
          */
         @WithDefault("true")
         boolean enabled();
@@ -354,15 +357,16 @@ public interface DesktopPackagingConfig {
          * certificate of the keychain. By default, the signature is ad hoc ({@code -}) : the application runs on the
          * machine that built it, and Gatekeeper blocks it on the others. A certificate also signs the macOS libraries
          * inside the jars of a JVM application that are not signed with a certificate, which the notary service checks :
-         * the build fails when a signed jar ({@code META-INF/*.SF}), which cannot be changed, has one.
+         * a signed jar ({@code META-INF/*.SF}), which cannot be changed, that has one fails the build when the packages
+         * are notarized, and gets a warning otherwise.
          */
         @WithDefault("-")
         String identity();
 
         /**
-         * The identity that signs the installer package, a {@code Developer ID Installer} certificate of the keychain.
-         * The installer package is not signed by default : the build warns about it when the application bundle is
-         * signed with a certificate.
+         * The identity that signs the installer package, a {@code Developer ID Installer} certificate of the keychain,
+         * unless {@code macos.sign.enabled} is {@code false}. The installer package is not signed by default : the
+         * build warns about it when the application bundle is signed with a certificate.
          */
         Optional<String> installerIdentity();
 
@@ -677,10 +681,15 @@ public interface DesktopPackagingConfig {
         Optional<String> runtimeImage();
 
         /**
-         * The options of the JVM of the application : {@code -Xmx512m}, {@code -Dkey=value}... Each one is one argument
-         * of the JVM, white space and quotes included ({@code -Dapp.title=Acme Editor}) ; the long form of an option
-         * with its value after white space ({@code --add-opens java.base/java.lang=ALL-UNNAMED}) is written with
-         * {@code =}.
+         * The options of the JVM of the application, separated by commas : {@code -Xms64m,-Xmx512m},
+         * {@code -Dkey=value}... Each one is one argument of the JVM, white space and quotes included
+         * ({@code -Dapp.title=Acme Editor}) : the build warns about one that holds several options
+         * ({@code -Xms64m -Xmx512m}), which the JVM rejects. The long form of an option with its value after white
+         * space ({@code --add-opens java.base/java.lang=ALL-UNNAMED}) is written with {@code =}. Write the paths with
+         * {@code /}, which Java accepts on Windows ({@code -Djava.library.path=$APPDIR/native}) : in a list, {@code \}
+         * escapes the next character ({@code C:\lib} is {@code C:lib}). An option with a comma or a backslash is set in
+         * an indexed property, and the other options then too, as the indexed properties replace the list
+         * ({@code quarkus.desktop.packaging.jvm.options[0]=-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3}).
          */
         Optional<List<@WithConverter(TrimmedStringConverter.class) String>> options();
     }

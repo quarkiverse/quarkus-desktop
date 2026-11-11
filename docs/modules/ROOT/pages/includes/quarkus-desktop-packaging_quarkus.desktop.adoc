@@ -311,7 +311,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. Native sources (`quarkus.native.sources-only=true`) do not get them : they are linked from a file of the build directory. An application that links a resource file of its own (`-H:NativeLinkerOption=app.res` in `quarkus.native.additional-build-args`) keeps it, without them ; one linked in another way conflicts with them (the link fails with `CVT1100: duplicate resource`) unless this is `false`. In JVM mode, `jpackage` gives them to its launcher.
+Whether the native executable gets the icon of the application and its version information (the Details tab of its properties : product name, version, vendor, copyright). They are resources linked in the executable when it is built : the extension has to be in the application then, with or without packages. Native sources (`quarkus.native.sources-only=true`) and native-image bundles (`quarkus.native.bundle.++*++`) do not get them : they are linked from a file of the build directory. An application that links a resource file of its own (`-H:NativeLinkerOption=app.res` in `quarkus.native.additional-build-args`) keeps it, without them ; one linked in another way conflicts with them (the link fails with `CVT1100: duplicate resource`) unless this is `false`. In JVM mode, `jpackage` gives them to its launcher.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -668,7 +668,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-More arguments of `signtool sign`, after the ones of the other properties : `/sm` (a certificate of the machine store), `/csp` and `/kc` (a key of a cryptographic provider), `/dlib` and `/dmdf` (a signing service such as Azure Trusted Signing). They sign on their own, without a certificate file, a subject name or a thumbprint. Write the paths with `/` : in a list, `++\++` escapes the next character.
+More arguments of `signtool sign`, after the ones of the other properties : `/sm` (a certificate of the machine store), `/csp` and `/kc` (a key of a cryptographic provider), `/dlib` and `/dmdf` (a signing service such as Azure Trusted Signing). They sign on their own, without a certificate file, a subject name or a thumbprint. The extension adds `/fd SHA256` unless they have `/fd`, and with `timestamp-url` it adds `/tr` and, unless they have `/td`, `/td SHA256`. Write the paths absolute (the setup program is signed in the directory of Inno Setup) and with `/` : in a list, `++\++` escapes the next character.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -773,7 +773,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-Whether the application bundle is signed. When it is not, the bundle of a JVM application that `jpackage` signed ad hoc (on Apple silicon) is signed ad hoc again after the changes of the extension, so that its signature stays valid.
+Whether the application bundle and the packages are signed. When they are not, whatever the identities, the bundle of a JVM application that `jpackage` signed ad hoc (on Apple silicon) is signed ad hoc again after the changes of the extension, so that its signature stays valid.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -794,7 +794,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identity that signs the application bundle and the disk image, a `Developer ID Application` certificate of the keychain. By default, the signature is ad hoc (`-`) : the application runs on the machine that built it, and Gatekeeper blocks it on the others. A certificate also signs the macOS libraries inside the jars of a JVM application that are not signed with a certificate, which the notary service checks : the build fails when a signed jar (`META-INF/++*++.SF`), which cannot be changed, has one.
+The identity that signs the application bundle and the disk image, a `Developer ID Application` certificate of the keychain. By default, the signature is ad hoc (`-`) : the application runs on the machine that built it, and Gatekeeper blocks it on the others. A certificate also signs the macOS libraries inside the jars of a JVM application that are not signed with a certificate, which the notary service checks : a signed jar (`META-INF/++*++.SF`), which cannot be changed, that has one fails the build when the packages are notarized, and gets a warning otherwise.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -815,7 +815,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The identity that signs the installer package, a `Developer ID Installer` certificate of the keychain. The installer package is not signed by default : the build warns about it when the application bundle is signed with a certificate.
+The identity that signs the installer package, a `Developer ID Installer` certificate of the keychain, unless `macos.sign.enabled` is `false`. The installer package is not signed by default : the build warns about it when the application bundle is signed with a certificate.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -1550,7 +1550,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The options of the JVM of the application : `-Xmx512m`, `-Dkey=value`... Each one is one argument of the JVM, white space and quotes included (`-Dapp.title=Acme Editor`) ; the long form of an option with its value after white space (`--add-opens java.base/java.lang=ALL-UNNAMED`) is written with `=`.
+The options of the JVM of the application, separated by commas : `-Xms64m,-Xmx512m`, `-Dkey=value`... Each one is one argument of the JVM, white space and quotes included (`-Dapp.title=Acme Editor`) : the build warns about one that holds several options (`-Xms64m -Xmx512m`), which the JVM rejects. The long form of an option with its value after white space (`--add-opens java.base/java.lang=ALL-UNNAMED`) is written with `=`. Write the paths with `/`, which Java accepts on Windows (`-Djava.library.path=$APPDIR/native`) : in a list, `++\++` escapes the next character (`C:++\++lib` is `C:lib`). An option with a comma or a backslash is set in an indexed property, and the other options then too, as the indexed properties replace the list (`quarkus.desktop.packaging.jvm.options++[++0++]++=-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3`).
 
 
 ifdef::add-copy-button-to-env-var[]

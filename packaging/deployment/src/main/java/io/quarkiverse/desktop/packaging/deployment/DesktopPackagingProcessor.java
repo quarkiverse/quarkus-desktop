@@ -2,6 +2,7 @@ package io.quarkiverse.desktop.packaging.deployment;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -64,6 +65,12 @@ class DesktopPackagingProcessor {
     static final String WINDOWS_NATIVE_IMAGE_PROPERTIES = "META-INF/native-image/io.quarkiverse.desktop/"
             + "quarkus-desktop-packaging-windows/native-image.properties";
 
+    /**
+     * The first bytes of a native executable, which have the magic number of UPX when it is compressed : UPX writes it
+     * after the headers of its loader, within the first kilobyte.
+     */
+    private static final int UPX_HEADERS = 4096;
+
     @BuildStep
     FeatureBuildItem feature() {
         return new FeatureBuildItem(FEATURE);
@@ -110,11 +117,12 @@ class DesktopPackagingProcessor {
      * The icon and the version information of the Windows native executable
      * ({@code quarkus.desktop.packaging.windows.executable-resources}) : a compiled resource file that the linker adds
      * to the executable, with a {@code -H:NativeLinkerOption} option in a {@code native-image.properties} file
-     * generated in the application jar. Not for native sources ({@code quarkus.native.sources-only}) : the option
-     * would name a file of this build, which the machine that compiles them may not have. Nor when the application
-     * links a resource file itself ({@link #linkedResourceFile}) : the icons and the version information of two files
-     * have the same identifiers, and the linker fails on them. Only in a production build : dev mode, the tests and
-     * {@code quarkus:run} ask for the generated resources too, and build no native executable.
+     * generated in the application jar. Not for native sources ({@code quarkus.native.sources-only}) nor for a
+     * native-image bundle ({@code quarkus.native.bundle.*}) : the option would name a file of this build, which the
+     * machine that compiles the sources or applies the bundle may not have ({@link #executableResourcesUnavailable}).
+     * Nor when the application links a resource file itself ({@link #linkedResourceFile}) : the icons and the version
+     * information of two files have the same identifiers, and the linker fails on them. Only in a production build :
+     * dev mode, the tests and {@code quarkus:run} ask for the generated resources too, and build no native executable.
      */
     @BuildStep(onlyIf = { NativeOrNativeSourcesBuild.class, IsNormal.class })
     void windowsExecutableResources(DesktopPackagingConfig config, NativeConfig nativeConfig,
@@ -126,10 +134,10 @@ class DesktopPackagingProcessor {
                 || targetOs(nativeImageRunner.isContainerBuild()) != TargetOs.WINDOWS) {
             return;
         }
-        if (nativeConfig.sourcesOnly()) {
-            LOGGER.info("The native sources do not give the native executable the icon and the version of the"
-                    + " application : they are linked from a file of this build, which the machine that compiles the"
-                    + " sources may not have");
+        Optional<String> unavailable = executableResourcesUnavailable(nativeConfig.sourcesOnly(),
+                nativeConfig.isCreateNativeBundle());
+        if (unavailable.isPresent()) {
+            LOGGER.info(unavailable.get());
             return;
         }
         Optional<String> linked = linkedResourceFile(NativeConfigUtils.getNativeAdditionalBuildArgs(nativeConfig));
@@ -148,13 +156,51 @@ class DesktopPackagingProcessor {
         if (file.isEmpty()) {
             return;
         }
-        if (!file.get().startsWith(buildDirectory)) {
-            // a directory of its own in the temporary directory : deleted once the native executable is linked
+        if (deletesResources(file.get(), buildDirectory, nativeConfig.pgo().enabled())) {
             Path directory = file.get().getParent();
             closeables.add(() -> FileTrees.delete(directory));
         }
         generatedResources.produce(new GeneratedResourceBuildItem(WINDOWS_NATIVE_IMAGE_PROPERTIES,
                 nativeImageProperties(List.of("-H:NativeLinkerOption=" + file.get())).getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /**
+     * Why the native executable does not get the icon and the version of the application : the native build writes
+     * native sources ({@code quarkus.native.sources-only}) or a native-image bundle ({@code quarkus.native.bundle.*}),
+     * which are compiled or applied later, maybe on another machine, and the option that links them would name a file
+     * of this build.
+     *
+     * @param sourcesOnly whether the native build writes native sources
+     * @param bundle whether the native build writes a native-image bundle
+     * @return the message, or empty when the native executable gets them
+     */
+    static Optional<String> executableResourcesUnavailable(boolean sourcesOnly, boolean bundle) {
+        if (sourcesOnly) {
+            return Optional.of("The native sources do not give the native executable the icon and the version of the"
+                    + " application : they are linked from a file of this build, which the machine that compiles the"
+                    + " sources may not have");
+        }
+        if (bundle) {
+            return Optional.of("The native-image bundle does not give the native executable the icon and the version of"
+                    + " the application : they are linked from a file of this build, which the machine that applies the"
+                    + " bundle may not have");
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Whether the directory of the compiled resource file is deleted at the end of the build, once the native
+     * executable is linked : the directory of its own that {@link #writeResources} creates in the temporary
+     * directory, never the build directory. Not with profile-guided optimization ({@code quarkus.native.pgo.enabled}) :
+     * the optimized executable is linked after the integration tests ({@code quarkus:build-enhanced-artifact}), from
+     * the same application jar, and so from the same file.
+     *
+     * @param file the compiled resource file
+     * @param buildDirectory the absolute path of the build directory
+     * @param pgo whether the native build is instrumented for profile-guided optimization
+     */
+    static boolean deletesResources(Path file, Path buildDirectory, boolean pgo) {
+        return !pgo && !file.startsWith(buildDirectory);
     }
 
     /**
@@ -188,7 +234,9 @@ class DesktopPackagingProcessor {
      * the path of the build directory has white space (native-image splits the options of a
      * {@code native-image.properties} file on white space). The new directory has a random name, so that no other
      * account can create it first ; the build step deletes it at the end of the build, after the native executable is
-     * linked (there is no such file for native sources, which are linked later).
+     * linked, but not when the optimized executable of profile-guided optimization is linked from it later
+     * ({@link #deletesResources}). There is no such file for native sources and native-image bundles, which are linked
+     * later, maybe on another machine.
      *
      * @param buildDirectory the build directory
      * @param temporaryDirectory the temporary directory ({@code java.io.tmpdir})
@@ -239,14 +287,14 @@ class DesktopPackagingProcessor {
     // -------------------------------------------------------------------------------------------------------- packages
 
     /**
-     * Checks the packages of the native executable before it is built, which takes minutes : what signs the
-     * application image, the icon, and the tools of each format and what it derives from the configuration (see
-     * {@link Packaging#check}). The architecture of the build stands for the one of the executable, which is not built
-     * yet. The {@code GeneratedResourceBuildItem} is never produced : it makes this step run before the application
-     * jar, which native-image builds the executable from. Only in a production build : dev mode, the tests and
-     * {@code quarkus:run} ask for the generated resources too, and package nothing. Each step that reads the
-     * configuration logs its warnings (a version without a leading number...) : this one, the packaging of the
-     * executable, and its resources on Windows.
+     * Checks the packages of the native executable before it is built, which takes minutes : the name of the
+     * application, the icon, the content directory, what signs the application image, and the tools of each format and
+     * what it derives from the configuration (see {@link Packaging#check}). The architecture of the build stands for
+     * the one of the executable, which is not built yet. The {@code GeneratedResourceBuildItem} is never produced : it
+     * makes this step run before the application jar, which native-image builds the executable from. Only in a
+     * production build : dev mode, the tests and {@code quarkus:run} ask for the generated resources too, and package
+     * nothing. Each step that reads the configuration logs its warnings (a version without a leading number...) : this
+     * one, the packaging of the executable, and its resources on Windows.
      */
     @BuildStep(onlyIf = { NativeBuild.class, IsNormal.class })
     void checkPackages(DesktopPackagingConfig config, NativeConfig nativeConfig,
@@ -307,7 +355,9 @@ class DesktopPackagingProcessor {
             LOGGER.warn(unavailable.get());
             return;
         }
-        compressionWarning(config.linux(), formats, upxCompressed.isPresent()).ifPresent(LOGGER::warn);
+        compressionWarning(config.linux(), formats,
+                isUpxCompressed(upxCompressed.isPresent(), nativeImage.isReused(), nativeImage.getPath()))
+                .ifPresent(LOGGER::warn);
         try {
             // the packages are built for the architecture of the executable, which the JVM of the build may not have
             PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os,
@@ -391,7 +441,8 @@ class DesktopPackagingProcessor {
      * packages : a compressed executable has no dynamic section, and {@code dpkg-shlibdeps} and {@code rpmbuild} do not
      * see the shared libraries that it is linked with.
      *
-     * @param compressed whether the native executable is compressed ({@code quarkus.native.compression.level})
+     * @param compressed whether the native executable is compressed ({@code quarkus.native.compression.level}) : by this
+     *        build, or by the former build of a reused executable ({@link #isUpxCompressed})
      * @return the warning, or empty when the formats have no automatic dependencies to lose
      */
     static Optional<String> compressionWarning(DesktopPackagingConfig.Linux config, List<PackageFormat> formats,
@@ -413,9 +464,44 @@ class DesktopPackagingProcessor {
     }
 
     /**
+     * Whether the native executable is compressed with UPX : by this build, or, for the executable of a former build
+     * ({@code quarkus.native.reuse-existing}), which Quarkus does not compress again, as its header shows. Not from the
+     * configuration : the optimized executable of profile-guided optimization, which a build reuses, is not
+     * compressed, and the compression of the former build may have another configuration.
+     *
+     * @param compressedByThisBuild whether the UPX compression of Quarkus ran in this build
+     *        ({@code UpxCompressedBuildItem})
+     * @param reused whether the native executable is the one of a former build
+     * @param executable the native executable
+     */
+    static boolean isUpxCompressed(boolean compressedByThisBuild, boolean reused, Path executable) {
+        if (compressedByThisBuild) {
+            return true;
+        }
+        if (!reused) {
+            return false;
+        }
+        try (InputStream in = Files.newInputStream(executable)) {
+            return hasUpxMagic(in.readNBytes(UPX_HEADERS));
+        } catch (IOException e) {
+            LOGGER.debugf(e, "Unable to read %s : it is taken for an executable that is not compressed", executable);
+            return false;
+        }
+    }
+
+    /**
+     * Whether the first bytes of an executable have the {@code UPX!} magic number, which UPX writes after the headers
+     * of the loader of a compressed executable.
+     */
+    static boolean hasUpxMagic(byte[] header) {
+        return new String(header, StandardCharsets.ISO_8859_1).contains("UPX!");
+    }
+
+    /**
      * Packages the jar of a JVM build, with a Java runtime. After the step of Quarkus that writes the AppCDS or AOT
-     * archive in the directory of a fast-jar ({@code quarkus.package.jar.aot.enabled}) : the archive is left out of
-     * the image (it was built for the JDK of the build and the path of the jar, not for the runtime of the image).
+     * archive in the directory of a fast-jar or an aot-jar ({@code quarkus.package.jar.aot.enabled}, which makes the
+     * aot-jar the default type) : the archive is left out of the image (it was built for the JDK of the build and the
+     * path of the jar, not for the runtime of the image).
      *
      * @param applicationId the name that the application gives itself at run time, for its shortcuts and desktop entry
      */
@@ -431,10 +517,8 @@ class DesktopPackagingProcessor {
             return;
         }
         boolean uberJar = jar.isUberJar();
-        if (!uberJar && jar.getType() != PackageConfig.JarConfig.JarType.FAST_JAR) {
-            throw new PackagingException("The packages of a JVM application are built from a fast-jar or an uber-jar, not"
-                    + " from a " + jar.getType() + " (quarkus.package.jar.type)");
-        }
+        checkJarType(jar.getType(), uberJar);
+        JvmApplicationImage.severalOptionsWarning(config.jvm().options()).ifPresent(LOGGER::warn);
         try {
             PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os, Arch::host,
                     applicationId);
@@ -444,6 +528,21 @@ class DesktopPackagingProcessor {
             Packaging.build(context, image, formats);
         } catch (IOException e) {
             throw new UncheckedIOException("Unable to package the application : " + e, e);
+        }
+    }
+
+    /**
+     * Checks the type of the jar of a JVM build : the packages are built from a fast-jar, from an aot-jar, which has
+     * the layout of a fast-jar, or from an uber-jar.
+     *
+     * @param uberJar whether the jar has the whole application
+     * @throws PackagingException for a jar of another type
+     */
+    static void checkJarType(PackageConfig.JarConfig.JarType type, boolean uberJar) {
+        if (!uberJar && type != PackageConfig.JarConfig.JarType.FAST_JAR
+                && type != PackageConfig.JarConfig.JarType.AOT_JAR) {
+            throw new PackagingException("The packages of a JVM application are built from a fast-jar, an aot-jar or an"
+                    + " uber-jar, not from a " + type + " : set quarkus.package.jar.type to fast-jar, aot-jar or uber-jar");
         }
     }
 

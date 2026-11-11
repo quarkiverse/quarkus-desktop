@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 import org.jboss.logging.Logger;
 
@@ -35,10 +36,11 @@ public final class InnoSetupPackager implements Packager {
     private static final String SIGN_TOOL = "quarkus";
 
     /**
-     * Checks the compiler of Inno Setup and the upgrade code.
+     * Checks the architecture of the application, the compiler of Inno Setup and the upgrade code.
      */
     @Override
     public void check(PackagingContext context) {
+        context.arch();
         iscc(context);
         MsiPackager.upgradeCode(context.app(), context.config().windows());
     }
@@ -65,16 +67,18 @@ public final class InnoSetupPackager implements Packager {
             Tools.exec(work, Map.of(), List.of(iscc.toString(), "/Qp", iss.toString()));
             return exe;
         }
-        // the compiler signs the uninstaller that it embeds, then the setup program. Quiet (/Qp) : it would print the
-        // command of signtool, which has the password of the certificate
+        // the compiler signs the uninstaller that it embeds, then the setup program, and prints the output of signtool,
+        // unless it is quiet (/Qp). It prints the command of signtool too, which has the password of the certificate :
+        // the output is logged, and tells why the compiler failed, without the lines of the command
         List<String> signtool = WindowsSdk.command(WindowsSdk.signtool(context), context.config().windows().sign(),
                 context.projectDirectory(), null);
-        Tools.Result result = Tools.run(work, Map.of(), List.of(iscc.toString(), "/Qp",
+        Tools.Result result = Tools.run(work, Map.of(), List.of(iscc.toString(),
                 "/S" + SIGN_TOOL + "=" + signTool(signtool), iss.toString()), true);
+        LOGGER.debugf("%s exited with %d : %s", iscc.getFileName(), result.exitCode(),
+                withoutCommands(result.output(), signtool.get(0)));
         if (!result.succeeded()) {
-            // not the command, for the same reason
             throw new PackagingException(iscc.getFileName() + " failed with exit code " + result.exitCode() + " :\n"
-                    + result.output().strip());
+                    + failureReason(result.output(), signtool.get(0)));
         }
         LOGGER.infof("Signed %s and its uninstaller with %s", exe.getFileName(),
                 WindowsSdk.signer(context.config().windows().sign()));
@@ -85,13 +89,67 @@ public final class InnoSetupPackager implements Packager {
      * The command of a sign tool of Inno Setup : the command of {@code signtool}, whose arguments are quoted as the C
      * runtime reads them, with {@code $q} for a quote, {@code $$} for a dollar sign, and {@code $f} for the file to
      * sign.
+     *
+     * @throws PackagingException for an argument with a line break : the compiler prints the command, and the part of
+     *         the password after the break would not be left out of its output ({@link #withoutCommands})
      */
     static String signTool(List<String> command) {
         StringBuilder line = new StringBuilder();
         for (String argument : command) {
+            if (argument.indexOf('\r') >= 0 || argument.indexOf('\n') >= 0) {
+                throw new PackagingException("The setup program cannot be signed with an argument of signtool that has"
+                        + " a line break : remove the line break from"
+                        + " quarkus.desktop.packaging.windows.sign.certificate-password, subject-name, thumbprint,"
+                        + " timestamp-url or arguments");
+            }
             line.append(quote(argument)).append(' ');
         }
         return line.toString().replace("$", "$$").replace("\"", "$q") + "$f";
+    }
+
+    /**
+     * The output of the compiler without the lines of the command of the sign tool, which has the password of the
+     * certificate : the lines that run it, and the ones that have the path of {@code signtool}, which starts the
+     * command.
+     *
+     * @param signtool the path of {@code signtool}, as the command has it
+     */
+    static String withoutCommands(String output, String signtool) {
+        return output.lines().filter(line -> !line.contains("Running Sign Tool") && !line.contains(signtool))
+                .collect(Collectors.joining("\n"));
+    }
+
+    /**
+     * Why the compiler failed, from its output, without the lines of the command of the sign tool : its error, after
+     * what {@code signtool} printed the last time that it ran when the error is the one of the sign tool. The whole
+     * output when it has no error.
+     *
+     * @param signtool the path of {@code signtool}, as the command has it
+     */
+    static String failureReason(String output, String signtool) {
+        List<String> lines = output.lines().toList();
+        int error = 0;
+        while (error < lines.size() && !lines.get(error).startsWith("Error")) {
+            error++;
+        }
+        if (error == lines.size()) {
+            return withoutCommands(output, signtool).strip();
+        }
+        int start = error;
+        if (lines.get(error).contains("Sign Tool")) {
+            // the lines after the last command : the output of signtool
+            for (int i = error - 1; i >= 0; i--) {
+                if (lines.get(i).contains("Running Sign Tool")) {
+                    start = i + 1;
+                    break;
+                }
+            }
+        }
+        StringBuilder reason = new StringBuilder();
+        for (String line : lines.subList(start, lines.size())) {
+            reason.append(line.strip()).append('\n');
+        }
+        return withoutCommands(reason.toString(), signtool).strip();
     }
 
     /**
@@ -200,10 +258,12 @@ public final class InnoSetupPackager implements Packager {
         }
         if (!nativeExecutable) {
             // the directories of jpackage, whose files change with the version (the jars, the Java runtime, the
-            // configuration of the launcher) : the setup program installs over the installed version
+            // configuration of the launcher) : the setup program installs over the installed version. Only in its
+            // directory : a first installation may go into an existing directory, whose app and runtime directories
+            // are not the ones of the application
             script.append("[InstallDelete]\n");
-            script.append("Type: filesandordirs; Name: \"{app}\\app\"\n");
-            script.append("Type: filesandordirs; Name: \"{app}\\runtime\"\n");
+            script.append("Type: filesandordirs; Name: \"{app}\\app\"; Check: InstallsOverPreviousVersion\n");
+            script.append("Type: filesandordirs; Name: \"{app}\\runtime\"; Check: InstallsOverPreviousVersion\n");
             script.append('\n');
         }
         script.append("[Files]\n");
@@ -256,6 +316,16 @@ public final class InnoSetupPackager implements Packager {
         script.append("    SuppressibleMsgBox(").append(string(app.name() + " is installed by its MSI package : remove it"
                 + " first.")).append(", mbCriticalError, MB_OK, IDOK);\n");
         script.append("end;\n");
+        if (!nativeExecutable) {
+            // whether the setup program installs in the directory of the installed version, which the uninstall key of
+            // the application has : none on a first installation
+            script.append('\n');
+            script.append("function InstallsOverPreviousVersion(): Boolean;\n");
+            script.append("begin\n");
+            script.append("  Result := (WizardForm.PrevAppDir <> '') and SameText(RemoveBackslashUnlessRoot(")
+                    .append("WizardForm.PrevAppDir), RemoveBackslashUnlessRoot(ExpandConstant('{app}')));\n");
+            script.append("end;\n");
+        }
         return script.toString();
     }
 

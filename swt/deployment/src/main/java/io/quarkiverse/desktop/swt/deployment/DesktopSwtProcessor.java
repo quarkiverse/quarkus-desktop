@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -18,16 +19,20 @@ import java.util.jar.Manifest;
 import java.util.stream.Stream;
 
 import org.eclipse.microprofile.config.ConfigProvider;
+import org.jboss.jandex.ClassInfo;
+import org.jboss.jandex.DotName;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.spi.ApplicationIdBuildItem;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
+import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtSupport;
+import io.quarkiverse.desktop.swt.runtime.SwtApplication;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.core.deployment.service.ServiceRegistrar;
@@ -112,6 +117,18 @@ class DesktopSwtProcessor {
      * ({@code DesktopSwtRuntimeConfig.applicationName()}).
      */
     static final String APPLICATION_NAME = "quarkus.desktop.swt.application-name";
+
+    /**
+     * {@code SwtLifecycle}, whose {@code run()} creates the {@code Display} of the application.
+     */
+    private static final DotName SWT_LIFECYCLE = DotName.createSimple(SwtLifecycle.class);
+
+    /**
+     * The packages of the classes of the extension, some of which use {@code SwtLifecycle} : its API and its
+     * implementation (its main, the user interface).
+     */
+    private static final Set<String> EXTENSION_PACKAGES = Set.of(SwtLifecycle.class.getPackageName(),
+            SwtApplication.class.getPackageName());
 
     @BuildStep
     FeatureBuildItem feature() {
@@ -198,15 +215,51 @@ class DesktopSwtProcessor {
      * {@code application.properties}, which the build and the run time both read. A value given at run time only (an
      * environment variable, a system property) is not the one of the packages, and a value given to the build only (a
      * property of the build tool, {@code -D} on its command line) is not the one of the application at run time.
+     * <p>
+     * None for an application without an SWT user interface ({@link #namesApplication}) : the extension does not name
+     * its process (an AWT or Swing user interface, a {@code Display} created by the application), whose windows and
+     * shortcuts with a name that the process does not have would be two taskbar buttons on Windows. An application that
+     * creates its {@code Display} itself sets {@code quarkus.desktop.packaging.linux.startup-wm-class} itself, and its
+     * Windows shortcuts get no AppUserModelID.
      *
      * @param packagedName the name of the application in its packages (Desktop Packaging extension)
+     * @param userInterface present when the application observes {@code SwtStartupEvent}
+     * @param combinedIndex the indexed classes, the ones that use {@code SwtLifecycle} among them
      */
     @BuildStep
     void packagedApplicationId(ApplicationInfoBuildItem applicationInfo,
-            Optional<PackagedApplicationNameBuildItem> packagedName, BuildProducer<ApplicationIdBuildItem> applicationId) {
+            Optional<PackagedApplicationNameBuildItem> packagedName, Optional<SwtUiBuildItem> userInterface,
+            CombinedIndexBuildItem combinedIndex, BuildProducer<ApplicationIdBuildItem> applicationId) {
+        if (!namesApplication(userInterface.isPresent(),
+                combinedIndex.getIndex().getKnownUsers(SWT_LIFECYCLE).stream().map(ClassInfo::name).toList())) {
+            LOGGER.debug("The application has no SWT user interface (no SwtStartupEvent observer, no class using"
+                    + " SwtLifecycle) : the extension does not name it, its packages get no application id");
+            return;
+        }
         applicationId(ConfigProvider.getConfig().getOptionalValue(APPLICATION_NAME, String.class),
                 defaultApplicationName(packagedName, applicationInfo.getName()))
                 .ifPresent(id -> applicationId.produce(new ApplicationIdBuildItem(id)));
+    }
+
+    /**
+     * Whether the extension names the application at run time : {@code SwtLifecycle.run()} gives the name to SWT, then
+     * creates the {@code Display}. It runs when the application observes {@code SwtStartupEvent} (the main of the
+     * extension calls it), or when a class of the application calls it (a {@code @QuarkusMain}, a Picocli command...) :
+     * a class outside the extension that uses {@code SwtLifecycle}.
+     *
+     * @param userInterface whether the application observes {@code SwtStartupEvent}
+     * @param lifecycleUsers the indexed classes that use {@code SwtLifecycle}, the ones of the extension included
+     */
+    static boolean namesApplication(boolean userInterface, Collection<DotName> lifecycleUsers) {
+        return userInterface || lifecycleUsers.stream().anyMatch(name -> !EXTENSION_PACKAGES.contains(packageName(name)));
+    }
+
+    /**
+     * The package of a class, empty for the default package.
+     */
+    private static String packageName(DotName className) {
+        String name = className.toString();
+        return name.substring(0, Math.max(name.lastIndexOf('.'), 0));
     }
 
     /**

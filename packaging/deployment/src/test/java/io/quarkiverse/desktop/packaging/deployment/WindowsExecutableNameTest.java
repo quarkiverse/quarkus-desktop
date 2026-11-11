@@ -98,6 +98,29 @@ class WindowsExecutableNameTest {
     }
 
     /**
+     * The warning of an executable that keeps the name of the build : a longer ASCII name that a library has no room
+     * for, or a name that is not ASCII.
+     */
+    @Test
+    void theWarningOfAnExecutableThatKeepsTheNameOfTheBuild() {
+        String room = NativeApplicationImage.keptNameWarning("acme-runner.exe", "Quarkus Desktop Showcase.exe", "b.dll");
+        assertTrue(room.startsWith("The executable of the application image is named acme-runner.exe rather than Quarkus"
+                + " Desktop Showcase.exe : b.dll is linked with the executable by its file name"), room);
+        assertTrue(room.contains("No section of b.dll has room for the longer name"), room);
+        assertTrue(room.contains("(quarkus.package.output-name=Quarkus Desktop Showcase, with"
+                + " quarkus.package.jar.add-runner-suffix=false)"), room);
+        assertFalse(room.contains("ASCII"), room);
+        // the name of the application, or the one of the build, in an encoding that is not known
+        for (String[] names : List.of(new String[] { "acme-runner.exe", "Éditeur.exe" },
+                new String[] { "Éditeur-runner.exe", "Editor.exe" })) {
+            String ascii = NativeApplicationImage.keptNameWarning(names[0], names[1], "jvm.dll");
+            assertTrue(ascii.contains("is named " + names[0] + " rather than " + names[1] + " : jvm.dll"), ascii);
+            assertTrue(ascii.contains("Name the executable in the build, with an ASCII name"), ascii);
+            assertFalse(ascii.contains("room"), ascii);
+        }
+    }
+
+    /**
      * The name of the build in another case is the same file name for Windows : nothing changes.
      */
     @Test

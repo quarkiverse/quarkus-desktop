@@ -74,6 +74,11 @@ final class JvmApplicationImage {
      */
     private static final Pattern LONG_OPTION = Pattern.compile("(--[A-Za-z][A-Za-z0-9-]*)\\s+(\\S.*)", Pattern.DOTALL);
 
+    /**
+     * The white space before another option of the JVM : a dash, then a letter or a dash.
+     */
+    private static final Pattern NEXT_OPTION = Pattern.compile("\\s+(?=-[-A-Za-z])");
+
     private JvmApplicationImage() {
     }
 
@@ -172,6 +177,29 @@ final class JvmApplicationImage {
     }
 
     /**
+     * The warning of the options of the configuration that hold several options of the JVM, separated by white space
+     * ({@code -Xms64m -Xmx512m}) : each one is one argument of the JVM, which rejects it, or takes the others as part of
+     * its value. A warning only : the value of an option may have a dash after white space
+     * ({@code -Dexec.args=--verbose --debug}).
+     *
+     * @param configured the options of the configuration ({@code quarkus.desktop.packaging.jvm.options})
+     * @return the warning, or empty when each option is one
+     */
+    static Optional<String> severalOptionsWarning(Optional<List<String>> configured) {
+        List<String> several = configured.orElse(List.of()).stream().map(String::strip)
+                .filter(option -> NEXT_OPTION.matcher(option).find()).toList();
+        if (several.isEmpty()) {
+            return Optional.empty();
+        }
+        String options = String.join(" and ", several.stream().map(option -> "\"" + option + "\"").toList());
+        String separated = String.join(" and ",
+                several.stream().map(option -> NEXT_OPTION.matcher(option).replaceAll(",")).toList());
+        return Optional.of("quarkus.desktop.packaging.jvm.options : each option is one argument of the JVM, white space"
+                + " included, so the JVM gets " + options + (several.size() == 1 ? " as one option" : " as one option each")
+                + ", which it rejects, or takes as one value. Separate the options with commas : " + separated);
+    }
+
+    /**
      * An option of the JVM as {@code jpackage} takes it, for one argument of the JVM : {@code jpackage} splits the value
      * of {@code --java-options} at white space and removes its quotes. The option loses its leading and trailing white
      * space ; one with white space or a quote is quoted, its quotes escaped, and the backslashes at its end after the
@@ -226,7 +254,7 @@ final class JvmApplicationImage {
     /**
      * Builds the application image in the {@code image} directory of the output directory.
      *
-     * @param jar the runner jar : {@code quarkus-app/quarkus-run.jar}, or an uber-jar
+     * @param jar the runner jar : {@code quarkus-app/quarkus-run.jar} of a fast-jar or an aot-jar, or an uber-jar
      * @param uberJar whether the jar has the whole application
      * @param archive the AppCDS or AOT archive that the build wrote next to the jar, if any
      * @param extensionOptions the options of the JVM that the extensions of the application ask for
@@ -413,13 +441,13 @@ final class JvmApplicationImage {
     }
 
     /**
-     * The input directory of {@code jpackage}, which it copies into the image : the directory of a fast-jar, or a
-     * directory with the uber-jar alone. The AppCDS or AOT archive that the build wrote in the directory of a fast-jar
-     * ({@code quarkus.package.jar.aot.enabled}) is left out : it was built for the JDK of the build and the path of the
-     * jar, not for the runtime of the image, and the launcher does not use it.
+     * The input directory of {@code jpackage}, which it copies into the image : the directory of a fast-jar or an
+     * aot-jar, or a directory with the uber-jar alone. The AppCDS or AOT archive that the build wrote in the directory
+     * of a fast-jar or an aot-jar ({@code quarkus.package.jar.aot.enabled}) is left out : it was built for the JDK of
+     * the build and the path of the jar, not for the runtime of the image, and the launcher does not use it.
      *
      * @param work the work directory of the image
-     * @param jar the runner jar : {@code quarkus-app/quarkus-run.jar}, or an uber-jar
+     * @param jar the runner jar : {@code quarkus-app/quarkus-run.jar} of a fast-jar or an aot-jar, or an uber-jar
      * @param uberJar whether the jar has the whole application
      * @param archive the archive (a file, or a directory), if any
      */

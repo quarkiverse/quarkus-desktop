@@ -111,7 +111,11 @@ class ToolsTest {
             assertTrue(found.get().isAbsolute());
             assertEquals(Optional.empty(), Tools.onPath("acme-tool", null));
         } finally {
-            FileTrees.delete(directory);
+            try {
+                FileTrees.delete(directory);
+            } catch (IOException e) {
+                // an antivirus still reads the new executable, on Windows : the directory stays in the build directory
+            }
         }
     }
 

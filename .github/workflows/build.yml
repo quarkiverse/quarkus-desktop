@@ -370,11 +370,22 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         working-directory: packaging/integration-tests/target/packaging
         run: |
-          # The bundles are opened as the Finder opens them : by LaunchServices, which reads their Info.plist, and may
-          # pass the serial number of the process (-psn_...) before the arguments
+          # LaunchServices, which opens the bundles as the Finder does, may pass the serial number of the process
+          # (-psn_...) before the arguments
           started() {
             grep -qE "^started 999-SNAPSHOT \[(-psn_[0-9_]+, )?$1\]$" "$2" || { echo "::error::The application of the $1 package did not start"; exit 1; }
             echo "$1 : $(cat "$2")"
+          }
+          # Starts the bundle of a package twice : its executable, whose exit status fails the step and whose output goes
+          # to the log, then the bundle as the Finder opens it, by LaunchServices, which reads its Info.plist. open passes
+          # on neither the exit status nor the output of the application : the output goes to files, which the log shows
+          start_bundle() {
+            "$2/Contents/MacOS/Packaging IT" --marker="$RUNNER_TEMP/$1-direct.txt" "$1"
+            started "$1" "$RUNNER_TEMP/$1-direct.txt"
+            touch "$RUNNER_TEMP/$1.out" "$RUNNER_TEMP/$1.err"
+            open -W -n --stdout "$RUNNER_TEMP/$1.out" --stderr "$RUNNER_TEMP/$1.err" "$2" --args --marker="$RUNNER_TEMP/$1.txt" "$1"
+            cat "$RUNNER_TEMP/$1.out" "$RUNNER_TEMP/$1.err"
+            started "$1" "$RUNNER_TEMP/$1.txt"
           }
           ls -l
           codesign --verify --deep --strict --verbose=2 "image/Packaging IT.app"
@@ -405,13 +416,11 @@ jobs:
 
           hdiutil attach Packaging-IT-*.dmg -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
           test -L "$RUNNER_TEMP/dmg/Applications"
-          open -W -n "$RUNNER_TEMP/dmg/Packaging IT.app" --args --marker="$RUNNER_TEMP/dmg.txt" dmg
-          started dmg "$RUNNER_TEMP/dmg.txt"
+          start_bundle dmg "$RUNNER_TEMP/dmg/Packaging IT.app"
           hdiutil detach "$RUNNER_TEMP/dmg" || { sleep 5; hdiutil detach -force "$RUNNER_TEMP/dmg"; }
 
           sudo installer -pkg Packaging-IT-*.pkg -target /
-          open -W -n "/Applications/Packaging IT.app" --args --marker="$RUNNER_TEMP/pkg.txt" pkg
-          started pkg "$RUNNER_TEMP/pkg.txt"
+          start_bundle pkg "/Applications/Packaging IT.app"
           pkgutil --pkg-info io.quarkiverse.desktop.PackagingIt
           sudo rm -rf "/Applications/Packaging IT.app"
 

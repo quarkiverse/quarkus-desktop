@@ -3,7 +3,6 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.nio.file.DirectoryStream;
 import java.nio.file.Files;
-import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -94,9 +93,10 @@ final class NativeApplicationImage {
             String name = file.getFile().getFileName().toString();
             Path fileDirectory = file.getDirectory().isEmpty() ? directory : directory.resolve(file.getDirectory());
             if (context.os() == TargetOs.MACOS && fileDirectory.normalize().startsWith(directory)
-                    && Files.isRegularFile(file.getFile(), LinkOption.NOFOLLOW_LINKS) && !FileTrees.isMachO(file.getFile())) {
+                    && Files.isRegularFile(file.getFile()) && !FileTrees.isMachO(file.getFile().toRealPath())) {
                 // codesign takes every file of Contents/MacOS for code, which has to be signed : a file that is not
-                // goes to Contents/Resources, and the executable finds it through a link
+                // (or a link to one, copied as its target) goes to Contents/Resources, and the executable finds it
+                // through a link
                 FileTrees.copy(file.getFile(), content.resolve(file.getDirectory()).resolve(name));
                 Path link = Files.createDirectories(fileDirectory).resolve(name);
                 Files.deleteIfExists(link);
@@ -151,12 +151,7 @@ final class NativeApplicationImage {
                 }
                 Optional<byte[]> changed = PeImports.rename(bytes, built, launcher);
                 if (changed.isEmpty()) {
-                    LOGGER.warnf("The executable of the application image is named %s rather than %s : %s is linked with"
-                            + " the executable by its file name, which cannot be changed to that one. Name the"
-                            + " executable in the build, with an ASCII name (quarkus.package.output-name, with"
-                            + " quarkus.package.jar.add-runner-suffix=false) : Windows loads the libraries of an"
-                            + " executable whose name is not ASCII only where the ANSI code page is the one of the build",
-                            built, launcher, library.getFileName());
+                    LOGGER.warn(keptNameWarning(built, launcher, library.getFileName().toString()));
                     Files.move(directory.resolve(launcher), directory.resolve(built));
                     return built;
                 }
@@ -168,6 +163,28 @@ final class NativeApplicationImage {
             Files.write(library.getKey(), library.getValue());
         }
         return launcher;
+    }
+
+    /**
+     * The warning of a Windows executable that keeps the name of the build, as a library cannot import its new name :
+     * with two ASCII names, the new one is longer and no section of the library has room for it ; otherwise a name is
+     * not ASCII, typically.
+     *
+     * @param built the file name of the executable in the build directory
+     * @param launcher the file name of the executable under the name of the application
+     * @param library the file name of the library
+     */
+    static String keptNameWarning(String built, String launcher, String library) {
+        String warning = "The executable of the application image is named " + built + " rather than " + launcher + " : "
+                + library + " is linked with the executable by its file name, which cannot be changed to that one. ";
+        if ((built + launcher).chars().allMatch(c -> c < 0x80)) {
+            return warning + "No section of " + library + " has room for the longer name : name the executable after"
+                    + " the application in the build (quarkus.package.output-name="
+                    + launcher.replaceFirst("(?i)\\.exe$", "") + ", with quarkus.package.jar.add-runner-suffix=false)";
+        }
+        return warning + "Name the executable in the build, with an ASCII name (quarkus.package.output-name, with"
+                + " quarkus.package.jar.add-runner-suffix=false) : Windows loads the libraries of an executable whose"
+                + " name is not ASCII only where the ANSI code page is the one of the build";
     }
 
     /**

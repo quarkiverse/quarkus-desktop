@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -15,11 +16,15 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Supplier;
+import java.util.jar.Attributes;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
@@ -108,7 +113,8 @@ class ApplicationImageTest {
     /**
      * native-image links every Windows executable with the Visual C++ runtime, which is not part of Windows : the image
      * gets the libraries of the runtime that its executable and its libraries import, from the first JDK that has
-     * them, with the ones that they import.
+     * them, with the ones that they import. Each image is built in an output directory of its own : an antivirus may
+     * still read the libraries of the image before, which a build in the same directory deletes.
      */
     @Test
     void theVisualCppRuntimeOfAWindowsNativeExecutable(@TempDir Path project) throws IOException {
@@ -125,13 +131,15 @@ class ApplicationImageTest {
 
         // a library of the JDK that imports msvcp140.dll, which imports vcruntime140_1.dll
         Files.write(target.resolve("awt.dll"), library("MSVCP140.dll"));
-        image = NativeApplicationImage.build(context, executable, List.of(), homes);
+        image = NativeApplicationImage.build(context(project, TargetOs.WINDOWS, Map.of("output-directory", "packaging-2")),
+                executable, List.of(), homes);
         assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("awt.dll"), Path.of("msvcp140.dll"),
                 Path.of("vcruntime140.dll"), Path.of("vcruntime140_1.dll")), FileTrees.files(image.root()));
         assertEquals(List.of(), NativeApplicationImage.missingVcRuntime(image.root()));
 
         // no JDK has them : a warning
-        image = NativeApplicationImage.build(context, executable, List.of(), List.of());
+        image = NativeApplicationImage.build(context(project, TargetOs.WINDOWS, Map.of("output-directory", "packaging-3")),
+                executable, List.of(), List.of());
         assertEquals(List.of(Path.of("Acme Editor.exe"), Path.of("awt.dll")), FileTrees.files(image.root()));
         assertEquals(List.of("msvcp140.dll", "vcruntime140.dll"), NativeApplicationImage.missingVcRuntime(image.root()));
     }
@@ -229,6 +237,40 @@ class ApplicationImageTest {
         // code stays next to the executable, and a file that is already a resource has no link
         assertTrue(Files.isRegularFile(contents.resolve("MacOS/lib/libnative.dylib"), LinkOption.NOFOLLOW_LINKS));
         assertTrue(Files.isRegularFile(contents.resolve("Resources/notes.txt"), LinkOption.NOFOLLOW_LINKS));
+    }
+
+    /**
+     * A file of the executable that is a symbolic link goes where the file that it links to would go, as a copy of that
+     * file under the name of the link : a resource of the bundle when it is not code, next to the executable when it is.
+     */
+    @Test
+    @DisabledOnOs(value = OS.WINDOWS, disabledReason = "Creating a symbolic link needs a privilege on Windows")
+    void aLinkedFileOfTheExecutableGoesWhereItsTargetWould(@TempDir Path project) throws IOException {
+        Path target = nativeBuild(project);
+        Path toolkit = Files.createDirectories(project.resolve("toolkit"));
+        Files.writeString(toolkit.resolve("icudtl.dat"), "icu");
+        Files.write(toolkit.resolve("libnative.dylib"), new byte[] { (byte) 0xcf, (byte) 0xfa, (byte) 0xed, (byte) 0xfe,
+                0, 0, 0, 0 });
+        Path icu = Files.createSymbolicLink(target.resolve("icudtl.dat"), Path.of("../toolkit/icudtl.dat"));
+        Path renamed = Files.createSymbolicLink(target.resolve("renamed.dat"), Path.of("icudtl.dat"));
+        Path library = Files.createSymbolicLink(Files.createDirectories(project.resolve("ext")).resolve("libnative.dylib"),
+                Path.of("../toolkit/libnative.dylib"));
+        PackagingContext context = context(project, TargetOs.MACOS, Map.of("macos.sign.enabled", "false"));
+        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"),
+                List.of(new NativeExecutableFileBuildItem(icu), new NativeExecutableFileBuildItem(renamed, "data"),
+                        new NativeExecutableFileBuildItem(library, "lib")),
+                List.of());
+        Path contents = image.root().resolve("Contents");
+        assertTrue(Files.isRegularFile(contents.resolve("Resources/icudtl.dat"), LinkOption.NOFOLLOW_LINKS));
+        assertEquals("icu", Files.readString(contents.resolve("Resources/icudtl.dat")));
+        assertEquals(Path.of("../Resources/icudtl.dat"), Files.readSymbolicLink(contents.resolve("MacOS/icudtl.dat")));
+        assertTrue(Files.isRegularFile(contents.resolve("Resources/data/renamed.dat"), LinkOption.NOFOLLOW_LINKS));
+        assertEquals("icu", Files.readString(contents.resolve("Resources/data/renamed.dat")));
+        assertEquals(Path.of("../../Resources/data/renamed.dat"),
+                Files.readSymbolicLink(contents.resolve("MacOS/data/renamed.dat")));
+        assertTrue(Files.isRegularFile(contents.resolve("MacOS/lib/libnative.dylib"), LinkOption.NOFOLLOW_LINKS));
+        assertTrue(FileTrees.isMachO(contents.resolve("MacOS/lib/libnative.dylib")));
+        assertFalse(Files.exists(contents.resolve("Resources/lib/libnative.dylib"), LinkOption.NOFOLLOW_LINKS));
     }
 
     @Test
@@ -336,6 +378,56 @@ class ApplicationImageTest {
     }
 
     /**
+     * The default Java runtime, as the {@code jpackage} of the JDK of the build builds it from the modules that the
+     * extension gives it : the modules of Java SE and of the JDK that export an API ({@code ALL-DEFAULT}, which
+     * {@code jpackage} expands as the last of its modules only), with the ones of Quarkus and the providers of
+     * services. In the build directory rather than in a temporary directory : an antivirus may still be reading the new
+     * executables when the test deletes them.
+     */
+    @Test
+    void theDefaultJavaRuntimeHasTheProvidersOfServices() throws IOException {
+        Path javaHome = Path.of(System.getProperty("java.home"));
+        Path jpackage = javaHome.resolve("bin").resolve(TargetOs.host() == TargetOs.WINDOWS ? "jpackage.exe" : "jpackage");
+        assumeTrue(Files.isRegularFile(jpackage), "The JDK of the build has no jpackage : " + javaHome);
+        assumeTrue(Files.isRegularFile(javaHome.resolve("release")), "The JDK of the build has no release file : "
+                + javaHome);
+        Path project = Files.createDirectories(Path.of("target", "default-java-runtime").toAbsolutePath());
+        // an uber-jar : jpackage reads the name of its main class, and does not load it
+        Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put(Attributes.Name.MANIFEST_VERSION, "1.0");
+        manifest.getMainAttributes().put(Attributes.Name.MAIN_CLASS, "org.acme.Main");
+        Path jar = project.resolve("acme-runner.jar");
+        new JarOutputStream(Files.newOutputStream(jar), manifest).close();
+        // the options of jlink do not change the modules : without --strip-debug, which needs objcopy on Linux. A bundle
+        // that is not signed, without codesign of a certificate
+        PackagingContext context = context(project, TargetOs.host(), Map.of("jvm.jlink-options",
+                "--strip-java-debug-attributes,--strip-native-commands,--no-man-pages,--no-header-files",
+                "macos.sign.enabled", "false"));
+
+        ApplicationImage image = JvmApplicationImage.build(context, jar, true, Optional.empty(), List.of());
+        Path runtime = switch (TargetOs.host()) {
+            case WINDOWS -> image.root().resolve("runtime");
+            case MACOS -> image.root().resolve("Contents/runtime/Contents/Home");
+            case LINUX -> image.root().resolve("lib/runtime");
+        };
+        Set<String> modules = JvmApplicationImage.releaseModules(Files.readString(runtime.resolve("release")));
+        List<String> expected = new ArrayList<>(List.of("java.desktop", "java.sql", "jdk.localedata", "jdk.charsets",
+                "jdk.crypto.cryptoki", "jdk.naming.dns", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported",
+                "jdk.zipfs"));
+        if (TargetOs.host() == TargetOs.WINDOWS) {
+            expected.add("jdk.crypto.mscapi");
+        }
+        for (String module : expected) {
+            assertTrue(modules.contains(module), module + " is not in the default Java runtime : " + modules);
+        }
+        try {
+            FileTrees.delete(image.root());
+        } catch (IOException e) {
+            // an antivirus that is reading a new executable : the next build deletes the image
+        }
+    }
+
+    /**
      * The options of the JVM : the ones of the extensions for the operating system of the application, then the ones of
      * the configuration.
      */
@@ -378,6 +470,56 @@ class ApplicationImageTest {
     }
 
     /**
+     * The options of the JVM as the list of the configuration gives them : a comma separates them and a backslash
+     * escapes the next character, so that a path is written with {@code /}. An indexed property keeps its commas and
+     * its backslashes, and the indexed properties replace the list.
+     */
+    @Test
+    void theOptionsOfTheJvmOfTheConfiguration() {
+        assertEquals(List.of("-Djava.library.path=$APPDIR/native", "-Dq=a,b"), TestConfig.of(Map.of("jvm.options",
+                "-Djava.library.path=$APPDIR/native,-Dq=a\\,b")).jvm().options().orElseThrow());
+        // the rule of the lists, which the documentation of the property gives
+        assertEquals(List.of("-Dp=C:lib"), TestConfig.of(Map.of("jvm.options", "-Dp=C:\\lib")).jvm().options()
+                .orElseThrow());
+        List<String> indexed = TestConfig.of(Map.of("jvm.options", "-Xmx64m", "jvm.options[0]",
+                "-Dhome=C:\\Program Files\\Acme\\", "jvm.options[1]", "-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3"))
+                .jvm().options().orElseThrow();
+        assertEquals(List.of("-Dhome=C:\\Program Files\\Acme\\", "-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3"),
+                indexed);
+        // one argument of the JVM each, as jpackage takes it
+        assertEquals("'-Dhome=C:\\Program Files\\Acme'\\", JvmApplicationImage.javaOption(indexed.get(0)));
+        assertEquals("-Djdk.tls.client.protocols=TLSv1.2,TLSv1.3", JvmApplicationImage.javaOption(indexed.get(1)));
+    }
+
+    /**
+     * An option of the configuration that holds several options of the JVM, separated by white space, is one argument
+     * of the JVM all the same : a warning, which shows how to separate them.
+     */
+    @Test
+    void severalOptionsInOneAreWarned() {
+        String warning = JvmApplicationImage.severalOptionsWarning(Optional.of(List.of("-Xmx512m", "-Xms64m -Xmx512m")))
+                .orElseThrow();
+        assertTrue(warning.startsWith("quarkus.desktop.packaging.jvm.options : "), warning);
+        assertTrue(warning.contains("the JVM gets \"-Xms64m -Xmx512m\" as one option,"), warning);
+        assertTrue(warning.endsWith("Separate the options with commas : -Xms64m,-Xmx512m"), warning);
+        warning = JvmApplicationImage.severalOptionsWarning(Optional.of(List.of(
+                "--add-opens java.base/java.lang=ALL-UNNAMED --add-opens java.base/java.io=ALL-UNNAMED",
+                " -Dfoo=bar\t-Dbaz=qux "))).orElseThrow();
+        assertTrue(warning.contains("\" and \"-Dfoo=bar\t-Dbaz=qux\" as one option each,"), warning);
+        assertTrue(warning.endsWith(": --add-opens java.base/java.lang=ALL-UNNAMED,--add-opens java.base/java.io=ALL-UNNAMED"
+                + " and -Dfoo=bar,-Dbaz=qux"), warning);
+
+        // one option each : with white space in its value, or a dash that does not start an option
+        assertEquals(Optional.empty(), JvmApplicationImage.severalOptionsWarning(Optional.empty()));
+        for (String option : List.of("-Xmx512m", " -Xmx512m ", "-Dapp.title=Acme Editor", "-XX:OnOutOfMemoryError=kill -9 %p",
+                "-Dhome=C:\\Program Files\\Acme\\", "--add-opens java.base/java.lang=ALL-UNNAMED",
+                "--module-path  C:\\Program Files\\Acme", "-Dtitle=Acme - Editor")) {
+            assertEquals(Optional.empty(), JvmApplicationImage.severalOptionsWarning(Optional.of(List.of(option))),
+                    option);
+        }
+    }
+
+    /**
      * The arguments of {@code jpackage} in a file, in UTF-8 : each one in double quotes, which keep its white space, its
      * single quotes, its first {@code #} or {@code @} and its emptiness.
      */
@@ -405,8 +547,8 @@ class ApplicationImageTest {
     }
 
     /**
-     * A JDK with a {@code jpackage} file, without the {@code .exe} extension on Windows too : an antivirus may still be
-     * reading a new executable when the test deletes its directory.
+     * A JDK with a {@code jpackage} file, without the {@code .exe} extension on Windows too : the name that the test
+     * looks for.
      *
      * @return the path of {@code jpackage}
      */

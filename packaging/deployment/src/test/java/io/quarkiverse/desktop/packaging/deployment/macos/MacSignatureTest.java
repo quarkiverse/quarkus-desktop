@@ -39,7 +39,8 @@ import io.quarkiverse.desktop.packaging.deployment.macos.MachOTest.Signature;
 /**
  * The signature of the application bundle and its notarization : the macOS libraries inside the jars, the renewed ad
  * hoc signature of {@code jpackage}, the command of {@code notarytool} and the answer of the notary service, the
- * identities that it needs, and the warnings of the packages that are not notarized.
+ * identities that it needs, the warnings of the packages that are not notarized, and the signature of the installer
+ * package.
  */
 class MacSignatureTest {
 
@@ -104,20 +105,43 @@ class MacSignatureTest {
         entries.put("darwin/helper", MachOTest.machO(true, 2, Signature.AD_HOC));
         entries.put("darwin/node", MachOTest.machO(true, 2, Signature.CERTIFICATE));
         entries.put("readme.txt", "Acme".getBytes(StandardCharsets.UTF_8));
-        assertEquals(List.of("darwin-aarch64/libacme.dylib", "darwin/libacme.jnilib", "darwin/helper"),
-                MacBundle.jarLibraries(jar(directory.resolve("natives.jar"), entries)));
+        Path natives = jar(directory.resolve("natives.jar"), entries);
+        for (boolean notarized : new boolean[] { false, true }) {
+            assertEquals(List.of("darwin-aarch64/libacme.dylib", "darwin/libacme.jnilib", "darwin/helper"),
+                    MacBundle.jarLibraries(natives, notarized));
+        }
         assertEquals(List.of(), MacBundle.jarLibraries(jar(directory.resolve("plain.jar"),
-                Map.of("org/acme/Plain.class", MachOTest.CLASS_FILE))));
+                Map.of("org/acme/Plain.class", MachOTest.CLASS_FILE)), true));
 
         // a signed jar cannot change : its libraries keep the signatures of their vendor
-        assertEquals(List.of(), MacBundle.jarLibraries(jar(directory.resolve("vendor.jar"), signedJar())));
+        assertEquals(List.of(), MacBundle.jarLibraries(jar(directory.resolve("vendor.jar"), signedJar()), true));
+        // the notary service rejects a library of a signed jar that is not signed with a certificate : a warning when
+        // the packages are not notarized
         Map<String, byte[]> unsigned = signedJar();
         unsigned.put("darwin/libother.dylib", MachOTest.library(Signature.AD_HOC));
         Path other = jar(directory.resolve("other.jar"), unsigned);
-        PackagingException e = assertThrows(PackagingException.class, () -> MacBundle.jarLibraries(other));
+        assertEquals(List.of(), MacBundle.jarLibraries(other, false));
+        PackagingException e = assertThrows(PackagingException.class, () -> MacBundle.jarLibraries(other, true));
         assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.macos.sign.identity : other.jar is a signed jar"
                 + " (META-INF/VENDOR.SF), and its macOS libraries [darwin/libother.dylib] are not signed with a"
                 + " certificate."), e.getMessage());
+    }
+
+    /**
+     * The packages are notarized when the configuration has a keychain profile, and a disk image or an installer
+     * package is built.
+     */
+    @Test
+    void thePackagesThatAreNotarized() {
+        assertFalse(MacBundle.notarized(TestConfig.defaults()));
+        assertFalse(MacBundle.notarized(TestConfig.of(Map.of("formats", "dmg"))));
+        assertFalse(MacBundle.notarized(TestConfig.of(Map.of("formats", "dmg", "macos.notarize.keychain-profile", ""))));
+        assertFalse(MacBundle.notarized(TestConfig.of(Map.of("macos.notarize.keychain-profile", "acme"))));
+        assertFalse(MacBundle.notarized(TestConfig.of(Map.of("formats", "directory,msi,deb",
+                "macos.notarize.keychain-profile", "acme"))));
+        assertTrue(MacBundle.notarized(TestConfig.of(Map.of("formats", "directory,dmg",
+                "macos.notarize.keychain-profile", "acme"))));
+        assertTrue(MacBundle.notarized(TestConfig.of(Map.of("formats", "pkg", "macos.notarize.keychain-profile", "acme"))));
     }
 
     /**
@@ -154,7 +178,7 @@ class MacSignatureTest {
 
         Path work = directory.resolve("work");
         List<Path> signed = new ArrayList<>();
-        MacBundle.signJarLibraries(bundle, work, codesign(work, signed));
+        MacBundle.signJarLibraries(bundle, work, true, codesign(work, signed));
         assertEquals(List.of(Path.of("0", "libacme.dylib"), Path.of("1", "libacme.dylib")), signed);
         try (ZipFile zip = new ZipFile(natives.toFile())) {
             assertEquals(List.copyOf(entries.keySet()), zip.stream().map(ZipEntry::getName).toList());
@@ -178,13 +202,29 @@ class MacSignatureTest {
         }
 
         // a signed jar with a library that is not signed with a certificate fails the build before anything is signed
+        // when the packages are notarized, and stays as it is otherwise, while the libraries of the other jars are signed
         Map<String, byte[]> unsigned = signedJar();
         unsigned.put("darwin/libother.dylib", MachOTest.library(Signature.AD_HOC));
         Path other = directory.resolve("Other.app");
-        jar(other.resolve("Contents/app/lib/main/org.acme.other-1.0.jar"), unsigned);
+        Path otherJar = jar(other.resolve("Contents/app/lib/main/org.acme.other-1.0.jar"), unsigned);
+        Path nativesJar = jar(other.resolve("Contents/app/lib/main/org.acme.unsigned-1.0.jar"),
+                Map.of("darwin/libunsigned.dylib", MachOTest.library(Signature.NONE)));
+        byte[] otherBytes = Files.readAllBytes(otherJar);
+        byte[] nativesBytes = Files.readAllBytes(nativesJar);
+        Path otherWork = directory.resolve("other-work");
         signed.clear();
-        assertThrows(PackagingException.class, () -> MacBundle.signJarLibraries(other, work, codesign(work, signed)));
+        assertThrows(PackagingException.class,
+                () -> MacBundle.signJarLibraries(other, otherWork, true, codesign(otherWork, signed)));
         assertEquals(List.of(), signed);
+        assertArrayEquals(otherBytes, Files.readAllBytes(otherJar));
+        assertArrayEquals(nativesBytes, Files.readAllBytes(nativesJar));
+
+        MacBundle.signJarLibraries(other, otherWork, false, codesign(otherWork, signed));
+        assertEquals(List.of(Path.of("0", "libunsigned.dylib")), signed);
+        assertArrayEquals(otherBytes, Files.readAllBytes(otherJar));
+        try (ZipFile zip = new ZipFile(nativesJar.toFile())) {
+            assertArrayEquals(concat(MachOTest.library(Signature.NONE), SIGNATURE), read(zip, "darwin/libunsigned.dylib"));
+        }
     }
 
     /**
@@ -457,5 +497,23 @@ class MacSignatureTest {
                 "macos.notarize.keychain-profile", "acme", "macos.sign.installer-identity", INSTALLER_IDENTITY));
         assertEquals(Optional.empty(), MacBundle.notarizationWarning(released.macos(), "Acme.dmg"));
         assertEquals(Optional.empty(), PkgPackager.signatureWarning(released.macos(), "Acme.pkg"));
+    }
+
+    /**
+     * The installer package is signed with the installer identity, with a secure time stamp, unless nothing is signed
+     * ({@code macos.sign.enabled=false}).
+     */
+    @Test
+    void theInstallerPackageIsSignedWithTheInstallerIdentity() {
+        assertEquals(List.of(), PkgPackager.signArguments(TestConfig.defaults().macos().sign()));
+        assertEquals(List.of("--sign", INSTALLER_IDENTITY, "--timestamp"), PkgPackager.signArguments(
+                TestConfig.of(Map.of("macos.sign.installer-identity", INSTALLER_IDENTITY)).macos().sign()));
+        assertEquals(List.of("--sign", INSTALLER_IDENTITY, "--timestamp", "--keychain", "ci.keychain-db"),
+                PkgPackager.signArguments(TestConfig.of(Map.of("macos.sign.installer-identity", INSTALLER_IDENTITY,
+                        "macos.sign.keychain", "ci.keychain-db")).macos().sign()));
+        assertEquals(List.of(), PkgPackager.signArguments(TestConfig.of(Map.of("macos.sign.installer-identity",
+                INSTALLER_IDENTITY, "macos.sign.identity", IDENTITY, "macos.sign.enabled", "false")).macos().sign()));
+        assertEquals(List.of(), PkgPackager.signArguments(
+                TestConfig.of(Map.of("macos.sign.installer-identity", "")).macos().sign()));
     }
 }

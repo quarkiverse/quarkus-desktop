@@ -82,17 +82,19 @@ public final class MsixPackager implements Packager {
     private static final int DISPLAY_NAME_LENGTH = 256;
 
     /**
-     * Checks {@code makeappx}, and the identity, the version, the minimum version of Windows and the capabilities of the
-     * manifest.
+     * Checks the architecture of the application, {@code makeappx}, the identity, the version, the minimum version of
+     * Windows and the capabilities of the manifest, and the hash of the block map.
      */
     @Override
     public void check(PackagingContext context) {
+        context.arch();
         makeappx(context);
         DesktopPackagingConfig.Msix config = context.config().windows().msix();
         identityName(context.app(), config);
         version(context.app());
         minVersion(config);
         capabilities(config);
+        blockMapHash(context.config().windows().sign());
     }
 
     @Override
@@ -112,8 +114,8 @@ public final class MsixPackager implements Packager {
                 mapping(generated, image.root(), FileTrees.files(image.root())));
         Path msix = context.output(WindowsSdk.packageFileName(context.app(), context.arch(), PackageFormat.MSIX));
         WindowsSdk.warnEmptyDirectories(image, msix);
-        Tools.exec(work, Map.of(), List.of(makeappx.toString(), "pack", "/o", "/f", mappingFile.toString(), "/p",
-                msix.toString()));
+        Tools.exec(work, Map.of(), List.of(makeappx.toString(), "pack", "/o", "/h",
+                blockMapHash(context.config().windows().sign()), "/f", mappingFile.toString(), "/p", msix.toString()));
         if (WindowsSdk.signs(context)) {
             try {
                 WindowsSdk.sign(context, msix);
@@ -164,6 +166,22 @@ public final class MsixPackager implements Packager {
 
     private static String entry(Path file, String name) {
         return "\"" + file + "\" \"" + name + "\"\n";
+    }
+
+    /**
+     * The hash algorithm of the block map of the package : the file digest of its signature
+     * ({@link WindowsSdk#fileDigest}), which {@code signtool} requires.
+     *
+     * @throws PackagingException for a file digest that a block map cannot have
+     */
+    static String blockMapHash(DesktopPackagingConfig.Sign sign) {
+        String digest = WindowsSdk.fileDigest(sign);
+        if (!List.of("SHA256", "SHA384", "SHA512").contains(digest)) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.sign.arguments : the file digest /fd " + digest
+                    + " does not sign an MSIX package, whose block map has a SHA256, SHA384 or SHA512 hash : set /fd to"
+                    + " one of them");
+        }
+        return digest;
     }
 
     /**

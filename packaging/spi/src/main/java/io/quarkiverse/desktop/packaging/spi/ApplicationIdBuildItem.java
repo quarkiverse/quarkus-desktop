@@ -8,8 +8,10 @@ import io.quarkus.builder.item.SimpleBuildItem;
  * The name that the application gives itself at run time, which the desktop matches with its shortcuts and entries :
  * the explicit AppUserModelID of its process on Windows, the class of its windows ({@code WM_CLASS}) on Linux. Not the
  * identifier of the packages ({@code quarkus.desktop.packaging.identifier}). The extension of a user interface toolkit
- * that names the application produces it : Desktop SWT, with the name that it gives to {@code Display.setAppName}. Not
- * Desktop AWT : AWT gives the process no AppUserModelID, and names its windows after the main class.
+ * that names the application produces it : Desktop SWT, with the name that it gives to {@code Display.setAppName},
+ * when it creates the {@code Display} of the application (an SWT user interface : a {@code SwtStartupEvent} observer,
+ * or a class that calls {@code SwtLifecycle.run()}). Not Desktop AWT : AWT gives the process no AppUserModelID, and
+ * names its windows after the main class.
  * <p>
  * The Desktop Packaging extension gives it to the shortcuts of the MSI package and of the setup program
  * ({@code System.AppUserModel.ID}), without which the windows of the application and its shortcut pinned to the taskbar

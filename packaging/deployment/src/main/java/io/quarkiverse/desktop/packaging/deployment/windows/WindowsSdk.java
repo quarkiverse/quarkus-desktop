@@ -96,7 +96,7 @@ public final class WindowsSdk {
      */
     static Path[] locations(String executable) {
         List<Path> locations = new ArrayList<>();
-        String architecture = Arch.host().windows();
+        String architecture = sdkArchitecture(System.getProperty("os.arch", ""));
         for (String variable : List.of("ProgramFiles(x86)", "ProgramFiles")) {
             String programFiles = System.getenv(variable);
             if (programFiles == null) {
@@ -119,6 +119,21 @@ public final class WindowsSdk {
             }
         }
         return locations.toArray(Path[]::new);
+    }
+
+    /**
+     * The directory of the Windows SDK whose tools run on the JVM of the build : {@code arm64}, {@code x86} or
+     * {@code x64}. Its tools sign and package the files of any architecture : the packagers check the one of the
+     * packages.
+     *
+     * @param osArch the architecture of the JVM ({@code os.arch})
+     */
+    static String sdkArchitecture(String osArch) {
+        return switch (osArch.toLowerCase(Locale.ROOT)) {
+            case "aarch64", "arm64" -> "arm64";
+            case "x86" -> "x86";
+            default -> "x64";
+        };
     }
 
     /**
@@ -158,14 +173,35 @@ public final class WindowsSdk {
     }
 
     /**
-     * Checks what signs the application image and the Windows packages, before they are built : {@code signtool}, when
-     * the configuration signs.
+     * Checks what signs the application image and the Windows packages, before they are built : {@code signtool} and
+     * its arguments, when the configuration signs.
      *
-     * @throws PackagingException when {@code signtool} is not found
+     * @throws PackagingException when {@code signtool} is not found, or when its arguments have a time stamp server
+     *         too ({@link #checkArguments})
      */
     public static void checkSignature(PackagingContext context) {
         if (signs(context)) {
             signtool(context);
+            checkArguments(context.config().windows().sign());
+        }
+    }
+
+    /**
+     * Checks the arguments of {@code signtool} against the other properties of the signature : {@code signtool} takes
+     * one time stamp server, the one of {@code timestamp-url} or the one of the arguments ({@code /tr} or {@code /t}).
+     *
+     * @throws PackagingException when both have one
+     */
+    static void checkArguments(DesktopPackagingConfig.Sign sign) {
+        if (sign.timestampUrl().isEmpty()) {
+            return;
+        }
+        for (String argument : arguments(sign)) {
+            if (isOption(argument, "tr") || isOption(argument, "t")) {
+                throw new PackagingException("quarkus.desktop.packaging.windows.sign.timestamp-url and the " + argument
+                        + " of quarkus.desktop.packaging.windows.sign.arguments both set a time stamp server, which"
+                        + " signtool takes once : keep one of them");
+            }
         }
     }
 
@@ -373,8 +409,12 @@ public final class WindowsSdk {
     }
 
     /**
-     * The command of {@code signtool sign}, without the files to sign. Its paths are absolute : the compiler of Inno
-     * Setup runs the command in its own directory.
+     * The command of {@code signtool sign}, without the files to sign. The paths of {@code signtool} and of the
+     * certificate file are absolute : the compiler of Inno Setup runs the command in its own directory. The ones of
+     * the arguments are as written.
+     * <p>
+     * {@code signtool} refuses an option given twice : the file digest ({@code /fd SHA256}), the description and the
+     * digest of the time stamp ({@code /td SHA256}) are left to the arguments that have them.
      *
      * @param projectDirectory the directory of a relative certificate file
      * @param description the description of the signed content, or {@code null}
@@ -382,10 +422,12 @@ public final class WindowsSdk {
     static List<String> command(Path signtool, DesktopPackagingConfig.Sign sign, Path projectDirectory,
             String description) {
         List<String> arguments = arguments(sign);
-        List<String> command = new ArrayList<>(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256"));
-        // signtool refuses an option given twice
-        if (description != null && !description.isBlank()
-                && arguments.stream().noneMatch(argument -> argument.equalsIgnoreCase("/d") || argument.equals("-d"))) {
+        List<String> command = new ArrayList<>(List.of(signtool.toAbsolutePath().toString(), "sign"));
+        if (!hasOption(arguments, "fd")) {
+            command.add("/fd");
+            command.add("SHA256");
+        }
+        if (description != null && !description.isBlank() && !hasOption(arguments, "d")) {
             command.add("/d");
             command.add(description);
         }
@@ -408,11 +450,41 @@ public final class WindowsSdk {
         sign.timestampUrl().ifPresent(url -> {
             command.add("/tr");
             command.add(url);
-            command.add("/td");
-            command.add("SHA256");
+            if (!hasOption(arguments, "td")) {
+                command.add("/td");
+                command.add("SHA256");
+            }
         });
         command.addAll(arguments);
         return command;
+    }
+
+    /**
+     * Whether arguments of {@code signtool} have an option ({@link #isOption}).
+     */
+    static boolean hasOption(List<String> arguments, String name) {
+        return arguments.stream().anyMatch(argument -> isOption(argument, name));
+    }
+
+    /**
+     * Whether an argument of {@code signtool} is an option : {@code /<name>} or {@code -<name>}, in any case.
+     */
+    private static boolean isOption(String argument, String name) {
+        return argument.equalsIgnoreCase("/" + name) || argument.equalsIgnoreCase("-" + name);
+    }
+
+    /**
+     * The file digest of the signatures : the value of the first {@code /fd} option of the arguments, in upper case,
+     * or {@code SHA256}, which the command has otherwise.
+     */
+    static String fileDigest(DesktopPackagingConfig.Sign sign) {
+        List<String> arguments = arguments(sign);
+        for (int i = 0; i + 1 < arguments.size(); i++) {
+            if (isOption(arguments.get(i), "fd")) {
+                return arguments.get(i + 1).toUpperCase(Locale.ROOT);
+            }
+        }
+        return "SHA256";
     }
 
     /**

@@ -168,7 +168,8 @@ public final class Tools {
     /**
      * Runs a tool and returns its output, whatever its exit code.
      *
-     * @param confidential whether the command has a secret (the password of a certificate) : it is not logged then
+     * @param confidential whether the command has a secret (the password of a certificate) : neither it nor the output
+     *        is logged then, which may repeat it
      * @throws PackagingException for a batch file of Windows, with an argument that {@code cmd.exe} would change
      */
     public static Result run(Path directory, Map<String, String> environment, List<String> command,
@@ -190,7 +191,8 @@ public final class Tools {
             process.getOutputStream().close();
             String output = decode(process.getInputStream().readAllBytes(), nativeEncoding());
             int exitCode = process.waitFor();
-            LOGGER.debugf("%s exited with %d : %s", command.get(0), exitCode, output);
+            LOGGER.debugf("%s exited with %d%s", command.get(0), exitCode,
+                    confidential ? " (output not logged)" : " : " + output);
             return new Result(exitCode, output);
         } catch (IOException e) {
             throw new PackagingException("Unable to run " + command.get(0) + " : " + e.getMessage(), e);

@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
 import io.quarkus.test.QuarkusProdModeTest;
+import io.quarkus.test.common.PathTestHelper;
 
 /**
  * The packages of a JVM build are checked before the application image is built : a missing tool fails the build
@@ -18,18 +19,21 @@ import io.quarkus.test.QuarkusProdModeTest;
 class JvmBuildCheckTest {
 
     /**
-     * The output directory of the packages, which the build does not create.
+     * The output directory of the packages, in the build directory of the module, which the build does not create.
      */
-    static final Path OUTPUT_DIRECTORY = Path.of(System.getProperty("java.io.tmpdir"))
+    static final Path OUTPUT_DIRECTORY = PathTestHelper.getTestClassesLocation(JvmBuildCheckTest.class).getParent()
             .resolve("jvm-build-check-" + UUID.randomUUID()).toAbsolutePath();
 
     /**
      * The production build of a jar, with a format of each operating system, whose tool is missing. The output
      * directory is checked as the build fails : the test instance may be of another load of this class, with another
-     * output directory.
+     * output directory. The configuration of the test has the ordinal 500 : above the system properties (400), into
+     * which Surefire copies every {@code -D} of the Maven command line (the formats of the packaging jobs, which build
+     * this module with {@code -am}), and above the environment (300).
      */
     @RegisterExtension
     static final QuarkusProdModeTest TEST = new QuarkusProdModeTest().withEmptyApplication()
+            .overrideConfigKey("config_ordinal", "500")
             .overrideConfigKey("quarkus.desktop.packaging.output-directory", OUTPUT_DIRECTORY.toString())
             .overrideConfigKey("quarkus.desktop.packaging.formats", "msi,dmg,deb")
             .overrideConfigKey("quarkus.desktop.packaging.tools.wix", "missing/wix")
