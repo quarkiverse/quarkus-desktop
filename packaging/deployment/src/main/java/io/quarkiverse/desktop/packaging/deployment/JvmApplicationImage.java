@@ -85,10 +85,7 @@ final class JvmApplicationImage {
      * @param jdkVersion the feature version of the JDK of {@code jpackage}, or {@code -1} when it is not known
      */
     static List<String> modules(List<String> configured, int jdkVersion) {
-        LinkedHashSet<String> modules = new LinkedHashSet<>();
-        for (String module : configured) {
-            modules.add(module.trim());
-        }
+        LinkedHashSet<String> modules = new LinkedHashSet<>(configured);
         modules.addAll(QUARKUS_MODULES);
         if (jdkVersion >= 0 && jdkVersion < EC_IN_JAVA_BASE_JDK) {
             modules.add("jdk.crypto.ec");

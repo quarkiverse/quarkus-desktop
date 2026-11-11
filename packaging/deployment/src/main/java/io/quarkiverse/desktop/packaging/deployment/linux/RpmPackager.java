@@ -7,6 +7,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeSet;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
@@ -29,10 +30,18 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
  */
 public final class RpmPackager implements Packager {
 
+    /**
+     * Checks {@code rpmbuild} and the installation directory.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        rpmbuild(context);
+        LinuxDesktop.installPath(context);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path rpmbuild = context.tools().require("rpmbuild",
-                "install the RPM build tools (dnf install rpm-build, or apt install rpm)");
+        Path rpmbuild = rpmbuild(context);
         AppInfo app = context.app();
         Path work = context.workDirectory("rpm");
         Path root = work.resolve("root");
@@ -45,7 +54,7 @@ public final class RpmPackager implements Packager {
         String installPath = LinuxDesktop.installPath(context);
 
         Path spec = FileTrees.write(work.resolve(app.packageName() + ".spec"), spec(app, context.config().linux(), root,
-                installPath, libraries(root.resolve(installPath.substring(1)))));
+                installPath, libraries(root.resolve(installPath.substring(1))), context.optionalLibraries()));
         Path top = work.resolve("rpmbuild");
         Tools.exec(work, Map.of(), command(rpmbuild, top, context.arch(), spec));
 
@@ -59,6 +68,13 @@ public final class RpmPackager implements Packager {
         // the copy of the tree in the build root, which the %clean stage of rpmbuild no longer deletes
         FileTrees.delete(top);
         return rpm;
+    }
+
+    /**
+     * The {@code rpmbuild} of the machine.
+     */
+    private static Path rpmbuild(PackagingContext context) {
+        return context.tools().require("rpmbuild", "install the RPM build tools (dnf install rpm-build, or apt install rpm)");
     }
 
     static String fileName(AppInfo app, DesktopPackagingConfig.Linux config, Arch arch) {
@@ -120,9 +136,12 @@ public final class RpmPackager implements Packager {
      * @param root the tree of the files of the package
      * @param installPath the directory of the application ({@code /opt/acme-editor})
      * @param libraries the names of the shared libraries of the application (see {@link #libraries})
+     * @param optionalLibraries the libraries of the application that its executable loads only in some cases (the GTK 4
+     *        library of SWT), relative to its directory, with {@code /} separators : the package does not require the
+     *        libraries that they are linked with
      */
     static String spec(AppInfo app, DesktopPackagingConfig.Linux config, Path root, String installPath,
-            List<String> libraries) {
+            List<String> libraries, Set<String> optionalLibraries) {
         String name = app.packageName();
         StringBuilder spec = new StringBuilder();
         // the files are packaged as they are : not stripped, no debug package, no build ID links
@@ -136,6 +155,14 @@ public final class RpmPackager implements Packager {
                 names.append(names.length() == 0 ? "" : "|").append(regex(library));
             }
             spec.append("%global __requires_exclude ^(").append(names).append(")([(].*)?$\n");
+        }
+        if (!optionalLibraries.isEmpty()) {
+            StringBuilder files = new StringBuilder();
+            for (String library : new TreeSet<>(optionalLibraries)) {
+                files.append(files.length() == 0 ? "" : "|").append(regex(library));
+            }
+            spec.append("%global __requires_exclude_from ^").append(regex(installPath)).append("/(").append(files)
+                    .append(")$\n");
         }
         spec.append('\n');
         spec.append("Name: ").append(name).append('\n');

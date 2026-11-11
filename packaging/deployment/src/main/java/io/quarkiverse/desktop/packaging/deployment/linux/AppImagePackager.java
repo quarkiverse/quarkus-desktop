@@ -24,21 +24,20 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
  */
 public final class AppImagePackager implements Packager {
 
+    /**
+     * Checks {@code appimagetool} and the runtime file of the configuration.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        appimagetool(context);
+        runtimeFile(context);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         String arch = context.arch().gnu();
-        Path appimagetool = context.tools().find("appimagetool")
-                .or(() -> context.tools().find("appimagetool-" + arch + ".AppImage"))
-                .orElseThrow(() -> new PackagingException("appimagetool not found : download appimagetool-" + arch
-                        + ".AppImage from https://github.com/AppImage/appimagetool/releases, make it executable and"
-                        + " put it on the PATH as appimagetool (or set quarkus.desktop.packaging.tools.appimagetool to"
-                        + " its path)"));
-        Optional<Path> runtimeFile = context.config().linux().appimage().runtimeFile()
-                .map(context.projectDirectory()::resolve).map(Path::toAbsolutePath);
-        if (runtimeFile.isPresent() && !Files.isRegularFile(runtimeFile.get())) {
-            throw new PackagingException("quarkus.desktop.packaging.linux.appimage.runtime-file : " + runtimeFile.get()
-                    + " not found");
-        }
+        Path appimagetool = appimagetool(context);
+        Optional<Path> runtimeFile = runtimeFile(context);
         AppInfo app = context.app();
         String name = app.packageName();
         Path work = context.workDirectory("appimage");
@@ -63,6 +62,35 @@ public final class AppImagePackager implements Packager {
         Tools.exec(work, environment(arch, app.version(), tmp), command(appimagetool, runtimeFile, appDir, appImage));
         FileTrees.executable(appImage);
         return appImage;
+    }
+
+    /**
+     * The {@code appimagetool} of the machine : {@code appimagetool}, or the AppImage of the architecture of the
+     * application ({@code appimagetool-x86_64.AppImage}).
+     */
+    private static Path appimagetool(PackagingContext context) {
+        return context.tools().find("appimagetool")
+                .or(() -> context.tools().find("appimagetool-" + context.arch().gnu() + ".AppImage"))
+                .orElseThrow(() -> new PackagingException("appimagetool not found : download appimagetool-"
+                        + context.arch().gnu() + ".AppImage from https://github.com/AppImage/appimagetool/releases, make"
+                        + " it executable and put it on the PATH as appimagetool (or set"
+                        + " quarkus.desktop.packaging.tools.appimagetool to its path)"));
+    }
+
+    /**
+     * The runtime of the AppImage of the configuration ({@code quarkus.desktop.packaging.linux.appimage.runtime-file}),
+     * if any.
+     *
+     * @throws PackagingException when the file does not exist
+     */
+    private static Optional<Path> runtimeFile(PackagingContext context) {
+        Optional<Path> runtimeFile = context.config().linux().appimage().runtimeFile()
+                .map(context.projectDirectory()::resolve).map(Path::toAbsolutePath);
+        if (runtimeFile.isPresent() && !Files.isRegularFile(runtimeFile.get())) {
+            throw new PackagingException("quarkus.desktop.packaging.linux.appimage.runtime-file : " + runtimeFile.get()
+                    + " not found");
+        }
+        return runtimeFile;
     }
 
     /**

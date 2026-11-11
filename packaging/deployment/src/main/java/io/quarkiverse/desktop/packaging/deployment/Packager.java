@@ -9,6 +9,16 @@ import java.nio.file.Path;
 public interface Packager {
 
     /**
+     * Checks what the package needs, before the application image and the first package are built : the tools of the
+     * format, and what the format derives from the configuration (its names, its version), without the application
+     * image. {@link #build} checks them again.
+     *
+     * @throws PackagingException when the package cannot be built
+     */
+    default void check(PackagingContext context) {
+    }
+
+    /**
      * Builds the package.
      *
      * @return the package, in the output directory of the context

@@ -37,10 +37,20 @@ public final class DmgPackager implements Packager {
      */
     static final long PAUSE = 3000;
 
+    /**
+     * Checks the notarization of the disk image, {@code hdiutil} and {@code ditto}.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        MacBundle.checkNotarization(context);
+        hdiutil(context);
+        MacBundle.ditto(context);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         MacBundle.checkNotarization(context);
-        Path hdiutil = context.tools().require("hdiutil", "hdiutil is part of macOS", Path.of("/usr/bin/hdiutil"));
+        Path hdiutil = hdiutil(context);
         AppInfo app = context.app();
         Path work = context.workDirectory("dmg");
         Path volume = work.resolve(app.fileName());
@@ -57,6 +67,13 @@ public final class DmgPackager implements Packager {
         }
         MacBundle.notarize(context, dmg);
         return dmg;
+    }
+
+    /**
+     * The {@code hdiutil} of the machine.
+     */
+    private static Path hdiutil(PackagingContext context) {
+        return context.tools().require("hdiutil", "hdiutil is part of macOS", Path.of("/usr/bin/hdiutil"));
     }
 
     /**

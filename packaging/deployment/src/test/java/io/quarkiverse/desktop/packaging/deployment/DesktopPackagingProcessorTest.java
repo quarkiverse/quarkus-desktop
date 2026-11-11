@@ -5,11 +5,14 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import org.junit.jupiter.api.Test;
+
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 
 /**
  * The build steps of the packages.
@@ -83,6 +86,30 @@ class DesktopPackagingProcessorTest {
     }
 
     /**
+     * The packages of a native executable are checked before it is built, when the build packages it.
+     */
+    @Test
+    void theFormatsCheckedBeforeTheNativeBuild() {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("formats", "msi,deb,directory"));
+        assertEquals(List.of(PackageFormat.DEB, PackageFormat.DIRECTORY),
+                DesktopPackagingProcessor.checkedFormats(config, TargetOs.LINUX, TargetOs.LINUX, false, false));
+        assertEquals(List.of(PackageFormat.MSI, PackageFormat.DIRECTORY),
+                DesktopPackagingProcessor.checkedFormats(config, TargetOs.WINDOWS, TargetOs.WINDOWS, false, false));
+        // a container build on Windows, a native-image bundle, an instrumented executable
+        assertEquals(List.of(),
+                DesktopPackagingProcessor.checkedFormats(config, TargetOs.LINUX, TargetOs.WINDOWS, false, false));
+        assertEquals(List.of(),
+                DesktopPackagingProcessor.checkedFormats(config, TargetOs.LINUX, TargetOs.LINUX, true, false));
+        assertEquals(List.of(),
+                DesktopPackagingProcessor.checkedFormats(config, TargetOs.LINUX, TargetOs.LINUX, false, true));
+        // no packages
+        assertEquals(List.of(), DesktopPackagingProcessor.checkedFormats(
+                TestConfig.of(Map.of("enabled", "false", "formats", "deb")), TargetOs.LINUX, TargetOs.LINUX, false, false));
+        assertEquals(List.of(), DesktopPackagingProcessor.checkedFormats(TestConfig.defaults(), TargetOs.LINUX,
+                TargetOs.LINUX, false, false));
+    }
+
+    /**
      * A native-image bundle is built instead of the executable, and the executable of a build with profile-guided
      * optimization is instrumented : the optimized one is packaged by a second build, which reuses it.
      */
@@ -115,5 +142,21 @@ class DesktopPackagingProcessorTest {
         // the Java home of the native build is the JDK of the build by default
         assertEquals(List.of(build), DesktopPackagingProcessor.jdkHomes(Optional.empty(), build.toFile(), build));
         assertEquals(List.of(build), DesktopPackagingProcessor.jdkHomes(Optional.empty(), null, build));
+    }
+
+    /**
+     * The name of the configuration, which the extensions of the user interface toolkits give the application : not
+     * when it is not set, nor when the extension is disabled.
+     */
+    @Test
+    void theNameOfThePackagesForTheToolkits() {
+        List<PackagedApplicationNameBuildItem> names = new ArrayList<>();
+        DesktopPackagingProcessor processor = new DesktopPackagingProcessor();
+        processor.packagedApplicationName(TestConfig.of(Map.of("name", " Acme Editor ")), names::add);
+        assertEquals(List.of("Acme Editor"), names.stream().map(PackagedApplicationNameBuildItem::getName).toList());
+        names.clear();
+        processor.packagedApplicationName(TestConfig.defaults(), names::add);
+        processor.packagedApplicationName(TestConfig.of(Map.of("name", "Acme Editor", "enabled", "false")), names::add);
+        assertEquals(List.of(), names);
     }
 }

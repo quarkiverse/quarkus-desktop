@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Function;
 
 import org.junit.jupiter.api.Assumptions;
@@ -56,6 +57,11 @@ class LinuxPackagesTest {
                 Categories=Office;TextEditor;
                 StartupWMClass=acme-editor
                 """, entry);
+        // a space after each comma, which is not part of a category
+        DesktopPackagingConfig spaced = TestConfig.of(Map.of("linux.categories", "Office, TextEditor"));
+        String spacedEntry = LinuxDesktop.desktopEntry(TestConfig.app(spaced), spaced.linux(), "acme-editor",
+                "acme-editor");
+        assertTrue(spacedEntry.contains("\nCategories=Office;TextEditor;\n"), spacedEntry);
     }
 
     /**
@@ -78,6 +84,26 @@ class LinuxPackagesTest {
         DesktopPackagingConfig lowercase = TestConfig.of(Map.of("description", "acme editor"));
         assertFalse(LinuxDesktop.desktopEntry(TestConfig.app(lowercase), lowercase.linux(), "acme-editor", "acme-editor")
                 .contains("Comment="));
+    }
+
+    /**
+     * The window class of the desktop entry is the name that the application gives itself at run time, as Desktop SWT
+     * names its windows, unless the configuration has one : the desktops associate the windows with the entry, whose
+     * file is named after the package.
+     */
+    @Test
+    void theWindowClassOfTheDesktopEntry() {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        AppInfo app = TestConfig.app(config).withApplicationId(Optional.of("Acme Editor"));
+        String entry = LinuxDesktop.desktopEntry(app, config.linux(), "acme-editor", "acme-editor");
+        assertTrue(entry.endsWith("Categories=Utility;\nStartupWMClass=Acme Editor\n"), entry);
+        DesktopPackagingConfig configured = TestConfig.of(Map.of("linux.startup-wm-class", "acme"));
+        String configuredEntry = LinuxDesktop.desktopEntry(TestConfig.app(configured)
+                .withApplicationId(Optional.of("Acme Editor")), configured.linux(), "acme-editor", "acme-editor");
+        assertTrue(configuredEntry.endsWith("Categories=Utility;\nStartupWMClass=acme\n"), configuredEntry);
+        // neither : the toolkit of an AWT or Swing application does not name it
+        assertFalse(LinuxDesktop.desktopEntry(TestConfig.app(config), config.linux(), "acme-editor", "acme-editor")
+                .contains("StartupWMClass"));
     }
 
     @Test
@@ -222,7 +248,7 @@ class LinuxPackagesTest {
                 "linux.rpm.license", "Apache-2.0", "linux.rpm.requires", "gtk3,libX11"));
         AppInfo app = TestConfig.app(config);
         String spec = RpmPackager.spec(app, config.linux(), Path.of("/work/root"), "/opt/acme-editor",
-                List.of("libawt.so", "libjvm.so", "libswt-gtk-4970r1.so"));
+                List.of("libawt.so", "libjvm.so", "libswt-gtk-4970r1.so"), Set.of());
         assertTrue(spec.contains("Name: acme-editor\nVersion: 1.2.3~SNAPSHOT\nRelease: 1\n"), spec);
         assertTrue(spec.contains("Summary: Edits 100%% of documents\n"), spec);
         assertTrue(spec.contains("License: Apache-2.0\n"), spec);
@@ -245,9 +271,45 @@ class LinuxPackagesTest {
 
         DesktopPackagingConfig manual = TestConfig.of(Map.of("linux.rpm.auto-requires", "false"));
         String other = RpmPackager.spec(TestConfig.app(manual), manual.linux(), Path.of("/work/root"), "/opt/acme-editor",
-                List.of());
+                List.of(), Set.of());
         assertTrue(other.contains("AutoReq: no\n"), other);
         assertFalse(other.contains("__requires_exclude "), other);
+        assertFalse(other.contains("__requires_exclude_from"), other);
+    }
+
+    /**
+     * The optional libraries of the application, which its executable loads only in some cases (the GTK 4 and OpenGL
+     * libraries of SWT) : the package does not require the libraries that they are linked with.
+     */
+    @Test
+    void theOptionalLibrariesOfTheRpmPackage() {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        String spec = RpmPackager.spec(TestConfig.app(config), config.linux(), Path.of("/work/root"), "/opt/acme-editor",
+                List.of("libswt-glx-gtk-4974r10.so", "libswt-gtk-4974r10.so", "libswt-pi4-gtk-4974r10.so"),
+                Set.of("libswt-pi4-gtk-4974r10.so", "lib/libswt-glx-gtk-4974r10.so"));
+        assertTrue(spec.contains("%global __requires_exclude_from ^/opt/acme-editor/(lib/libswt-glx-gtk-4974r10[.]so"
+                + "|libswt-pi4-gtk-4974r10[.]so)$\n"), spec);
+        // the libraries of the application are still neither provided nor required
+        assertTrue(spec.contains("%global __provides_exclude_from ^/opt/acme-editor/.*$\n"), spec);
+        assertTrue(spec.contains("%global __requires_exclude ^(libswt-glx-gtk-4974r10[.]so|libswt-gtk-4974r10[.]so"
+                + "|libswt-pi4-gtk-4974r10[.]so)([(].*)?$\n"), spec);
+    }
+
+    /**
+     * dpkg-shlibdeps finds the dependencies of the ELF files of the application, but not the ones of its optional
+     * libraries, which its executable loads only in some cases : the GTK 4 library of SWT needs GTK 4.
+     */
+    @Test
+    void theOptionalLibrariesOfTheDebianPackage() {
+        Path application = Path.of("root", "opt", "acme-editor");
+        List<Path> elfFiles = List.of(Path.of("acme-editor"), Path.of("libswt-gtk-4974r10.so"),
+                Path.of("libswt-pi4-gtk-4974r10.so"), Path.of("lib", "libswt-glx-gtk-4974r10.so"));
+        assertEquals(List.of(application.resolve("acme-editor").toString(),
+                application.resolve("libswt-gtk-4974r10.so").toString()),
+                DebPackager.binaries(application, elfFiles,
+                        Set.of("libswt-pi4-gtk-4974r10.so", "lib/libswt-glx-gtk-4974r10.so")));
+        assertEquals(elfFiles.stream().map(file -> application.resolve(file).toString()).toList(),
+                DebPackager.binaries(application, elfFiles, Set.of()));
     }
 
     /**
@@ -258,7 +320,8 @@ class LinuxPackagesTest {
         DesktopPackagingConfig config = TestConfig.defaults();
         AppInfo app = new AppInfo("Acme Editor", "acme-editor", "org.acme.AcmeEditor", "1.2.3", "Acme", "Edits documents",
                 Optional.empty(), Optional.empty(), Optional.of(Path.of("LICENSE")));
-        String spec = RpmPackager.spec(app, config.linux(), Path.of("/work/root"), "/opt/acme-editor", List.of());
+        String spec = RpmPackager.spec(app, config.linux(), Path.of("/work/root"), "/opt/acme-editor", List.of(),
+                Set.of());
         assertTrue(spec.endsWith("/usr/share/icons/hicolor/512x512/apps/acme-editor.png\n"
                 + "%dir /usr/share/licenses/acme-editor\n%license /usr/share/licenses/acme-editor/LICENSE\n"), spec);
     }
@@ -285,7 +348,7 @@ class LinuxPackagesTest {
         List<String> libraries = RpmPackager.libraries(application);
         assertEquals(List.of("libbar.so", "libfoo.so", "libfoo.so.1", "libfoo.so.1.2.3"), libraries);
         String spec = RpmPackager.spec(TestConfig.app(TestConfig.defaults()), TestConfig.defaults().linux(), directory,
-                "/opt/acme-editor", libraries);
+                "/opt/acme-editor", libraries, Set.of());
         assertTrue(spec.contains(
                 "%global __requires_exclude ^(libbar[.]so|libfoo[.]so|libfoo[.]so[.]1|libfoo[.]so[.]1[.]2[.]3)([(].*)?$\n"),
                 spec);
@@ -517,5 +580,8 @@ class LinuxPackagesTest {
         assertTrue(SnapPackager.managed(Optional.of(List.of("--use-lxd"))));
         assertFalse(SnapPackager.managed(Optional.of(List.of("--destructive-mode"))));
         assertFalse(SnapPackager.managed(Optional.of(List.of("--verbosity=debug", "--destructive-mode"))));
+        // a space after the comma of the configuration
+        assertFalse(SnapPackager.managed(TestConfig.of(Map.of("linux.snap.build-args",
+                "--verbosity=debug, --destructive-mode")).linux().snap().buildArgs()));
     }
 }

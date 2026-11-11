@@ -23,7 +23,9 @@ final class LinuxDesktop {
     }
 
     /**
-     * The desktop entry of the application : what the menus of the desktops show and start.
+     * The desktop entry of the application : what the menus of the desktops show and start. Its window class
+     * ({@code StartupWMClass}) is the one of the configuration, else the name that the application gives itself at run
+     * time ({@link AppInfo#applicationId}), which its toolkit gives to its windows.
      *
      * @param exec the command of the application
      * @param icon the name of its icon in the icon theme, or the path of the icon file
@@ -41,8 +43,8 @@ final class LinuxDesktop {
         entry.append("Icon=").append(icon).append('\n');
         entry.append("Terminal=false\n");
         entry.append("Categories=").append(String.join(";", config.categories())).append(";\n");
-        config.startupWmClass().ifPresent(windowClass -> entry.append("StartupWMClass=").append(value(windowClass))
-                .append('\n'));
+        config.startupWmClass().or(app::applicationId).ifPresent(windowClass -> entry.append("StartupWMClass=")
+                .append(value(windowClass)).append('\n'));
         return entry.toString();
     }
 

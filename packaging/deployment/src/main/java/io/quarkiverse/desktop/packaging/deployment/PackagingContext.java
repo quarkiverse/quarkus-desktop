@@ -3,6 +3,10 @@ package io.quarkiverse.desktop.packaging.deployment;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Collections;
+import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Supplier;
 
 /**
@@ -35,10 +39,25 @@ public final class PackagingContext {
     private final Path outputDirectory;
 
     /**
+     * The libraries of the application image that its executable loads only in some cases, relative to the root of the
+     * image, with {@code /} separators.
+     */
+    private final Set<String> optionalLibraries;
+
+    /**
      * @param arch reads the architecture of the application : the one of its native executable, or of the build
      */
     public PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Supplier<Arch> arch, Tools tools,
             IconSet icons, Path projectDirectory, Path outputDirectory) {
+        this(config, app, os, arch, tools, icons, projectDirectory, outputDirectory, Set.of());
+    }
+
+    /**
+     * @param arch reads the architecture of the application : the one of its native executable, or of the build
+     * @param optionalLibraries the libraries of the application image that its executable loads only in some cases
+     */
+    private PackagingContext(DesktopPackagingConfig config, AppInfo app, TargetOs os, Supplier<Arch> arch, Tools tools,
+            IconSet icons, Path projectDirectory, Path outputDirectory, Set<String> optionalLibraries) {
         this.config = config;
         this.app = app;
         this.os = os;
@@ -47,6 +66,25 @@ public final class PackagingContext {
         this.icons = icons;
         this.projectDirectory = projectDirectory;
         this.outputDirectory = outputDirectory;
+        this.optionalLibraries = Collections.unmodifiableSet(new TreeSet<>(optionalLibraries));
+    }
+
+    /**
+     * This context, for an application that gives itself a name at run time ({@link AppInfo#applicationId}).
+     */
+    PackagingContext withApplicationId(Optional<String> applicationId) {
+        return new PackagingContext(config, app.withApplicationId(applicationId), os, this::arch, tools, icons,
+                projectDirectory, outputDirectory, optionalLibraries);
+    }
+
+    /**
+     * This context, for an application image whose executable loads some libraries only in some cases.
+     *
+     * @param optionalLibraries the libraries, relative to the root of the image, with {@code /} separators
+     */
+    PackagingContext withOptionalLibraries(Set<String> optionalLibraries) {
+        return new PackagingContext(config, app, os, this::arch, tools, icons, projectDirectory, outputDirectory,
+                optionalLibraries);
     }
 
     public DesktopPackagingConfig config() {
@@ -97,6 +135,15 @@ public final class PackagingContext {
      */
     public Path outputDirectory() {
         return outputDirectory;
+    }
+
+    /**
+     * The libraries of the application image that its executable loads only in some cases
+     * ({@code NativeExecutableFileBuildItem.isOptional()}), relative to the root of the image, with {@code /}
+     * separators, sorted : the Debian and RPM packages do not depend on the libraries that they are linked with.
+     */
+    public Set<String> optionalLibraries() {
+        return optionalLibraries;
     }
 
     /**

@@ -71,6 +71,31 @@ class AppInfoTest {
                 project, project, TargetOs.LINUX, Arch::host).icons().sourceSize());
     }
 
+    /**
+     * The name of the configuration, which the extensions of the user interface toolkits get too : none when it is not
+     * set.
+     */
+    @Test
+    void theConfiguredName() {
+        assertEquals(Optional.empty(), AppInfo.configuredName(TestConfig.defaults()));
+        assertEquals(Optional.empty(), AppInfo.configuredName(TestConfig.of(Map.of("name", "  "))));
+        assertEquals(Optional.of("Acme Editor"), AppInfo.configuredName(TestConfig.of(Map.of("name", " Acme Editor "))));
+    }
+
+    /**
+     * The name that the application gives itself at run time comes from its toolkit, not from the configuration.
+     */
+    @Test
+    void theNameThatTheApplicationGivesItself() {
+        AppInfo app = TestConfig.app(TestConfig.defaults());
+        assertEquals(Optional.empty(), app.applicationId());
+        AppInfo named = app.withApplicationId(Optional.of("acme-editor"));
+        assertEquals(Optional.of("acme-editor"), named.applicationId());
+        assertEquals(app, named.withApplicationId(Optional.empty()));
+        assertEquals(app.name(), named.name());
+        assertEquals(app.identifier(), named.identifier());
+    }
+
     @Test
     void anApplicationWithoutNameAndVersion() {
         AppInfo app = AppInfo.of(TestConfig.defaults(), AppInfo.UNSET, AppInfo.UNSET, "", Path.of("."));

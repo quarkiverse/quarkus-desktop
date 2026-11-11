@@ -28,9 +28,18 @@ public final class FlatpakPackager implements Packager {
 
     private static final String RUNTIME_REPOSITORY = "https://dl.flathub.org/repo/flathub.flatpakrepo";
 
+    /**
+     * Checks {@code flatpak} and the application ID.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        flatpak(context);
+        applicationId(context.app());
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path flatpak = context.tools().require("flatpak", "install Flatpak (https://flatpak.org/setup)");
+        Path flatpak = flatpak(context);
         AppInfo app = context.app();
         DesktopPackagingConfig.Flatpak config = context.config().linux().flatpak();
         String id = applicationId(app);
@@ -64,6 +73,13 @@ public final class FlatpakPackager implements Packager {
         Tools.exec(work, Map.of(), List.of(flatpak.toString(), "build-bundle", "--arch=" + arch,
                 "--runtime-repo=" + RUNTIME_REPOSITORY, repository.toString(), bundle.toString(), id, config.branch()));
         return bundle;
+    }
+
+    /**
+     * The {@code flatpak} command of the machine.
+     */
+    private static Path flatpak(PackagingContext context) {
+        return context.tools().require("flatpak", "install Flatpak (https://flatpak.org/setup)");
     }
 
     /**

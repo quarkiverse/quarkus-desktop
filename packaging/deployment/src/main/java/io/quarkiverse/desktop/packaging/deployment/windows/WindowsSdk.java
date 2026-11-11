@@ -158,6 +158,18 @@ public final class WindowsSdk {
     }
 
     /**
+     * Checks what signs the application image and the Windows packages, before they are built : {@code signtool}, when
+     * the configuration signs.
+     *
+     * @throws PackagingException when {@code signtool} is not found
+     */
+    public static void checkSignature(PackagingContext context) {
+        if (signs(context)) {
+            signtool(context);
+        }
+    }
+
+    /**
      * What signs, as the log names it : the certificate file, the subject or the thumbprint of the certificate, or the
      * arguments of {@code signtool}, whose values are not logged (they may have a secret).
      */

@@ -1465,10 +1465,13 @@ See xref:index.adoc#configuration[the overview of the properties]. The run time 
 `quarkus.desktop.swt.windows.subsystem` and `quarkus.desktop.swt.macos.jdk-build-version` only apply to native
 executables.
 
-`quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built:
-overriding `quarkus.application.name` at run time does not change it, set `quarkus.desktop.swt.application-name`
-instead. The extension also gives `quarkus.application.version` to `Display.setAppVersion`. In tests, where
+`quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built,
+or to the name of its packages with the Desktop Packaging extension (`quarkus.desktop.packaging.name`, see
+xref:packaging.adoc[Desktop Packaging]): overriding `quarkus.application.name` at run time does not change it, set
+`quarkus.desktop.swt.application-name` instead. The packages give the value of the build to their shortcuts and desktop
+entry, which match the windows of the application by this name: set it in `application.properties` rather than at run
+time only. The extension also gives `quarkus.application.version` to `Display.setAppVersion`. In tests, where
 `quarkus.application.name` and `quarkus.application.version` are not set, SWT gets neither (unless
-`quarkus.desktop.swt.application-name` is set).
+`quarkus.desktop.swt.application-name` or the name of the packages is set).
 
 include::includes/quarkus-desktop-swt.adoc[leveloffset=+1, opts=optional]

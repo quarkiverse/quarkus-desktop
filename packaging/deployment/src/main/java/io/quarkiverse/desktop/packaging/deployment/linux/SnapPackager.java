@@ -31,9 +31,19 @@ public final class SnapPackager implements Packager {
 
     private static final Logger LOGGER = Logger.getLogger(SnapPackager.class);
 
+    /**
+     * Checks {@code snapcraft}, the name of the snap and its extensions.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        snapcraft(context);
+        snapName(context.app());
+        extensions(context.config().linux().snap());
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path snapcraft = context.tools().require("snapcraft", "install Snapcraft : sudo snap install snapcraft --classic");
+        Path snapcraft = snapcraft(context);
         AppInfo app = context.app();
         String name = snapName(app);
         Path work = context.workDirectory("snap");
@@ -58,6 +68,13 @@ public final class SnapPackager implements Packager {
                 clean(snapcraft, project);
             }
         }
+    }
+
+    /**
+     * The {@code snapcraft} of the machine.
+     */
+    private static Path snapcraft(PackagingContext context) {
+        return context.tools().require("snapcraft", "install Snapcraft : sudo snap install snapcraft --classic");
     }
 
     /**
@@ -125,12 +142,11 @@ public final class SnapPackager implements Packager {
     }
 
     /**
-     * The {@code snapcraft.yaml} file of the project.
+     * The extensions of the application of the snap.
      *
-     * @param launcher the path of the executable in the application image, with {@code /} separators
      * @throws PackagingException for a {@code classic} snap with the {@code gnome} extension, which Snapcraft refuses
      */
-    static String snapcraftYaml(AppInfo app, DesktopPackagingConfig.Snap config, Arch arch, String name, String launcher) {
+    static List<String> extensions(DesktopPackagingConfig.Snap config) {
         List<String> extensions = config.extensions().orElse(List.of());
         if ("classic".equals(config.confinement()) && extensions.contains("gnome")) {
             throw new PackagingException("quarkus.desktop.packaging.linux.snap.confinement=classic : the gnome extension"
@@ -138,6 +154,17 @@ public final class SnapPackager implements Packager {
                     + " confinement : set quarkus.desktop.packaging.linux.snap.extensions to an empty value, or use the"
                     + " strict confinement");
         }
+        return extensions;
+    }
+
+    /**
+     * The {@code snapcraft.yaml} file of the project.
+     *
+     * @param launcher the path of the executable in the application image, with {@code /} separators
+     * @throws PackagingException for a {@code classic} snap with the {@code gnome} extension, which Snapcraft refuses
+     */
+    static String snapcraftYaml(AppInfo app, DesktopPackagingConfig.Snap config, Arch arch, String name, String launcher) {
+        List<String> extensions = extensions(config);
         // a title has 2 to 40 characters, a summary at most 78, a version at most 32
         String title = cut(app.name().replace('\n', ' ').trim(), 40);
         String summary = cut(app.description().replace('\n', ' ').trim(), 78);

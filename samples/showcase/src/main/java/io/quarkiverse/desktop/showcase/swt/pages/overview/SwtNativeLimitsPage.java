@@ -228,7 +228,7 @@ public class SwtNativeLimitsPage implements SwtPage {
                 () -> Display.getDefault() == UiThread.display()));
         checks.add(SwtChecks.run("SWT.getVersion()", SWT::getVersion));
         checks.add(SwtChecks.expect("Locale.getDefault()", "en-US", () -> Locale.getDefault().toLanguageTag()));
-        checks.add(SwtChecks.expect("Display.getAppName()", "quarkus-desktop-showcase", Display::getAppName));
+        checks.add(SwtChecks.appName("Display.getAppName()"));
         // a system property of the run, passed alike to the JVM and to the native executable
         checks.add(Check.info("swt.autoScale (the tools pin 100 unless --hidpi)", property("swt.autoScale")));
         return checks;

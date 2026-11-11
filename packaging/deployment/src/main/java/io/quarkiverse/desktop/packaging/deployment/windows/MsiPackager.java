@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.regex.Pattern;
 
@@ -39,12 +40,31 @@ public final class MsiPackager implements Packager {
     private static final Pattern VARIABLE_NAME = Pattern
             .compile("[A-Za-z_][A-Za-z_\\p{Nd}]*(\\.[A-Za-z_][A-Za-z_.\\p{Nd}]*)?");
 
+    /**
+     * The length of the longest AppUserModelID : Windows refuses one of 128 characters or more
+     * ({@code SetCurrentProcessExplicitAppUserModelID} fails with {@code E_INVALIDARG}), and the process of the
+     * application then has none.
+     */
+    static final int MAX_APP_USER_MODEL_ID = 127;
+
+    /**
+     * Checks the WiX Toolset, the version, the upgrade code, the installation directory and the Start menu group.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        DesktopPackagingConfig.Windows config = context.config().windows();
+        wix(context);
+        version(context.app());
+        upgradeCode(context.app(), config);
+        directories("install-directory", config.installDirectory().orElse(context.app().name()));
+        if (config.startMenu()) {
+            config.startMenuGroup().ifPresent(group -> directories("start-menu-group", group));
+        }
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        // the directory of the .NET global tools is on the PATH of the sessions opened after the first installation
-        Path wix = context.tools().require("wix",
-                "install the WiX Toolset 4 or later, with the .NET SDK : dotnet tool install --global wix --version 5.0.2",
-                Path.of(System.getProperty("user.home"), ".dotnet", "tools", "wix.exe"));
+        Path wix = wix(context);
         Path work = context.workDirectory("msi");
         Path icon = FileTrees.write(work.resolve("application.ico"), context.icons().ico());
         List<Path> files = FileTrees.files(image.root());
@@ -58,6 +78,16 @@ public final class MsiPackager implements Packager {
         // the description of the signature is the name of the package in the prompt of the rights of an administrator
         WindowsSdk.sign(context, List.of(msi), context.app().name());
         return msi;
+    }
+
+    /**
+     * The {@code wix} of the WiX Toolset of the machine.
+     */
+    private static Path wix(PackagingContext context) {
+        // the directory of the .NET global tools is on the PATH of the sessions opened after the first installation
+        return context.tools().require("wix",
+                "install the WiX Toolset 4 or later, with the .NET SDK : dotnet tool install --global wix --version 5.0.2",
+                Path.of(System.getProperty("user.home"), ".dotnet", "tools", "wix.exe"));
     }
 
     /**
@@ -134,6 +164,16 @@ public final class MsiPackager implements Packager {
         int equals = value.indexOf('=', dot);
         String name = value.substring(dot + 1, equals >= 0 && equals < close ? equals : close);
         return VARIABLE_NAME.matcher(name).matches() ? close + 1 : -1;
+    }
+
+    /**
+     * The AppUserModelID of the shortcuts : the name that the application gives itself at run time
+     * ({@link AppInfo#applicationId}), which is the explicit AppUserModelID of its process, so that its windows and its
+     * shortcut pinned to the taskbar are one button. Empty when the application gives itself no name, or one that
+     * Windows refuses.
+     */
+    static Optional<String> appUserModelId(AppInfo app) {
+        return app.applicationId().filter(id -> id.length() <= MAX_APP_USER_MODEL_ID);
     }
 
     /**
@@ -353,18 +393,42 @@ public final class MsiPackager implements Packager {
     }
 
     /**
-     * A shortcut to the launcher. The key path of the component of a shortcut is a registry value of the user.
+     * A text as a value of the {@code Formatted} type of Windows Installer : the brackets, which enclose the name of a
+     * property, are escaped ({@code [\[]} and {@code [\]]}).
+     */
+    static String formatted(String text) {
+        StringBuilder formatted = new StringBuilder();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '[' || c == ']') {
+                formatted.append("[\\").append(c).append(']');
+            } else {
+                formatted.append(c);
+            }
+        }
+        return formatted.toString();
+    }
+
+    /**
+     * A shortcut to the launcher, with the AppUserModelID of the application when it has one
+     * ({@link #appUserModelId}). The key path of the component of a shortcut is a registry value of the user.
      *
      * @param removeFolder whether the component removes the folder of the shortcut
      * @param parents the parents of the folder of the shortcut that the component removes too
      */
     private static void shortcut(StringBuilder xml, String indent, String id, AppInfo app, String registryKey,
             boolean removeFolder, List<String> parents) {
+        Optional<String> appUserModelId = appUserModelId(app);
         xml.append(indent).append("<Component Id=\"").append(id).append("\">\n");
         xml.append(indent).append("  <Shortcut Id=\"").append(id).append("\" Name=\"").append(text(app.name()))
                 .append("\" Description=\"").append(text(app.description())).append("\" Target=\"[#")
                 .append(LAUNCHER_FILE).append("]\" WorkingDirectory=\"INSTALLFOLDER\" Icon=\"").append(ICON)
-                .append("\" />\n");
+                .append(appUserModelId.isPresent() ? "\">\n" : "\" />\n");
+        if (appUserModelId.isPresent()) {
+            xml.append(indent).append("    <ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"")
+                    .append(text(formatted(appUserModelId.get()))).append("\" />\n");
+            xml.append(indent).append("  </Shortcut>\n");
+        }
         if (removeFolder) {
             xml.append(indent).append("  <RemoveFolder Id=\"Remove").append(id).append("Folder\" On=\"uninstall\" />\n");
         }

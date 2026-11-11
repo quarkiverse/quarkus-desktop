@@ -354,6 +354,63 @@ class WindowsPackagesTest {
     }
 
     /**
+     * The shortcuts of an application that gives itself a name at run time (Desktop SWT) have the AppUserModelID of its
+     * process : its windows and its shortcut pinned to the taskbar are one button.
+     */
+    @Test
+    void theAppUserModelIdOfTheShortcuts() throws Exception {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("windows.desktop-shortcut", "true"));
+        AppInfo app = TestConfig.app(config).withApplicationId(Optional.of("Acme Editor"));
+        Document document = parse(MsiPackager.wxs(app, config.windows(), ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), FILES));
+        NodeList properties = document.getElementsByTagName("ShortcutProperty");
+        assertEquals(2, properties.getLength());
+        for (int i = 0; i < properties.getLength(); i++) {
+            Element property = (Element) properties.item(i);
+            assertEquals("Shortcut", property.getParentNode().getNodeName());
+            assertEquals("System.AppUserModel.ID", property.getAttribute("Key"));
+            assertEquals("Acme Editor", property.getAttribute("Value"));
+        }
+        String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true);
+        assertTrue(script.contains("Name: \"{autoprograms}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\";"
+                + " WorkingDir: \"{app}\"; AppUserModelID: \"Acme Editor\"\n"), script);
+        assertTrue(script.contains("Name: \"{autodesktop}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\";"
+                + " WorkingDir: \"{app}\"; Tasks: desktopicon; AppUserModelID: \"Acme Editor\"\n"), script);
+
+        // the WiX source escapes XML and the variables of WiX, the script its quotes and its constants
+        AppInfo special = TestConfig.app(config).withApplicationId(Optional.of("A&\"B\" {x} $(y)"));
+        String xml = MsiPackager.wxs(special, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"),
+                FILES);
+        assertTrue(xml.contains("<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"A&amp;&quot;B&quot; {x} $$(y)\""
+                + " />"), xml);
+        // the value is of the Formatted type of Windows Installer, where brackets enclose the name of a property
+        assertEquals("Editor [\\[]Beta[\\]]", MsiPackager.formatted("Editor [Beta]"));
+        AppInfo brackets = TestConfig.app(config).withApplicationId(Optional.of("Editor [Beta]"));
+        assertTrue(MsiPackager.wxs(brackets, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), FILES)
+                .contains("<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"Editor [\\[]Beta[\\]]\" />"));
+        assertTrue(InnoSetupPackager.script(special, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true)
+                .contains("; AppUserModelID: \"A&\"\"B\"\" {{x} $(y)\"\n"));
+
+        // Windows refuses an AppUserModelID of 128 characters or more : the process has none, nor have the shortcuts
+        AppInfo longest = TestConfig.app(config).withApplicationId(Optional.of("x".repeat(127)));
+        assertTrue(MsiPackager.wxs(longest, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), FILES)
+                .contains("Value=\"" + "x".repeat(127) + "\""));
+        AppInfo tooLong = TestConfig.app(config).withApplicationId(Optional.of("x".repeat(128)));
+        assertEquals(wxs(config), MsiPackager.wxs(tooLong, config.windows(), ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), FILES));
+        assertEquals(InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT,
+                "Acme Editor.exe", Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true),
+                InnoSetupPackager.script(tooLong, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
+                        Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true));
+        // without a name, as an AWT or Swing application : the shortcuts of before
+        assertFalse(wxs(config).contains("ShortcutProperty"), wxs(config));
+        assertTrue(wxs(config).contains(" Icon=\"ApplicationIcon.ico\" />\n"), wxs(config));
+        assertFalse(script(config).contains("AppUserModelID"), script(config));
+    }
+
+    /**
      * The name of the application in the message of the setup program when the MSI package is installed : a string of
      * the code, whose quotes are doubled, and whose braces are not constants.
      */

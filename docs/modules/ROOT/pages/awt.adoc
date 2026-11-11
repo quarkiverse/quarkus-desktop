@@ -183,8 +183,9 @@ In an application with a user interface, Cmd-Q and the other quit requests fire 
 through Quarkus (see xref:cdi.adoc#desktop-events[Application menu, Finder and Dock events]).
 
 AWT components are drawn by the Swing Aqua look and feel on macOS: AWT applications do not need `quarkus-desktop-swing`
-for it. The name of the application in the menu bar is `quarkus.application.name` (see
-`quarkus.desktop.awt.macos.application-name`); in JVM mode, pass `-Dapple.awt.application.name=...`.
+for it. The name of the application in the menu bar is `quarkus.application.name`, or the name of its packages with
+the Desktop Packaging extension (`quarkus.desktop.packaging.name`), see `quarkus.desktop.awt.macos.application-name`;
+in JVM mode, pass `-Dapple.awt.application.name=...`.
 Java2D uses Metal: `-Dsun.java2d.metal=True` prints the pipeline in use (the extension extracts the Metal shaders of the
 JDK used for the native build to the `java.home` directory of the executable).
 

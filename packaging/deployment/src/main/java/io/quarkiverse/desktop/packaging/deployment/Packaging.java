@@ -17,6 +17,7 @@ import io.quarkiverse.desktop.packaging.deployment.linux.FlatpakPackager;
 import io.quarkiverse.desktop.packaging.deployment.linux.RpmPackager;
 import io.quarkiverse.desktop.packaging.deployment.linux.SnapPackager;
 import io.quarkiverse.desktop.packaging.deployment.macos.DmgPackager;
+import io.quarkiverse.desktop.packaging.deployment.macos.MacBundle;
 import io.quarkiverse.desktop.packaging.deployment.macos.PkgPackager;
 import io.quarkiverse.desktop.packaging.deployment.windows.InnoSetupPackager;
 import io.quarkiverse.desktop.packaging.deployment.windows.MsiPackager;
@@ -109,6 +110,26 @@ final class Packaging {
         return new PackagingContext(config, app, os, arch, new Tools(config.tools(), projectDirectory),
                 IconSet.load(config.icon().map(String::trim).filter(value -> !value.isEmpty()), projectDirectory),
                 projectDirectory, buildDirectory.resolve(config.outputDirectory()).toAbsolutePath().normalize());
+    }
+
+    /**
+     * Checks what the packages need, before the application image and the first package are built, so that nothing is
+     * built when one of them cannot be : what signs the application image, and for each format its tools and what it
+     * derives from the configuration (see {@link Packager#check}).
+     *
+     * @throws PackagingException when a package cannot be built
+     */
+    static void check(PackagingContext context, List<PackageFormat> formats) {
+        if (context.os() == TargetOs.WINDOWS) {
+            WindowsSdk.checkSignature(context);
+        } else if (context.os() == TargetOs.MACOS) {
+            MacBundle.checkSignature(context);
+        }
+        for (PackageFormat format : formats) {
+            if (format != PackageFormat.DIRECTORY) {
+                packager(format).check(context);
+            }
+        }
     }
 
     /**

@@ -11,7 +11,7 @@
 
     <artifactId>quarkus-desktop-packaging-spi</artifactId>
     <name>Quarkus Desktop - Packaging - SPI</name>
-    <description>Build items for the extensions that contribute to the packages of a desktop application (files of the application image, options of the JVM)</description>
+    <description>Build items for the extensions that contribute to the packages of a desktop application (files of the application image, options of the JVM, names of the application)</description>
 
     <dependencies>
         <dependency>

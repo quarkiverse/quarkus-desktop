@@ -18,10 +18,13 @@ import java.util.function.Supplier;
 import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.deployment.windows.WindowsResources;
+import io.quarkiverse.desktop.packaging.spi.ApplicationIdBuildItem;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
 import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.bootstrap.workspace.WorkspaceModule;
+import io.quarkus.deployment.IsNormal;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
@@ -46,7 +49,8 @@ import io.quarkus.deployment.pkg.steps.NativeOrNativeSourcesBuild;
  * The packages of a desktop application : built at the end of the build, from its native executable or from its jar,
  * whatever its user interface toolkit.
  */
-// NativeOrNativeSourcesBuild and NativeBuild are deprecated, but Quarkus core has no replacement yet
+// NativeOrNativeSourcesBuild, NativeBuild and IsNormal are deprecated, but Quarkus core has no replacement yet :
+// IsProduction holds for quarkus:run too, which builds no native executable and no package
 @SuppressWarnings("deprecation")
 class DesktopPackagingProcessor {
 
@@ -85,6 +89,21 @@ class DesktopPackagingProcessor {
         }
     }
 
+    // ------------------------------------------------------------------------------------- the name of the application
+
+    /**
+     * The name of the application in its packages, for the extensions of the user interface toolkits, which name the
+     * application after it (the application menu of macOS) : when {@code quarkus.desktop.packaging.name} is set, with
+     * or without formats. Otherwise they keep their default name, {@code quarkus.application.name}, which is the
+     * default name of the packages too.
+     */
+    @BuildStep
+    void packagedApplicationName(DesktopPackagingConfig config, BuildProducer<PackagedApplicationNameBuildItem> name) {
+        if (config.enabled()) {
+            AppInfo.configuredName(config).ifPresent(value -> name.produce(new PackagedApplicationNameBuildItem(value)));
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------- Windows executable
 
     /**
@@ -94,9 +113,10 @@ class DesktopPackagingProcessor {
      * generated in the application jar. Not for native sources ({@code quarkus.native.sources-only}) : the option
      * would name a file of this build, which the machine that compiles them may not have. Nor when the application
      * links a resource file itself ({@link #linkedResourceFile}) : the icons and the version information of two files
-     * have the same identifiers, and the linker fails on them.
+     * have the same identifiers, and the linker fails on them. Only in a production build : dev mode, the tests and
+     * {@code quarkus:run} ask for the generated resources too, and build no native executable.
      */
-    @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
+    @BuildStep(onlyIf = { NativeOrNativeSourcesBuild.class, IsNormal.class })
     void windowsExecutableResources(DesktopPackagingConfig config, NativeConfig nativeConfig,
             NativeImageRunnerBuildItem nativeImageRunner, OutputTargetBuildItem outputTarget,
             ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
@@ -121,7 +141,7 @@ class DesktopPackagingProcessor {
             return;
         }
         PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, TargetOs.WINDOWS,
-                Arch::host);
+                Arch::host, Optional.empty());
         byte[] resources = WindowsResources.res(context.icons(), context.app(), context.app().name() + ".exe");
         Path buildDirectory = outputTarget.getOutputDirectory().toAbsolutePath();
         Optional<Path> file = writeResources(buildDirectory, Path.of(System.getProperty("java.io.tmpdir")), resources);
@@ -219,17 +239,63 @@ class DesktopPackagingProcessor {
     // -------------------------------------------------------------------------------------------------------- packages
 
     /**
+     * Checks the packages of the native executable before it is built, which takes minutes : what signs the
+     * application image, the icon, and the tools of each format and what it derives from the configuration (see
+     * {@link Packaging#check}). The architecture of the build stands for the one of the executable, which is not built
+     * yet. The {@code GeneratedResourceBuildItem} is never produced : it makes this step run before the application
+     * jar, which native-image builds the executable from. Only in a production build : dev mode, the tests and
+     * {@code quarkus:run} ask for the generated resources too, and package nothing. Each step that reads the
+     * configuration logs its warnings (a version without a leading number...) : this one, the packaging of the
+     * executable, and its resources on Windows.
+     */
+    @BuildStep(onlyIf = { NativeBuild.class, IsNormal.class })
+    void checkPackages(DesktopPackagingConfig config, NativeConfig nativeConfig,
+            NativeImageRunnerBuildItem nativeImageRunner, OutputTargetBuildItem outputTarget,
+            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
+            BuildProducer<GeneratedResourceBuildItem> generatedResources) throws IOException {
+        TargetOs os = targetOs(nativeImageRunner.isContainerBuild());
+        List<PackageFormat> formats = checkedFormats(config, os, TargetOs.host(), nativeConfig.isCreateNativeBundle(),
+                nativeConfig.pgo().enabled());
+        if (!formats.isEmpty()) {
+            Packaging.check(context(config, outputTarget, applicationInfo, curateOutcome, os, Arch::host,
+                    Optional.empty()), formats);
+        }
+    }
+
+    /**
+     * The formats that are checked before the native executable is built : the ones that package it. None when it is
+     * built for another operating system than the one of the build, nor when a native-image bundle or an instrumented
+     * executable is built instead of it : the packages of an executable of a former build, which such a build may
+     * reuse, are checked when it is packaged.
+     *
+     * @param target the operating system of the native executable ({@link #targetOs})
+     * @param host the operating system of the build
+     * @param bundle whether the native build writes a native-image bundle
+     * @param pgo whether the native build is instrumented for profile-guided optimization
+     */
+    static List<PackageFormat> checkedFormats(DesktopPackagingConfig config, TargetOs target, TargetOs host,
+            boolean bundle, boolean pgo) {
+        if (!config.enabled() || target != host || nativeExecutableUnavailable(bundle, pgo, false).isPresent()) {
+            return List.of();
+        }
+        return Packaging.formats(config, target);
+    }
+
+    /**
      * Packages the native executable. After the steps that change it or write files next to it : the UPX compression
      * of Quarkus, and the steps of the extensions that produce {@code NativeExecutableFileBuildItem}. The
      * {@code ArtifactResultBuildItem} is never produced (the packages are not the artifact of the build, which the
      * integration tests run) : it makes this step part of the build.
+     *
+     * @param applicationId the name that the application gives itself at run time, for its shortcuts and desktop entry
      */
     @BuildStep(onlyIf = NativeBuild.class)
     void packageNativeExecutable(DesktopPackagingConfig config, NativeConfig nativeConfig,
             NativeImageBuildItem nativeImage, NativeImageRunnerBuildItem nativeImageRunner,
             Optional<UpxCompressedBuildItem> upxCompressed, List<NativeExecutableFileBuildItem> files,
-            OutputTargetBuildItem outputTarget, ApplicationInfoBuildItem applicationInfo,
-            CurateOutcomeBuildItem curateOutcome, BuildProducer<ArtifactResultBuildItem> artifactResults) {
+            Optional<ApplicationIdBuildItem> applicationId, OutputTargetBuildItem outputTarget,
+            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
+            BuildProducer<ArtifactResultBuildItem> artifactResults) {
         TargetOs os = targetOs(nativeImageRunner.isContainerBuild());
         List<PackageFormat> formats = config.enabled() ? nativeFormats(config, os, TargetOs.host()) : List.of();
         if (formats.isEmpty()) {
@@ -245,7 +311,9 @@ class DesktopPackagingProcessor {
         try {
             // the packages are built for the architecture of the executable, which the JVM of the build may not have
             PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os,
-                    () -> Arch.executable(nativeImage.getPath()));
+                    () -> Arch.executable(nativeImage.getPath()), applicationId)
+                    .withOptionalLibraries(NativeApplicationImage.optionalLibraries(os, files));
+            Packaging.check(context, formats);
             ApplicationImage image = NativeApplicationImage.build(context, nativeImage.getPath(), files,
                     jdkHomes(nativeConfig.graalvmHome(), nativeConfig.javaHome(), Path.of(System.getProperty("java.home"))));
             Packaging.build(context, image, formats);
@@ -348,11 +416,14 @@ class DesktopPackagingProcessor {
      * Packages the jar of a JVM build, with a Java runtime. After the step of Quarkus that writes the AppCDS or AOT
      * archive in the directory of a fast-jar ({@code quarkus.package.jar.aot.enabled}) : the archive is left out of
      * the image (it was built for the JDK of the build and the path of the jar, not for the runtime of the image).
+     *
+     * @param applicationId the name that the application gives itself at run time, for its shortcuts and desktop entry
      */
     @BuildStep(onlyIf = JvmBuild.class)
     void packageJar(DesktopPackagingConfig config, JarBuildItem jar,
             Optional<JvmStartupOptimizerArchiveResultBuildItem> startupArchive, List<PackagedJvmOptionBuildItem> jvmOptions,
-            OutputTargetBuildItem outputTarget, ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
+            Optional<ApplicationIdBuildItem> applicationId, OutputTargetBuildItem outputTarget,
+            ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome,
             BuildProducer<ArtifactResultBuildItem> artifactResults) {
         TargetOs os = TargetOs.host();
         List<PackageFormat> formats = config.enabled() ? Packaging.formats(config, os) : List.of();
@@ -365,7 +436,9 @@ class DesktopPackagingProcessor {
                     + " from a " + jar.getType() + " (quarkus.package.jar.type)");
         }
         try {
-            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os, Arch::host);
+            PackagingContext context = context(config, outputTarget, applicationInfo, curateOutcome, os, Arch::host,
+                    applicationId);
+            Packaging.check(context, formats);
             ApplicationImage image = JvmApplicationImage.build(context, jar.getPath(), uberJar,
                     startupArchive.map(JvmStartupOptimizerArchiveResultBuildItem::getArchive), jvmOptions);
             Packaging.build(context, image, formats);
@@ -382,9 +455,16 @@ class DesktopPackagingProcessor {
         return containerBuild ? TargetOs.LINUX : TargetOs.host();
     }
 
+    /**
+     * What the packages of the build share, from the build items of Quarkus : the directory of the project is the one of
+     * its build file, or the parent of the build directory.
+     *
+     * @param arch the architecture of the packages, asked by the formats that need it
+     * @param applicationId the name that the application gives itself at run time
+     */
     private static PackagingContext context(DesktopPackagingConfig config, OutputTargetBuildItem outputTarget,
             ApplicationInfoBuildItem applicationInfo, CurateOutcomeBuildItem curateOutcome, TargetOs os,
-            Supplier<Arch> arch) throws IOException {
+            Supplier<Arch> arch, Optional<ApplicationIdBuildItem> applicationId) throws IOException {
         ApplicationModel model = curateOutcome.getApplicationModel();
         Path buildDirectory = outputTarget.getOutputDirectory().toAbsolutePath();
         // the directory of the project : the one of its build file, or the parent of the build directory
@@ -392,6 +472,7 @@ class DesktopPackagingProcessor {
         Path projectDirectory = module != null && module.getModuleDir() != null ? module.getModuleDir().toPath()
                 : buildDirectory.getParent();
         return Packaging.context(config, applicationInfo.getName(), applicationInfo.getVersion(),
-                model.getAppArtifact().getGroupId(), projectDirectory, buildDirectory, os, arch);
+                model.getAppArtifact().getGroupId(), projectDirectory, buildDirectory, os, arch)
+                .withApplicationId(applicationId.map(ApplicationIdBuildItem::getId));
     }
 }

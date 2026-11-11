@@ -52,7 +52,9 @@ public final class DesktopSwtSupport {
      * @param beans the CDI container
      * @param config the run time configuration of the extension
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
-     * @param applicationName {@code quarkus.application.name}
+     * @param applicationName the default name of the application : the name of its packages
+     *        ({@code quarkus.desktop.packaging.name}) with the Desktop Packaging extension, else
+     *        {@code quarkus.application.name}
      * @param applicationVersion {@code quarkus.application.version}
      */
     public static void configureUserInterface(StartContext context, BeanContainer beans, DesktopSwtRuntimeConfig config,

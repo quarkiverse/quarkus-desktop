@@ -27,9 +27,13 @@ import org.jboss.logging.Logger;
  * @param copyright the copyright notice
  * @param homepage the home page
  * @param licenseFile the license, as a text file
+ * @param applicationId the name that the application gives itself at run time ({@code ApplicationIdBuildItem}) : the
+ *        AppUserModelID of its process on Windows, the class of its windows on Linux ; empty when its user interface
+ *        toolkit gives it none
  */
 public record AppInfo(String name, String packageName, String identifier, String version, String vendor,
-        String description, Optional<String> copyright, Optional<String> homepage, Optional<Path> licenseFile) {
+        String description, Optional<String> copyright, Optional<String> homepage, Optional<Path> licenseFile,
+        Optional<String> applicationId) {
 
     /**
      * The value of the name and version of an application that has none (the {@code UNSET_VALUE} of
@@ -63,6 +67,15 @@ public record AppInfo(String name, String packageName, String identifier, String
             + "|snapshot|preview|pre|dev|ea|[abm](?=\\d))(?:[\\d._+-]|$))");
 
     /**
+     * An application that gives itself no name at run time ({@link #applicationId} empty).
+     */
+    public AppInfo(String name, String packageName, String identifier, String version, String vendor,
+            String description, Optional<String> copyright, Optional<String> homepage, Optional<Path> licenseFile) {
+        this(name, packageName, identifier, version, vendor, description, copyright, homepage, licenseFile,
+                Optional.empty());
+    }
+
+    /**
      * @param applicationName {@code quarkus.application.name}
      * @param applicationVersion {@code quarkus.application.version}
      * @param groupId the group ID of the project, possibly empty
@@ -70,8 +83,7 @@ public record AppInfo(String name, String packageName, String identifier, String
      */
     static AppInfo of(DesktopPackagingConfig config, String applicationName, String applicationVersion, String groupId,
             Path projectDirectory) {
-        String name = config.name().map(String::trim).filter(value -> !value.isEmpty())
-                .orElse(isSet(applicationName) ? applicationName : "application");
+        String name = configuredName(config).orElse(isSet(applicationName) ? applicationName : "application");
         String version = config.version().map(String::trim).filter(value -> !value.isEmpty())
                 .orElse(isSet(applicationVersion) ? applicationVersion : "1.0.0");
         if (!NUMBERS.matcher(version).find()) {
@@ -116,6 +128,14 @@ public record AppInfo(String name, String packageName, String identifier, String
         }
         return new AppInfo(name, packageName, identifier, version, config.vendor(), config.description().orElse(name),
                 config.copyright(), config.homepage(), licenseFile);
+    }
+
+    /**
+     * The name of the configuration ({@code quarkus.desktop.packaging.name}), without the white space around it : empty
+     * when it is not set, or blank.
+     */
+    static Optional<String> configuredName(DesktopPackagingConfig config) {
+        return config.name().map(String::trim).filter(value -> !value.isEmpty());
     }
 
     private static boolean isSet(String value) {
@@ -265,5 +285,13 @@ public record AppInfo(String name, String packageName, String identifier, String
     public String guid(String purpose) {
         return UUID.nameUUIDFromBytes(("quarkus-desktop-packaging:" + purpose + ":" + identifier)
                 .getBytes(StandardCharsets.UTF_8)).toString().toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * This application, with the name that it gives itself at run time.
+     */
+    public AppInfo withApplicationId(Optional<String> applicationId) {
+        return new AppInfo(name, packageName, identifier, version, vendor, description, copyright, homepage, licenseFile,
+                applicationId);
     }
 }

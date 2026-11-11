@@ -81,9 +81,23 @@ public final class MsixPackager implements Packager {
      */
     private static final int DISPLAY_NAME_LENGTH = 256;
 
+    /**
+     * Checks {@code makeappx}, and the identity, the version, the minimum version of Windows and the capabilities of the
+     * manifest.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        makeappx(context);
+        DesktopPackagingConfig.Msix config = context.config().windows().msix();
+        identityName(context.app(), config);
+        version(context.app());
+        minVersion(config);
+        capabilities(config);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path makeappx = context.tools().require("makeappx", "install the Windows SDK", WindowsSdk.locations("makeappx.exe"));
+        Path makeappx = makeappx(context);
         Path work = context.workDirectory("msix");
         Path manifest = FileTrees.write(work.resolve("AppxManifest.xml"), manifest(context.app(),
                 context.config().windows().msix(), context.arch(), image.launcher().replace('/', '\\')));
@@ -112,6 +126,13 @@ public final class MsixPackager implements Packager {
                     msix.getFileName(), publisher(context.app(), context.config().windows().msix()));
         }
         return msix;
+    }
+
+    /**
+     * The {@code makeappx} of the Windows SDK of the machine.
+     */
+    private static Path makeappx(PackagingContext context) {
+        return context.tools().require("makeappx", "install the Windows SDK", WindowsSdk.locations("makeappx.exe"));
     }
 
     /**

@@ -19,6 +19,7 @@ import org.eclipse.swt.graphics.RGBA;
 import org.eclipse.swt.graphics.Rectangle;
 import org.eclipse.swt.widgets.Composite;
 import org.eclipse.swt.widgets.Control;
+import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Widget;
 
 import io.quarkiverse.desktop.showcase.core.Check;
@@ -65,6 +66,25 @@ public final class SwtChecks {
         } catch (Throwable t) {
             return Check.fail(name, describe(t));
         }
+    }
+
+    /**
+     * The names that Desktop SWT gives the application ({@code Display.getAppName()}) : {@code quarkus.application.name},
+     * or the name of its packages in a build with the packaging profile ({@code quarkus.desktop.packaging.name}).
+     */
+    public static final List<String> APPLICATION_NAMES = List.of("quarkus-desktop-showcase", "Quarkus Desktop Showcase");
+
+    /**
+     * Checks the name that Desktop SWT gave the application : one of {@link #APPLICATION_NAMES}.
+     */
+    public static Check appName(String name) {
+        return run(name, () -> {
+            String actual = Display.getAppName();
+            if (!APPLICATION_NAMES.contains(actual)) {
+                throw new IllegalStateException("expected one of " + APPLICATION_NAMES + " but got " + actual);
+            }
+            return actual;
+        });
     }
 
     /**

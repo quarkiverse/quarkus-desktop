@@ -37,6 +37,7 @@ import io.quarkiverse.desktop.awt.runtime.graal.OverrideChecksFeature;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 import io.quarkiverse.desktop.awt.runtime.macos.ParkMainThreadEnabled;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
 import io.quarkus.arc.processor.BeanInfo;
@@ -669,9 +670,12 @@ class DesktopAwtProcessor {
 
     // --------------------------------------------------------------------------------------------- run time defaults
 
+    /**
+     * @param packagedName the name of the application in its packages (Desktop Packaging extension)
+     */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     void runTimeDefaults(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config,
-            ApplicationInfoBuildItem applicationInfo,
+            ApplicationInfoBuildItem applicationInfo, Optional<PackagedApplicationNameBuildItem> packagedName,
             BuildProducer<NativeImageFeatureBuildItem> features,
             BuildProducer<NativeImageSystemPropertyBuildItem> builderProperties) {
         features.produce(new NativeImageFeatureBuildItem(DesktopAwtFeature.class));
@@ -682,8 +686,22 @@ class DesktopAwtProcessor {
         }
         if (platform.isMac()) {
             builderProperties.produce(new NativeImageSystemPropertyBuildItem(DesktopAwtFeature.MAC_APPLICATION_NAME,
-                    config.macos().applicationName().orElse(applicationInfo.getName())));
+                    macApplicationName(config.macos().applicationName(),
+                            packagedName.map(PackagedApplicationNameBuildItem::getName), applicationInfo.getName())));
         }
+    }
+
+    /**
+     * The name of the application in the menu bar of macOS : {@code quarkus.desktop.awt.macos.application-name}, else
+     * the name of the application in its packages, the one of its bundle ({@code quarkus.desktop.packaging.name}, with
+     * the Desktop Packaging extension), else {@code quarkus.application.name}.
+     *
+     * @param configured {@code quarkus.desktop.awt.macos.application-name}
+     * @param packaged the name of the application in its packages
+     * @param applicationName {@code quarkus.application.name}
+     */
+    static String macApplicationName(Optional<String> configured, Optional<String> packaged, String applicationName) {
+        return configured.or(() -> packaged).orElse(applicationName);
     }
 
     /**
@@ -980,10 +998,14 @@ class DesktopAwtProcessor {
         }
     }
 
+    /**
+     * @param packagedName the name of the application in its packages (Desktop Packaging extension)
+     */
     @BuildStep(onlyIf = NativeOrNativeSourcesBuild.class)
     void macExecutable(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config, NativeConfig nativeConfig,
-            ApplicationInfoBuildItem applicationInfo, OutputTargetBuildItem outputTarget,
-            BuildProducer<GeneratedResourceBuildItem> generatedResources) throws IOException {
+            ApplicationInfoBuildItem applicationInfo, Optional<PackagedApplicationNameBuildItem> packagedName,
+            OutputTargetBuildItem outputTarget, BuildProducer<GeneratedResourceBuildItem> generatedResources)
+            throws IOException {
         if (!platform.isMac()) {
             return;
         }
@@ -996,7 +1018,8 @@ class DesktopAwtProcessor {
                     + " of the Xcode tools (it only starts on that macOS version and later)", jdkHome));
         }
         if (config.macos().infoPlist()) {
-            String name = config.macos().applicationName().orElse(applicationInfo.getName());
+            String name = macApplicationName(config.macos().applicationName(),
+                    packagedName.map(PackagedApplicationNameBuildItem::getName), applicationInfo.getName());
             args.addAll(MacExecutable.nativeImageArgs(MacExecutable.infoPlist(name, applicationInfo.getVersion()),
                     outputTarget.getOutputDirectory()));
         }

@@ -29,12 +29,24 @@ public final class PkgPackager implements Packager {
 
     private static final Logger LOGGER = Logger.getLogger(PkgPackager.class);
 
+    /**
+     * Checks the notarization of the installer package, {@code pkgbuild}, {@code productbuild}, {@code PlistBuddy}
+     * and {@code ditto}.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        MacBundle.checkNotarization(context);
+        pkgbuild(context);
+        productbuild(context);
+        plistBuddy(context);
+        MacBundle.ditto(context);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
         MacBundle.checkNotarization(context);
-        Path pkgbuild = context.tools().require("pkgbuild", "pkgbuild is part of macOS", Path.of("/usr/bin/pkgbuild"));
-        Path productbuild = context.tools().require("productbuild", "productbuild is part of macOS",
-                Path.of("/usr/bin/productbuild"));
+        Path pkgbuild = pkgbuild(context);
+        Path productbuild = productbuild(context);
         AppInfo app = context.app();
         var macos = context.config().macos();
         Path work = context.workDirectory("pkg");
@@ -45,8 +57,7 @@ public final class PkgPackager implements Packager {
         // disk, rather than install it in the installation directory
         Path components = work.resolve("components.plist");
         Tools.exec(List.of(pkgbuild.toString(), "--analyze", "--root", root.toString(), components.toString()));
-        Path plistBuddy = context.tools().require("PlistBuddy", "PlistBuddy is part of macOS",
-                Path.of("/usr/libexec/PlistBuddy"));
+        Path plistBuddy = plistBuddy(context);
         Tools.exec(List.of(plistBuddy.toString(), "-c", "Set :0:BundleIsRelocatable false", components.toString()));
 
         Path packages = Files.createDirectories(work.resolve("packages"));
@@ -84,6 +95,27 @@ public final class PkgPackager implements Packager {
         signatureWarning(macos, pkg.getFileName().toString()).ifPresent(LOGGER::warn);
         MacBundle.notarize(context, pkg);
         return pkg;
+    }
+
+    /**
+     * The {@code pkgbuild} of the machine.
+     */
+    private static Path pkgbuild(PackagingContext context) {
+        return context.tools().require("pkgbuild", "pkgbuild is part of macOS", Path.of("/usr/bin/pkgbuild"));
+    }
+
+    /**
+     * The {@code productbuild} of the machine.
+     */
+    private static Path productbuild(PackagingContext context) {
+        return context.tools().require("productbuild", "productbuild is part of macOS", Path.of("/usr/bin/productbuild"));
+    }
+
+    /**
+     * The {@code PlistBuddy} of the machine, which makes the component package not relocatable.
+     */
+    private static Path plistBuddy(PackagingContext context) {
+        return context.tools().require("PlistBuddy", "PlistBuddy is part of macOS", Path.of("/usr/libexec/PlistBuddy"));
     }
 
     /**

@@ -7,7 +7,9 @@ import java.util.Optional;
 import io.quarkus.runtime.annotations.ConfigDocMapKey;
 import io.quarkus.runtime.annotations.ConfigPhase;
 import io.quarkus.runtime.annotations.ConfigRoot;
+import io.quarkus.runtime.configuration.TrimmedStringConverter;
 import io.smallrye.config.ConfigMapping;
+import io.smallrye.config.WithConverter;
 import io.smallrye.config.WithDefault;
 
 /**
@@ -40,7 +42,9 @@ public interface DesktopPackagingConfig {
      * The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the
      * application bundle on macOS. Defaults to {@code quarkus.application.name}. It names the files of the application
      * on Windows and macOS : it has none of {@code \ / : * ? " < > | % ;} on Windows, none of {@code / " %} on macOS,
-     * and no control characters.
+     * and no control characters. When it is set, Desktop AWT and Desktop SWT give it to the application at run time
+     * too, unless their own property sets another name : the name of the application menu of macOS for both, and for
+     * SWT the identity of the application on Windows and the class of its windows on Linux.
      */
     Optional<String> name();
 
@@ -235,7 +239,7 @@ public interface DesktopPackagingConfig {
          * {@code runFullTrust} is always declared.
          */
         @WithDefault("runFullTrust")
-        List<String> capabilities();
+        List<@WithConverter(TrimmedStringConverter.class) String> capabilities();
 
         /**
          * The minimum version of Windows that installs the package : four numbers, such as {@code 10.0.17763.0}
@@ -284,7 +288,7 @@ public interface DesktopPackagingConfig {
          * certificate file, a subject name or a thumbprint. Write the paths with {@code /} : in a list, {@code \}
          * escapes the next character.
          */
-        Optional<List<String>> arguments();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> arguments();
     }
 
     /**
@@ -426,11 +430,12 @@ public interface DesktopPackagingConfig {
          * The categories of the desktop entry, which place the application in the menus.
          */
         @WithDefault("Utility")
-        List<String> categories();
+        List<@WithConverter(TrimmedStringConverter.class) String> categories();
 
         /**
          * The window class of the application ({@code StartupWMClass} of the desktop entry) : desktops use it to
-         * associate the windows of the application with its launcher.
+         * associate the windows of the application with its launcher. Defaults to the class that Desktop SWT gives the
+         * windows of the application, none otherwise.
          */
         Optional<String> startupWmClass();
 
@@ -495,7 +500,7 @@ public interface DesktopPackagingConfig {
          * More packages that the package depends on : the libraries that the application loads at run time
          * ({@code dlopen}), which the automatic dependencies miss.
          */
-        Optional<List<String>> depends();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> depends();
     }
 
     /**
@@ -524,7 +529,7 @@ public interface DesktopPackagingConfig {
         /**
          * More capabilities that the package requires.
          */
-        Optional<List<String>> requires();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> requires();
     }
 
     /**
@@ -579,7 +584,7 @@ public interface DesktopPackagingConfig {
          * The permissions of the sandbox, as the options of {@code flatpak build-finish}.
          */
         @WithDefault("--share=ipc,--socket=x11,--socket=wayland,--socket=pulseaudio,--share=network,--device=dri,--filesystem=home")
-        List<String> finishArgs();
+        List<@WithConverter(TrimmedStringConverter.class) String> finishArgs();
     }
 
     /**
@@ -612,24 +617,24 @@ public interface DesktopPackagingConfig {
          * {@code devmode} confinements, not {@code classic}.
          */
         @WithDefault("gnome")
-        Optional<List<String>> extensions();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> extensions();
 
         /**
          * The interfaces that the application plugs.
          */
         @WithDefault("home,network,audio-playback,removable-media")
-        List<String> plugs();
+        List<@WithConverter(TrimmedStringConverter.class) String> plugs();
 
         /**
          * The packages of the Ubuntu archive to add to the snap.
          */
-        Optional<List<String>> stagePackages();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> stagePackages();
 
         /**
          * More arguments of {@code snapcraft pack} : {@code --destructive-mode} to build on the host rather than in
          * an LXD container, for instance.
          */
-        Optional<List<String>> buildArgs();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> buildArgs();
     }
 
     /**
@@ -654,7 +659,7 @@ public interface DesktopPackagingConfig {
          * {@code jdk.localedata} for the languages other than English, {@code jdk.charsets},
          * {@code jdk.crypto.mscapi}... With JDK 21, the extension adds {@code jdk.crypto.ec}, which TLS needs.
          */
-        Optional<List<String>> modules();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> modules();
 
         /**
          * The options of {@code jlink}. Defaults to the ones of {@code jpackage} : no debug information, no header
@@ -662,7 +667,7 @@ public interface DesktopPackagingConfig {
          * libraries ({@code --strip-debug}) with {@code objcopy}, which has to be on the {@code PATH} (the
          * {@code binutils} package).
          */
-        Optional<List<String>> jlinkOptions();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> jlinkOptions();
 
         /**
          * A Java runtime to use rather than one built with {@code jlink} : {@code jpackage} takes it as it is, so
@@ -677,6 +682,6 @@ public interface DesktopPackagingConfig {
          * with its value after white space ({@code --add-opens java.base/java.lang=ALL-UNNAMED}) is written with
          * {@code =}.
          */
-        Optional<List<String>> options();
+        Optional<List<@WithConverter(TrimmedStringConverter.class) String>> options();
     }
 }

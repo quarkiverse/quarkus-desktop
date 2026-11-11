@@ -59,7 +59,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the application bundle on macOS. Defaults to `quarkus.application.name`. It names the files of the application on Windows and macOS : it has none of `++\++ / : ++*++ ? " < > ++\|++ % ;` on Windows, none of `/ " %` on macOS, and no control characters.
+The name of the application, as its users see it : the name of the shortcuts, of the installed program, of the application bundle on macOS. Defaults to `quarkus.application.name`. It names the files of the application on Windows and macOS : it has none of `++\++ / : ++*++ ? " < > ++\|++ % ;` on Windows, none of `/ " %` on macOS, and no control characters. When it is set, Desktop AWT and Desktop SWT give it to the application at run time too, unless their own property sets another name : the name of the application menu of macOS for both, and for SWT the identity of the application on Windows and the class of its windows on Linux.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -983,7 +983,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The window class of the application (`StartupWMClass` of the desktop entry) : desktops use it to associate the windows of the application with its launcher.
+The window class of the application (`StartupWMClass` of the desktop entry) : desktops use it to associate the windows of the application with its launcher. Defaults to the class that Desktop SWT gives the windows of the application, none otherwise.
 
 
 ifdef::add-copy-button-to-env-var[]

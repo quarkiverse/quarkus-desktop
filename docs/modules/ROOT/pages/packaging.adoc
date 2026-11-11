@@ -74,7 +74,10 @@ only builds once its license is accepted (`wix eula accept wix7`, once per user 
 
 A package is built on its operating system, with the tool of its format: nothing is cross-built. The extension finds
 the tools on the `PATH` and where their installers put them, and the build fails with what to install when one is
-missing; `quarkus.desktop.packaging.tools.<name>` gives the path of a tool that is elsewhere.
+missing; `quarkus.desktop.packaging.tools.<name>` gives the path of a tool that is elsewhere. The tools of all the
+formats, the icon and what the formats derive from the configuration (the identifier, the version...) are checked
+before anything is packaged, and in a native build before the native executable is built: a missing tool or an invalid
+value fails the build at once, rather than after the native build and the first packages.
 
 [[installation]]
 == Installation
@@ -162,7 +165,9 @@ The packages are not the artifact of the Quarkus build: the jar or the native ex
 `quarkus.application.name`. It names the files of the application on Windows and macOS, and `jpackage` takes it in
 JVM mode: it has none of `\ / : * ? " < > \| % ;` on Windows (a JVM application does not start from a directory whose
 path has a `;`, which `windows.install-directory` cannot have either), none of `/ " %` on macOS, and no control
-characters
+characters. It is also the default name that Desktop AWT gives the application in the menu bar of macOS
+(`quarkus.desktop.awt.macos.application-name`), and the one that Desktop SWT gives to SWT
+(`quarkus.desktop.swt.application-name`)
 
 |`version`
 |Defaults to `quarkus.application.version`. The formats that take numbers only (MSI, MSIX, the macOS bundle) take its
@@ -288,8 +293,10 @@ which macOS and `jpackage` do not allow: `org._7zip.Editor` is `org.7zip.Editor`
 
 `windows.per-user=true` makes the MSI package and the setup program install for the current user, without
 administrator rights (in `%LocalAppData%\Programs`); they install in `Program Files` for all users otherwise.
-`windows.start-menu`, `windows.start-menu-group` and `windows.desktop-shortcut` choose the shortcuts. The Windows
-packages install the files of the application image: an empty directory is left out, with a warning.
+`windows.start-menu`, `windows.start-menu-group` and `windows.desktop-shortcut` choose the shortcuts. The shortcuts of
+an SWT application have the AppUserModelID that SWT gives its process (`quarkus.desktop.swt.application-name` as the
+build sees it), so that the windows of the application and its shortcut pinned to the taskbar are one button. The
+Windows packages install the files of the application image: an empty directory is left out, with a warning.
 
 The WiX Toolset and Inno Setup do not read a file whose path has 260 characters or more, even where Windows allows
 longer paths: the build of the MSI package and of the setup program fails then, with the path of the file. A JVM
@@ -393,7 +400,9 @@ The installer package installs the bundle in `/Applications` (`macos.install-loc
 The Debian and RPM packages install the application image in `/opt/<package-name>` (`linux.install-directory`), a link
 to its launcher in `/usr/bin`, a desktop entry (`linux.categories`, `linux.startup-wm-class`), the icons of the
 `hicolor` theme and the `license-file`. The Debian package is compressed with xz, which every `dpkg` reads (`dpkg-deb`
-compresses with zstd on Ubuntu, which the `dpkg` of Debian 11 cannot read).
+compresses with zstd on Ubuntu, which the `dpkg` of Debian 11 cannot read). The window class of the desktop entry of
+every Linux package (`linux.startup-wm-class`) defaults to the one that SWT gives the windows of an SWT application
+(`quarkus.desktop.swt.application-name` as the build sees it): the desktops match them with the entry.
 
 The Debian package depends on the packages of the shared libraries that the application is linked with
 (`dpkg-shlibdeps`), and `rpmbuild` finds the ones of the RPM package. `dpkg-shlibdeps` finds the packages of the
@@ -415,6 +424,12 @@ quarkus.desktop.packaging.linux.rpm.requires=fontconfig,cups-libs
 
 Nor do they see the libraries of a native executable compressed with UPX (`quarkus.native.compression.level`), which
 has no dynamic section: the build warns about it, and they have to be listed too (`libc6` and `glibc`, for instance).
+
+The libraries that SWT loads only in some cases, its GTK 4 port (with `SWT_GTK4=1`) and its OpenGL library (for a
+`GLCanvas`), are left out of the analysis: the packages of an SWT application built with
+`quarkus.desktop.swt.native-libraries=next-to-executable` depend on GTK 3, not on GTK 4 or OpenGL, which an application
+that uses them lists too (`libgtk-4-1` and `libgl1` in `linux.deb.depends`, `gtk4` and `libglvnd-glx` in
+`linux.rpm.requires`).
 
 An AppImage has the application image, not the libraries of the system: it runs where they are installed.
 `appimagetool` downloads the runtime of the AppImage from GitHub at each build: for a build without access to GitHub,
@@ -455,15 +470,21 @@ libraries (`~/.swt`): in a snap, the Desktop SWT extension has SWT extract them 
 [[extensions]]
 == For extension authors
 
-The `quarkus-desktop-packaging-spi` artifact has two build items for the deployment modules of other extensions:
+The `quarkus-desktop-packaging-spi` artifact has build items for the deployment modules of other extensions:
 
 * `NativeExecutableFileBuildItem`: a file that the native executable needs next to it. The build steps that write files
 next to the executable after the native build produce it (or declare that they do), which also makes the packages wait
 for them. Desktop AWT and Desktop SWT do. On macOS, `codesign` takes every file of `Contents/MacOS` for code: a file
 that is not code (not a Mach-O file) goes to the same path in `Contents/Resources`, with a symbolic link to it next to
-the executable.
+the executable. A library that the executable loads only in some cases is optional: the Debian and RPM packages do not
+depend on the libraries that it is linked with.
 * `PackagedJvmOptionBuildItem`: an option of the JVM that the application needs in JVM mode, for one operating system
 or for all of them.
+* `ApplicationIdBuildItem`: the name that the application gives itself at run time, the AppUserModelID of its process
+on Windows and the class of its windows on Linux, which the shortcuts and the desktop entry of the packages get.
+Desktop SWT produces it.
+* `PackagedApplicationNameBuildItem`, which this extension produces: the `name` of the configuration, when it is set,
+which Desktop AWT and Desktop SWT give the application by default.
 
 [[continuous-integration]]
 == Continuous integration

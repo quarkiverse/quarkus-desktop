@@ -300,14 +300,8 @@ public final class MacBundle {
         if (Files.isRegularFile(runtime.resolve("Contents/Info.plist"))) {
             codesign(context, runtime, null);
         }
-        Path entitlements = null;
-        if (sign.entitlements().isPresent()) {
-            entitlements = context.projectDirectory().resolve(sign.entitlements().get());
-            if (!Files.isRegularFile(entitlements)) {
-                throw new PackagingException("quarkus.desktop.packaging.macos.sign.entitlements : " + entitlements
-                        + " not found");
-            }
-        } else {
+        Path entitlements = entitlementsFile(context).orElse(null);
+        if (entitlements == null) {
             List<String> defaults = defaultEntitlements(image.nativeExecutable(), hasIdentity(context));
             if (!defaults.isEmpty()) {
                 entitlements = FileTrees.write(context.workDirectory("macos-sign").resolve("entitlements.plist"),
@@ -315,6 +309,34 @@ public final class MacBundle {
             }
         }
         codesign(context, bundle, entitlements);
+    }
+
+    /**
+     * Checks what signs the application bundle, before it is built : {@code codesign} and the entitlements file of the
+     * configuration, when the bundle is signed.
+     *
+     * @throws PackagingException when {@code codesign} or the entitlements file is not found
+     */
+    public static void checkSignature(PackagingContext context) {
+        if (context.config().macos().sign().enabled()) {
+            codesignTool(context);
+            entitlementsFile(context);
+        }
+    }
+
+    /**
+     * The entitlements file of the configuration ({@code quarkus.desktop.packaging.macos.sign.entitlements}), if any.
+     *
+     * @throws PackagingException when the file does not exist
+     */
+    static Optional<Path> entitlementsFile(PackagingContext context) {
+        Optional<Path> entitlements = context.config().macos().sign().entitlements()
+                .map(context.projectDirectory()::resolve);
+        if (entitlements.isPresent() && !Files.isRegularFile(entitlements.get())) {
+            throw new PackagingException("quarkus.desktop.packaging.macos.sign.entitlements : " + entitlements.get()
+                    + " not found");
+        }
+        return entitlements;
     }
 
     /**
@@ -454,15 +476,20 @@ public final class MacBundle {
 
     /**
      * Fails the build before a macOS package is built, when the packages are to be notarized and the notary service
-     * would reject them : rather than after the upload of the first one and the wait for the answer.
+     * would reject them, or {@code xcrun} is missing : rather than after the upload of the first one and the wait for
+     * the answer.
      *
-     * @throws PackagingException when the application bundle or the installer package is not signed with a certificate
+     * @throws PackagingException when the application bundle or the installer package is not signed with a
+     *         certificate, or when {@code xcrun} is not found
      */
     static void checkNotarization(PackagingContext context) {
         boolean installerPackage = context.config().formats().orElse(List.of()).contains(PackageFormat.PKG);
         Optional<String> problem = notarizationProblem(context.config().macos(), installerPackage);
         if (problem.isPresent()) {
             throw new PackagingException(problem.get());
+        }
+        if (context.config().macos().notarize().keychainProfile().isPresent()) {
+            xcrun(context);
         }
     }
 
@@ -525,12 +552,19 @@ public final class MacBundle {
             notarizationWarning(macos, file.getFileName().toString()).ifPresent(LOGGER::warn);
             return;
         }
-        Path xcrun = context.tools().require("xcrun", "install the Xcode command line tools : xcode-select --install",
-                Path.of("/usr/bin/xcrun"));
+        Path xcrun = xcrun(context);
         LOGGER.infof("Submitting %s to the notary service of Apple : the build waits for its answer", file.getFileName());
         notarize(xcrun, file, macos.notarize().keychainProfile().get(), macos.notarize().timeout(),
                 command -> Tools.run(null, Map.of(), command));
         LOGGER.infof("%s is notarized : the ticket of the notary service is stapled to it", file.getFileName());
+    }
+
+    /**
+     * The {@code xcrun} of the machine, which runs {@code notarytool} and {@code stapler}.
+     */
+    private static Path xcrun(PackagingContext context) {
+        return context.tools().require("xcrun", "install the Xcode command line tools : xcode-select --install",
+                Path.of("/usr/bin/xcrun"));
     }
 
     /**
@@ -620,8 +654,15 @@ public final class MacBundle {
      * links, the permissions and the extended attributes.
      */
     static void copy(PackagingContext context, Path bundle, Path target) throws IOException {
-        Path ditto = context.tools().require("ditto", "ditto is part of macOS", Path.of("/usr/bin/ditto"));
+        Path ditto = ditto(context);
         Files.createDirectories(target.getParent());
         Tools.exec(List.of(ditto.toString(), bundle.toString(), target.toString()));
+    }
+
+    /**
+     * The {@code ditto} of the machine, which copies the application bundle into the packages.
+     */
+    static Path ditto(PackagingContext context) {
+        return context.tools().require("ditto", "ditto is part of macOS", Path.of("/usr/bin/ditto"));
     }
 }

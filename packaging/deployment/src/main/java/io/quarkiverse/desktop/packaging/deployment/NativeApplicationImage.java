@@ -243,6 +243,26 @@ final class NativeApplicationImage {
     }
 
     /**
+     * The libraries of the application image that its executable loads only in some cases : the files of the native
+     * executable that are optional ({@link NativeExecutableFileBuildItem#isOptional}), relative to the root of the
+     * image, with {@code /} separators.
+     *
+     * @param files the files that the extensions of the application put next to the executable
+     */
+    static Set<String> optionalLibraries(TargetOs os, List<NativeExecutableFileBuildItem> files) {
+        Set<String> libraries = new TreeSet<>();
+        for (NativeExecutableFileBuildItem file : files) {
+            if (file.isOptional()) {
+                // the directory of the executable : Contents/MacOS in a bundle, the root of the image elsewhere
+                Path path = Path.of(os == TargetOs.MACOS ? "Contents/MacOS" : "", file.getDirectory(),
+                        file.getFile().getFileName().toString()).normalize();
+                libraries.add(path.toString().replace('\\', '/'));
+            }
+        }
+        return libraries;
+    }
+
+    /**
      * Whether a file next to the executable is a shared library of the operating system of the application.
      */
     static boolean isSharedLibrary(TargetOs os, String fileName) {

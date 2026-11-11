@@ -249,6 +249,40 @@ class ApplicationImageTest {
                 () -> NativeApplicationImage.build(missingContent, target.resolve("acme-runner"), List.of(), List.of()));
     }
 
+    /**
+     * The libraries that the executable loads only in some cases (the GTK 4 and OpenGL libraries of SWT) : relative to
+     * the root of the image, for the Linux packages, which do not depend on the libraries that they are linked with.
+     */
+    @Test
+    void theOptionalLibrariesOfTheImage(@TempDir Path project) throws IOException {
+        Path target = project.resolve("target");
+        List<NativeExecutableFileBuildItem> files = List.of(
+                new NativeExecutableFileBuildItem(target.resolve("libswt-gtk-4974r10.so")),
+                new NativeExecutableFileBuildItem(target.resolve("libswt-pi4-gtk-4974r10.so"), "", true),
+                new NativeExecutableFileBuildItem(target.resolve("libswt-glx-gtk-4974r10.so"), "lib", true),
+                new NativeExecutableFileBuildItem(target.resolve("data.txt"), "data"));
+        assertFalse(files.get(0).isOptional());
+        assertFalse(files.get(3).isOptional());
+        assertEquals(Set.of("libswt-pi4-gtk-4974r10.so", "lib/libswt-glx-gtk-4974r10.so"),
+                NativeApplicationImage.optionalLibraries(TargetOs.LINUX, files));
+        assertEquals(Set.of("Contents/MacOS/libswt-pi4-gtk-4974r10.so", "Contents/MacOS/lib/libswt-glx-gtk-4974r10.so"),
+                NativeApplicationImage.optionalLibraries(TargetOs.MACOS, files));
+        assertEquals(Set.of(), NativeApplicationImage.optionalLibraries(TargetOs.LINUX, List.of(files.get(0))));
+
+        // the context of the packages has them, and the name that the application gives itself at run time
+        PackagingContext context = context(project, TargetOs.LINUX, Map.of());
+        assertEquals(Set.of(), context.optionalLibraries());
+        assertEquals(Optional.empty(), context.app().applicationId());
+        PackagingContext image = context.withOptionalLibraries(NativeApplicationImage.optionalLibraries(TargetOs.LINUX,
+                files)).withApplicationId(Optional.of("Acme Editor"));
+        assertEquals(List.of("lib/libswt-glx-gtk-4974r10.so", "libswt-pi4-gtk-4974r10.so"),
+                List.copyOf(image.optionalLibraries()));
+        assertEquals(Optional.of("Acme Editor"), image.app().applicationId());
+        assertEquals(context.app(), image.app().withApplicationId(Optional.empty()));
+        assertEquals(context.arch(), image.arch());
+        assertEquals(context.outputDirectory(), image.outputDirectory());
+    }
+
     @Test
     void theSharedLibrariesOfEachOperatingSystem() {
         assertTrue(NativeApplicationImage.isSharedLibrary(TargetOs.WINDOWS, "AWT.DLL"));
@@ -263,7 +297,7 @@ class ApplicationImageTest {
     @Test
     void theModulesOfTheJavaRuntimeIncludeTheOnesOfQuarkus() {
         assertEquals(List.of("java.desktop", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs"),
-                JvmApplicationImage.modules(List.of("java.desktop", " java.logging"), 25));
+                JvmApplicationImage.modules(List.of("java.desktop", "java.logging"), 25));
         // the elliptic curve cryptography of JDK 21, which TLS needs : java.base has it from JDK 22
         assertEquals(List.of("java.desktop", "java.net.http", "java.logging", "java.naming", "jdk.jfr", "jdk.unsupported",
                 "jdk.zipfs", "jdk.crypto.ec"), JvmApplicationImage.modules(List.of("java.desktop", "java.net.http"), 21));

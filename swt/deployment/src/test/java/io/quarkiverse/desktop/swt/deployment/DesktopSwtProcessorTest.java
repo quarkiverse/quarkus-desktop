@@ -26,15 +26,17 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
+import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.maven.dependency.ResolvedDependency;
 import io.quarkus.maven.dependency.ResolvedDependencyBuilder;
 import io.quarkus.paths.PathTree;
 import io.smallrye.common.os.OS;
 
 /**
- * The static helpers of {@link DesktopSwtProcessor} : the SWT jar and its platform, its native libraries, and the
- * files generated for native executables.
+ * The static helpers of {@link DesktopSwtProcessor} : the SWT jar and its platform, its native libraries, the files
+ * generated for native executables, and the name of the application.
  */
 class DesktopSwtProcessorTest {
 
@@ -315,6 +317,22 @@ class DesktopSwtProcessorTest {
         }
     }
 
+    /**
+     * The libraries that SWT loads only in some cases : the GTK 4 port (with SWT_GTK4=1) and OpenGL (a GLCanvas). The
+     * Linux packages do not depend on GTK 4 and OpenGL.
+     */
+    @Test
+    void optionalNativeLibraries() {
+        for (String library : List.of("libswt-pi4-gtk-4974r10.so", "libswt-glx-gtk-4974r10.so")) {
+            assertTrue(DesktopSwtProcessor.isOptionalLibrary(library), library);
+        }
+        for (String library : List.of("libswt-gtk-4974r10.so", "libswt-pi3-gtk-4974r10.so", "libswt-cairo-gtk-4974r10.so",
+                "libswt-atk-gtk-4974r10.so", "libswt-webkit-gtk-4974r10.so", "swt-win32-4974r10.dll",
+                "libswt-cocoa-4974r10.jnilib")) {
+            assertFalse(DesktopSwtProcessor.isOptionalLibrary(library), library);
+        }
+    }
+
     @Test
     void mainNativeLibrary() {
         assertEquals(Optional.of("swt-win32-4971r6.dll"), DesktopSwtProcessor.mainNativeLibrary(
@@ -432,6 +450,41 @@ class DesktopSwtProcessorTest {
         assertTrue(compact.contains("{\"type\":\"c.D$E\"}"), compact);
         assertEquals("{\"reflection\":[]}",
                 DesktopSwtProcessor.reachabilityMetadata(List.of()).replaceAll("\\s", ""));
+    }
+
+    // ----------------------------------------------------------------------------------------- name of the application
+
+    /**
+     * The name that the extension gives to SWT by default : the name of the packages (Desktop Packaging extension),
+     * else quarkus.application.name, which tests do not set.
+     */
+    @Test
+    void defaultApplicationName() {
+        Optional<PackagedApplicationNameBuildItem> packaged = Optional
+                .of(new PackagedApplicationNameBuildItem("Acme Editor"));
+        assertEquals(Optional.of("Acme Editor"), DesktopSwtProcessor.defaultApplicationName(packaged, "acme-editor"));
+        assertEquals(Optional.of("acme-editor"), DesktopSwtProcessor.defaultApplicationName(Optional.empty(),
+                "acme-editor"));
+        assertEquals(Optional.empty(), DesktopSwtProcessor.defaultApplicationName(Optional.empty(),
+                ApplicationInfoBuildItem.UNSET_VALUE));
+        assertEquals(Optional.of("Acme Editor"), DesktopSwtProcessor.defaultApplicationName(packaged,
+                ApplicationInfoBuildItem.UNSET_VALUE));
+    }
+
+    /**
+     * The name that SWT gives the application at run time, for the shortcuts and the desktop entry of its packages :
+     * none when SWT gives the process none (a blank name, or SWT, its own default).
+     */
+    @Test
+    void applicationId() {
+        assertEquals(Optional.of("Custom"), DesktopSwtProcessor.applicationId(Optional.of("Custom"),
+                Optional.of("Acme Editor")));
+        assertEquals(Optional.of("Acme Editor"), DesktopSwtProcessor.applicationId(Optional.empty(),
+                Optional.of("Acme Editor")));
+        assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.empty(), Optional.empty()));
+        assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.of(" "), Optional.of("Acme Editor")));
+        assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.of("swt"), Optional.of("Acme Editor")));
+        assertEquals(Optional.empty(), DesktopSwtProcessor.applicationId(Optional.empty(), Optional.of("SWT")));
     }
 
     // ----------------------------------------------------------------------------------------------------- helpers

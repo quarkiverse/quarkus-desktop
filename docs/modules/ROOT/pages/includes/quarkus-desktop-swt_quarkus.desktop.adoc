@@ -124,7 +124,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The name of the application, given to SWT (`Display.setAppName`) before the `Display` is created : the name of the application menu and of the Dock on macOS, the program name and the `WM_CLASS` of the windows on Linux (matched with the `.desktop` file of the application), the application identifier of the taskbar on Windows. Defaults to `quarkus.application.name`.
+The name of the application, given to SWT (`Display.setAppName`) before the `Display` is created : the name of the application menu and of the Dock on macOS, the program name and the `WM_CLASS` of the windows on Linux (matched with the `.desktop` file of the application), the application identifier of the taskbar on Windows. Defaults to the name of the packages of the Desktop Packaging extension (`quarkus.desktop.packaging.name`) when it is set, else to `quarkus.application.name`. The packages of that extension give the value of the build to their shortcuts and desktop entry : one set at run time only is not theirs.
 
 
 ifdef::add-copy-button-to-env-var[]

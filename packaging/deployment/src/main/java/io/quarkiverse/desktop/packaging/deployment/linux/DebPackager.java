@@ -39,9 +39,18 @@ public final class DebPackager implements Packager {
      */
     private static final Pattern TIME64 = Pattern.compile("([a-z0-9][a-z0-9.+-]*[0-9])t64(-[a-z0-9.+-]+)?");
 
+    /**
+     * Checks {@code dpkg-deb} and the installation directory.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        dpkgDeb(context);
+        LinuxDesktop.installPath(context);
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path dpkgDeb = context.tools().require("dpkg-deb", "install dpkg (it is part of Debian and Ubuntu)");
+        Path dpkgDeb = dpkgDeb(context);
         AppInfo app = context.app();
         DesktopPackagingConfig.Linux config = context.config().linux();
         Path work = context.workDirectory("deb");
@@ -67,6 +76,13 @@ public final class DebPackager implements Packager {
                 + context.arch().debian() + ".deb");
         Tools.exec(buildCommand(dpkgDeb, root, deb));
         return deb;
+    }
+
+    /**
+     * The {@code dpkg-deb} of the machine.
+     */
+    private static Path dpkgDeb(PackagingContext context) {
+        return context.tools().require("dpkg-deb", "install dpkg (it is part of Debian and Ubuntu)");
     }
 
     /**
@@ -118,7 +134,8 @@ public final class DebPackager implements Packager {
     /**
      * The packages of the shared libraries that the executables and the libraries of the application are linked
      * with, as {@code dpkg-shlibdeps} finds them : with the minimum versions that their symbols need. The libraries of
-     * the application itself are not dependencies, nor the libraries that the machine of the build does not have.
+     * the application itself are not dependencies, nor the libraries that the machine of the build does not have, nor
+     * the ones of the optional libraries of the application ({@link PackagingContext#optionalLibraries}).
      *
      * @param application the directory of the application in the tree of the package
      */
@@ -131,15 +148,16 @@ public final class DebPackager implements Packager {
                     + " quarkus.desktop.packaging.linux.deb.depends");
             return List.of();
         }
-        List<String> binaries = new ArrayList<>();
+        List<Path> elfFiles = new ArrayList<>();
         Set<String> directories = new LinkedHashSet<>();
         for (Path file : FileTrees.files(application)) {
             Path path = application.resolve(file);
             if (FileTrees.isElf(path)) {
-                binaries.add(path.toString());
+                elfFiles.add(file);
                 directories.add(path.getParent().toString());
             }
         }
+        List<String> binaries = binaries(application, elfFiles, context.optionalLibraries());
         if (binaries.isEmpty()) {
             return List.of();
         }
@@ -175,6 +193,26 @@ public final class DebPackager implements Packager {
                     failure.get(0));
         }
         return depends;
+    }
+
+    /**
+     * The binaries of the application whose libraries are dependencies of the package : its ELF files, but its optional
+     * libraries, which its executable loads only in some cases (the GTK 4 library of SWT, which needs GTK 4).
+     *
+     * @param application the directory of the application in the tree of the package
+     * @param elfFiles the ELF files of the application, relative to its directory
+     * @param optionalLibraries the optional libraries of the application, relative to its directory, with {@code /}
+     *        separators
+     * @return the paths of the binaries
+     */
+    static List<String> binaries(Path application, List<Path> elfFiles, Set<String> optionalLibraries) {
+        List<String> binaries = new ArrayList<>();
+        for (Path file : elfFiles) {
+            if (!optionalLibraries.contains(file.toString().replace('\\', '/'))) {
+                binaries.add(application.resolve(file).toString());
+            }
+        }
+        return binaries;
     }
 
     /**

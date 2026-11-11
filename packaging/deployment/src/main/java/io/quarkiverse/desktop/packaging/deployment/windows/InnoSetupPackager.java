@@ -34,11 +34,18 @@ public final class InnoSetupPackager implements Packager {
      */
     private static final String SIGN_TOOL = "quarkus";
 
+    /**
+     * Checks the compiler of Inno Setup and the upgrade code.
+     */
+    @Override
+    public void check(PackagingContext context) {
+        iscc(context);
+        MsiPackager.upgradeCode(context.app(), context.config().windows());
+    }
+
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
-        Path iscc = context.tools().require("iscc",
-                "install Inno Setup 6.3 or later (https://jrsoftware.org/isdl.php, or winget install JRSoftware.InnoSetup)",
-                locations());
+        Path iscc = iscc(context);
         Path work = context.workDirectory("exe");
         Path icon = FileTrees.write(work.resolve("application.ico"), context.icons().ico());
         List<Path> files = FileTrees.files(image.root());
@@ -104,6 +111,15 @@ public final class InnoSetupPackager implements Packager {
             backslashes = 0;
         }
         return quoted.append("\\".repeat(2 * backslashes)).append('"').toString();
+    }
+
+    /**
+     * The compiler of Inno Setup of the machine ({@code ISCC}).
+     */
+    private static Path iscc(PackagingContext context) {
+        return context.tools().require("iscc",
+                "install Inno Setup 6.3 or later (https://jrsoftware.org/isdl.php, or winget install JRSoftware.InnoSetup)",
+                locations());
     }
 
     /**
@@ -202,14 +218,18 @@ public final class InnoSetupPackager implements Packager {
         script.append('\n');
         script.append("[Icons]\n");
         String target = "{app}\\" + quoted(constant(launcher));
+        // the AppUserModelID of the process of the application : its windows and its pinned shortcut are one button.
+        // The compiler expands the constants of the value
+        String appUserModelId = MsiPackager.appUserModelId(app)
+                .map(id -> "; AppUserModelID: \"" + quoted(constant(id)) + "\"").orElse("");
         if (config.startMenu()) {
             String folder = config.startMenuGroup().isPresent() ? "{group}" : "{autoprograms}";
             script.append("Name: \"").append(folder).append("\\").append(quoted(name)).append("\"; Filename: \"")
-                    .append(target).append("\"; WorkingDir: \"{app}\"\n");
+                    .append(target).append("\"; WorkingDir: \"{app}\"").append(appUserModelId).append('\n');
         }
         if (config.desktopShortcut()) {
             script.append("Name: \"{autodesktop}\\").append(quoted(name)).append("\"; Filename: \"").append(target)
-                    .append("\"; WorkingDir: \"{app}\"; Tasks: desktopicon\n");
+                    .append("\"; WorkingDir: \"{app}\"; Tasks: desktopicon").append(appUserModelId).append('\n');
         }
         script.append('\n');
         script.append("[Run]\n");

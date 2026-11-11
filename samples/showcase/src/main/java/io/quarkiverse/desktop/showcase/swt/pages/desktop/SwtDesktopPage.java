@@ -629,8 +629,7 @@ public class SwtDesktopPage implements SwtPage {
     private static List<Check> displayChecks(Display display) {
         List<Check> checks = new ArrayList<>();
         // quarkus-desktop-swt : Display.setAppName and setAppVersion before the Display is created
-        checks.add(SwtChecks.expect("getAppName() (application name)", "quarkus-desktop-showcase",
-                Display::getAppName));
+        checks.add(SwtChecks.appName("getAppName() (application name)"));
         checks.add(SwtChecks.expect("getAppVersion() (application version)", "1.0.0-SNAPSHOT",
                 Display::getAppVersion));
         checks.add(SwtChecks.info("isSystemDarkTheme()", Display::isSystemDarkTheme));
