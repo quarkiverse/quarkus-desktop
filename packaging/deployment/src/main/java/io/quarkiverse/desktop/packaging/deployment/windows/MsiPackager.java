@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -13,6 +14,7 @@ import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.Packager;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
+import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.Tools;
 import io.quarkiverse.desktop.packaging.deployment.Xml;
 
@@ -41,17 +43,49 @@ public final class MsiPackager implements Packager {
         Path msi = context.output(context.app().fileName() + "-" + context.app().version() + ".msi");
         Tools.exec(work, Map.of(), List.of(wix.toString(), "build", "-arch", context.arch().windows(), "-pdbtype", "none",
                 "-intermediatefolder", work.resolve("obj").toString(), "-o", msi.toString(), wxs.toString()));
-        WindowsSdk.sign(context, msi);
+        // the description of the signature is the name of the package in the prompt of the rights of an administrator
+        WindowsSdk.sign(context, List.of(msi), context.app().name());
         return msi;
     }
 
     /**
-     * The version of a Windows Installer product : three numbers, of at most 255, 255 and 65535.
+     * The version of a Windows Installer product : three numbers, of at most 255, 255 and 65535. A larger number is
+     * refused rather than cut down, which would change the order of the versions ({@code 2024.12.0} and
+     * {@code 2025.1.0} would be {@code 255.12.0} and {@code 255.1.0}) : Windows Installer compares them to upgrade the
+     * application.
+     *
+     * @throws PackagingException when a number is larger
      */
     static String version(AppInfo app) {
-        String[] parts = app.numericVersion(3).split("\\.");
-        return Math.min(255, Long.parseLong(parts[0])) + "." + Math.min(255, Long.parseLong(parts[1])) + "."
-                + Math.min(65535, Long.parseLong(parts[2]));
+        String version = app.numericVersion(3);
+        String[] parts = version.split("\\.");
+        if (Long.parseLong(parts[0]) > 255 || Long.parseLong(parts[1]) > 255 || Long.parseLong(parts[2]) > 65535) {
+            throw new PackagingException("quarkus.desktop.packaging.version=" + app.version() + " : the version of an MSI"
+                    + " package has three numbers of at most 255, 255 and 65535, which Windows Installer compares to"
+                    + " upgrade the application : set a version within these limits (24.10.5 rather than 2024.10.5)");
+        }
+        return version;
+    }
+
+    /**
+     * The upgrade code of the application, without braces and in upper case : the one of the configuration, written
+     * with or without braces, or the GUID derived from the identifier of the application.
+     *
+     * @throws PackagingException when the upgrade code of the configuration is not a GUID
+     */
+    static String upgradeCode(AppInfo app, DesktopPackagingConfig.Windows config) {
+        if (config.upgradeCode().isEmpty()) {
+            return app.guid("upgrade");
+        }
+        String code = config.upgradeCode().get().strip();
+        if (code.matches("\\{.*}")) {
+            code = code.substring(1, code.length() - 1);
+        }
+        if (!code.matches("[0-9A-Fa-f]{8}(-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}")) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.upgrade-code=" + config.upgradeCode().get()
+                    + " : an upgrade code is a GUID such as 11111111-2222-3333-4444-555555555555, with or without braces");
+        }
+        return code.toUpperCase(Locale.ROOT);
     }
 
     /**
@@ -104,7 +138,7 @@ public final class MsiPackager implements Packager {
         xml.append("<Wix xmlns=\"http://wixtoolset.org/schemas/v4/wxs\">\n");
         xml.append("  <Package Name=\"").append(Xml.escape(app.name())).append("\" Manufacturer=\"")
                 .append(Xml.escape(app.vendor())).append("\" Version=\"").append(version(app)).append("\" UpgradeCode=\"")
-                .append(config.upgradeCode().orElseGet(() -> app.guid("upgrade"))).append("\" Language=\"1033\" Scope=\"")
+                .append(upgradeCode(app, config)).append("\" Language=\"1033\" Scope=\"")
                 .append(perUser ? "perUser" : "perMachine").append("\" InstallerVersion=\"500\">\n");
         xml.append("    <SummaryInformation Description=\"").append(Xml.escape(app.description())).append("\" />\n");
         // a new version replaces the installed one ; a rebuild of the same version too

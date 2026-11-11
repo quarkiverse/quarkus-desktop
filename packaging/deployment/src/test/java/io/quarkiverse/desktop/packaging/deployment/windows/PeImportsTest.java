@@ -92,4 +92,22 @@ class PeImportsTest {
         // the shorter name still fits
         assertTrue(PeImports.rename(library(100), "app-runner.exe", "Editor.exe").isPresent());
     }
+
+    /**
+     * A library is signed when the certificate table of its data directories (the fifth) has a signature.
+     */
+    @Test
+    void theSignatureOfALibrary() {
+        byte[] library = library(0x200);
+        // no data directory count : not a file that signtool signs
+        assertFalse(PeImports.unsigned(library));
+        ByteBuffer buffer = ByteBuffer.wrap(library).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0x58 + 108, 16);
+        assertTrue(PeImports.unsigned(library));
+        buffer.putInt(0x58 + 112 + 32, 0x400).putInt(0x58 + 112 + 36, 1400);
+        assertFalse(PeImports.unsigned(library));
+        // not a library
+        assertFalse(PeImports.unsigned("awt.dll".getBytes(StandardCharsets.US_ASCII)));
+        assertFalse(PeImports.unsigned(new byte[0x400]));
+    }
 }

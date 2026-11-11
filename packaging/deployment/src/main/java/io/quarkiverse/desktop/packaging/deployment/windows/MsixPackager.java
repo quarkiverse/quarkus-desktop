@@ -2,9 +2,15 @@ package io.quarkiverse.desktop.packaging.deployment.windows;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeSet;
 
 import org.jboss.logging.Logger;
 
@@ -37,11 +43,25 @@ public final class MsixPackager implements Packager {
             "Square150x150Logo.png", 150);
 
     /**
-     * The capabilities of the {@code rescap} namespace that desktop applications declare ; the others are general
-     * capabilities ({@code internetClient}...).
+     * The general capabilities : the names of the {@code Capability} element of the foundation namespace.
+     */
+    private static final Set<String> GENERAL_CAPABILITIES = Set.of("internetClient", "internetClientServer",
+            "privateNetworkClientServer", "allJoyn", "codeGeneration");
+
+    /**
+     * The capabilities of the {@code rescap} namespace that desktop applications declare, which need no kind in the
+     * configuration ; the others are written {@code rescap:<name>}.
      */
     private static final Set<String> RESTRICTED_CAPABILITIES = Set.of("runFullTrust", "allowElevation",
             "broadFileSystemAccess", "packageManagement", "unvirtualizedResources", "localSystemServices");
+
+    /**
+     * The names of the {@code Capability} element of the {@code uap} namespace.
+     */
+    private static final Set<String> UAP_CAPABILITIES = Set.of("documentsLibrary", "picturesLibrary", "videosLibrary",
+            "musicLibrary", "enterpriseAuthentication", "sharedUserCertificates", "userAccountInformation",
+            "removableStorage", "appointments", "contacts", "phoneCall", "blockedChatMessages", "objects3D", "voipCall",
+            "chat");
 
     @Override
     public Path build(PackagingContext context, ApplicationImage image) throws IOException {
@@ -50,26 +70,23 @@ public final class MsixPackager implements Packager {
         Path manifest = FileTrees.write(work.resolve("AppxManifest.xml"), manifest(context.app(),
                 context.config().windows().msix(), context.arch(), image.launcher().replace('/', '\\')));
         // the files of the package and their paths in it : the application image is not copied
-        StringBuilder mapping = new StringBuilder("[Files]\n");
-        mapping.append(entry(manifest, "AppxManifest.xml"));
+        Map<String, Path> generated = new LinkedHashMap<>();
+        generated.put("AppxManifest.xml", manifest);
         for (Map.Entry<String, Integer> logo : LOGOS.entrySet()) {
-            Path file = context.icons().writePng(work.resolve(ASSETS).resolve(logo.getKey()), logo.getValue());
-            mapping.append(entry(file, ASSETS + "\\" + logo.getKey()));
+            generated.put(ASSETS + "\\" + logo.getKey(),
+                    context.icons().writePng(work.resolve(ASSETS).resolve(logo.getKey()), logo.getValue()));
         }
-        for (Path file : FileTrees.files(image.root())) {
-            String name = file.toString().replace('/', '\\');
-            if (name.equalsIgnoreCase("AppxManifest.xml") || name.toLowerCase().startsWith(ASSETS.toLowerCase() + "\\")) {
-                throw new PackagingException("The application image has a file named " + name
-                        + ", which is the name of a file of the MSIX package");
-            }
-            mapping.append(entry(image.root().resolve(file), name));
-        }
-        Path mappingFile = FileTrees.write(work.resolve("mapping.txt"), mapping.toString());
+        Path mappingFile = FileTrees.write(work.resolve("mapping.txt"),
+                mapping(generated, image.root(), FileTrees.files(image.root())));
         Path msix = context.output(context.app().fileName() + "-" + context.app().version() + ".msix");
         Tools.exec(work, Map.of(), List.of(makeappx.toString(), "pack", "/o", "/f", mappingFile.toString(), "/p",
                 msix.toString()));
         if (WindowsSdk.signs(context)) {
-            WindowsSdk.sign(context, msix);
+            try {
+                WindowsSdk.sign(context, msix);
+            } catch (PackagingException e) {
+                throw signatureFailure(e, publisher(context.app(), context.config().windows().msix()));
+            }
         } else {
             LOGGER.warnf("%s is not signed : Windows only installs a signed MSIX package"
                     + " (quarkus.desktop.packaging.windows.sign.certificate-file, whose subject is the publisher %s)",
@@ -78,21 +95,120 @@ public final class MsixPackager implements Packager {
         return msix;
     }
 
+    /**
+     * The mapping file of {@code makeappx} : the files of the package and their paths in it.
+     *
+     * @param generated the files that the packager generates (the manifest, the logos), by path in the package
+     * @param root the directory of the application image
+     * @param files the files of the application image, relative to its directory
+     * @throws PackagingException when a file of the image has the path of a generated file
+     */
+    static String mapping(Map<String, Path> generated, Path root, List<Path> files) {
+        StringBuilder mapping = new StringBuilder("[Files]\n");
+        for (Map.Entry<String, Path> file : generated.entrySet()) {
+            mapping.append(entry(file.getValue(), file.getKey()));
+        }
+        for (Path file : files) {
+            String name = file.toString().replace('/', '\\');
+            for (String reserved : generated.keySet()) {
+                // makeappx compares the paths of a package without case
+                if (name.equalsIgnoreCase(reserved)) {
+                    throw new PackagingException("The application image has a file named " + name + ", which is the"
+                            + " path of a file that the MSIX package generates (" + reserved + ") : rename it");
+                }
+            }
+            mapping.append(entry(root.resolve(file), name));
+        }
+        return mapping.toString();
+    }
+
     private static String entry(Path file, String name) {
         return "\"" + file + "\" \"" + name + "\"\n";
     }
 
     /**
+     * The failure of the signature of the package, with its cause when {@code signtool} only reports the error
+     * {@code 0x8007000b} : the publisher of the manifest is not the subject of the signing certificate.
+     */
+    static PackagingException signatureFailure(PackagingException failure, String publisher) {
+        if (!failure.getMessage().toLowerCase(Locale.ROOT).contains("0x8007000b")) {
+            return failure;
+        }
+        return new PackagingException(failure.getMessage() + "\nThe publisher of the package (" + publisher
+                + ") is not the subject of the signing certificate : set quarkus.desktop.packaging.windows.msix.publisher"
+                + " to that subject, as Windows writes it ((Get-PfxCertificate acme.pfx).Subject in PowerShell, such as"
+                + " CN=Acme, O=Acme, L=Seattle, S=Washington, C=US)", failure);
+    }
+
+    /**
      * The version of an MSIX package : four numbers of at most 65535, the last one being zero (the Store reserves
-     * it).
+     * it). A larger number is refused rather than cut down : Windows compares the versions to update the application.
+     *
+     * @throws PackagingException when a number is larger
      */
     static String version(AppInfo app) {
-        String[] parts = app.numericVersion(3).split("\\.");
-        StringBuilder version = new StringBuilder();
-        for (String part : parts) {
-            version.append(Math.min(65535, Long.parseLong(part))).append('.');
+        String version = app.numericVersion(3);
+        for (String part : version.split("\\.")) {
+            if (Long.parseLong(part) > 65535) {
+                throw new PackagingException("quarkus.desktop.packaging.version=" + app.version() + " : the version of an"
+                        + " MSIX package has numbers of at most 65535, which Windows compares to update the application :"
+                        + " set a version within this limit");
+            }
         }
-        return version.append('0').toString();
+        return version + ".0";
+    }
+
+    /**
+     * The capabilities of the manifest, as elements. The items of the configuration are trimmed and taken once ;
+     * {@code runFullTrust} is always declared (the application is a full trust application). The device capabilities
+     * come last, as the schema wants.
+     *
+     * @throws PackagingException for a capability of an unknown kind, or without kind and unknown
+     */
+    static List<String> capabilities(DesktopPackagingConfig.Msix config) {
+        Set<String> general = new LinkedHashSet<>();
+        Set<String> uap = new LinkedHashSet<>();
+        Set<String> restricted = new LinkedHashSet<>();
+        Set<String> device = new LinkedHashSet<>();
+        Set<String> seen = new HashSet<>();
+        for (String item : config.capabilities()) {
+            String capability = item.strip();
+            if (capability.isEmpty()) {
+                continue;
+            }
+            int colon = capability.indexOf(':');
+            String kind = colon < 0 ? "" : capability.substring(0, colon).strip();
+            String name = colon < 0 ? capability : capability.substring(colon + 1).strip();
+            Set<String> set = switch (kind) {
+                case "" -> GENERAL_CAPABILITIES.contains(name) ? general
+                        : RESTRICTED_CAPABILITIES.contains(name) ? restricted
+                                : UAP_CAPABILITIES.contains(name) ? uap : null;
+                case "rescap" -> restricted;
+                case "uap" -> uap;
+                case "device" -> device;
+                default -> null;
+            };
+            if (set == null || !name.matches("[-_.A-Za-z0-9]+")) {
+                throw new PackagingException("quarkus.desktop.packaging.windows.msix.capabilities : " + capability
+                        + " is not a known capability : write a general capability (" + String.join(", ",
+                                new TreeSet<>(GENERAL_CAPABILITIES))
+                        + "), a restricted one (" + String.join(", ", new TreeSet<>(RESTRICTED_CAPABILITIES))
+                        + "), or another one with its kind (rescap:packageQuery, uap:documentsLibrary, device:microphone)");
+            }
+            // makeappx refuses a name declared twice, even in two namespaces
+            if (set == device || seen.add(name)) {
+                set.add(name);
+            }
+        }
+        if (seen.add("runFullTrust")) {
+            restricted.add("runFullTrust");
+        }
+        List<String> elements = new ArrayList<>();
+        general.forEach(name -> elements.add("<Capability Name=\"" + Xml.escape(name) + "\" />"));
+        uap.forEach(name -> elements.add("<uap:Capability Name=\"" + Xml.escape(name) + "\" />"));
+        restricted.forEach(name -> elements.add("<rescap:Capability Name=\"" + Xml.escape(name) + "\" />"));
+        device.forEach(name -> elements.add("<DeviceCapability Name=\"" + Xml.escape(name) + "\" />"));
+        return elements;
     }
 
     /**
@@ -154,16 +270,8 @@ public final class MsixPackager implements Packager {
         xml.append("    </Application>\n");
         xml.append("  </Applications>\n");
         xml.append("  <Capabilities>\n");
-        // the general capabilities, then the restricted ones (the order of the schema)
-        for (String capability : config.capabilities()) {
-            if (!RESTRICTED_CAPABILITIES.contains(capability)) {
-                xml.append("    <Capability Name=\"").append(Xml.escape(capability)).append("\" />\n");
-            }
-        }
-        for (String capability : config.capabilities()) {
-            if (RESTRICTED_CAPABILITIES.contains(capability)) {
-                xml.append("    <rescap:Capability Name=\"").append(Xml.escape(capability)).append("\" />\n");
-            }
+        for (String capability : capabilities(config)) {
+            xml.append("    ").append(capability).append('\n');
         }
         xml.append("  </Capabilities>\n");
         xml.append("</Package>\n");

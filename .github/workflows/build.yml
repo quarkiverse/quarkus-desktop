@@ -376,7 +376,10 @@ jobs:
           $process = Start-Process (Get-ChildItem *.exe).FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "exe : the setup program exited with $($process.ExitCode)" }
           Start-Installed 'exe'
-          Start-Process (Get-ChildItem "$env:ProgramFiles\Packaging IT\unins*.exe").FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          # the compiler of Inno Setup signs the uninstaller that the setup program installs
+          $uninstaller = (Get-ChildItem "$env:ProgramFiles\Packaging IT\unins*.exe").FullName
+          if (-not (Get-AuthenticodeSignature -FilePath $uninstaller).SignerCertificate) { throw "exe : $uninstaller is not signed" }
+          Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
           Start-Sleep -Seconds 5
           Assert-Removed 'exe'
 

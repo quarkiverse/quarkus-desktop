@@ -44,7 +44,10 @@ public interface DesktopPackagingConfig {
 
     /**
      * The version of the application. Defaults to {@code quarkus.application.version}. The formats that need numbers
-     * (MSI, MSIX, macOS) take its leading numbers : {@code 1.2.3-SNAPSHOT} is {@code 1.2.3} for them.
+     * (MSI, MSIX, macOS) take its leading numbers : {@code 1.2.3-SNAPSHOT} is {@code 1.2.3} for them. Windows compares
+     * them to upgrade the application, up to a limit : 255, 255 and 65535 for the three numbers of an MSI package,
+     * 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of
+     * {@code 2025.1.0}.
      */
     Optional<String> version();
 
@@ -145,9 +148,9 @@ public interface DesktopPackagingConfig {
         boolean executableResources();
 
         /**
-         * The upgrade code of the application, a GUID : the Windows installers of the next versions upgrade the
-         * application that has the same code. Defaults to a GUID derived from the identifier of the application :
-         * never change either once the application is released.
+         * The upgrade code of the application, a GUID, with or without braces : the Windows installers of the next
+         * versions upgrade the application that has the same code. Defaults to a GUID derived from the identifier of
+         * the application : never change either once the application is released.
          */
         Optional<String> upgradeCode();
 
@@ -187,8 +190,8 @@ public interface DesktopPackagingConfig {
         Msix msix();
 
         /**
-         * The signature of the executable of the application and of the Windows packages, with {@code signtool} of the
-         * Windows SDK.
+         * The signature of the executables of the application image and of the Windows packages, with
+         * {@code signtool} of the Windows SDK.
          */
         Sign sign();
     }
@@ -216,7 +219,10 @@ public interface DesktopPackagingConfig {
         Optional<String> publisherDisplayName();
 
         /**
-         * The capabilities of the application. A desktop application is a full trust application.
+         * The capabilities of the application : general capabilities ({@code internetClient}), restricted ones
+         * ({@code allowElevation}), and the others with their kind ({@code rescap:packageQuery},
+         * {@code uap:documentsLibrary}, {@code device:microphone}). A desktop application is a full trust application :
+         * {@code runFullTrust} is always declared.
          */
         @WithDefault("runFullTrust")
         List<String> capabilities();
@@ -234,8 +240,8 @@ public interface DesktopPackagingConfig {
     interface Sign {
 
         /**
-         * The certificate file ({@code .pfx}) that signs the executable and the packages. Nothing is signed without
-         * a certificate file, a subject name or a thumbprint. An unsigned MSIX package cannot be installed.
+         * The certificate file ({@code .pfx}) that signs the executables and the packages. Nothing is signed without
+         * a certificate file, a subject name, a thumbprint or arguments. An unsigned MSIX package cannot be installed.
          */
         Optional<String> certificateFile();
 
@@ -258,6 +264,15 @@ public interface DesktopPackagingConfig {
          * The URL of the RFC 3161 time stamp server.
          */
         Optional<String> timestampUrl();
+
+        /**
+         * More arguments of {@code signtool sign}, after the ones of the other properties : {@code /sm} (a certificate
+         * of the machine store), {@code /csp} and {@code /kc} (a key of a cryptographic provider), {@code /dlib} and
+         * {@code /dmdf} (a signing service such as Azure Trusted Signing). They sign on their own, without a
+         * certificate file, a subject name or a thumbprint. Write the paths with {@code /} : in a list, {@code \}
+         * escapes the next character.
+         */
+        Optional<List<String>> arguments();
     }
 
     /**

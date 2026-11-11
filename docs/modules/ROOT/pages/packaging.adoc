@@ -135,7 +135,10 @@ The packages are not the artifact of the Quarkus build: the jar or the native ex
 
 |`version`
 |Defaults to `quarkus.application.version`. The formats that take numbers only (MSI, MSIX, the macOS bundle) take its
-leading numbers: `1.2.3-SNAPSHOT` is `1.2.3` for them. The Debian and RPM packages write it `1.2.3~SNAPSHOT`
+leading numbers: `1.2.3-SNAPSHOT` is `1.2.3` for them. The Debian and RPM packages write it `1.2.3~SNAPSHOT`.
+Windows compares these numbers to upgrade the application, up to a limit: 255, 255 and 65535 for the three numbers of
+an MSI package, 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of
+`2025.1.0`: give the Windows build a version of its own (`-Dquarkus.desktop.packaging.version=25.1.0`)
 
 |`identifier`
 |A reverse domain name (`org.acme.editor`): the bundle identifier on macOS, the application ID of Flatpak (which needs
@@ -213,13 +216,18 @@ administrator rights (in `%LocalAppData%\Programs`); they install in `Program Fi
 `windows.start-menu`, `windows.start-menu-group` and `windows.desktop-shortcut` choose the shortcuts.
 
 The MSI package and the setup program of a new version replace the installed application: they recognize it by its
-upgrade code, derived from the identifier of the application (or given by `windows.upgrade-code`).
+upgrade code, derived from the identifier of the application (or given by `windows.upgrade-code`, a GUID with or
+without braces).
 
-An MSIX package declares a full trust desktop application. Windows only installs it when it is signed, and its
-publisher (`windows.msix.publisher`, `CN=<vendor>` by default) has to be the subject of the signing certificate.
+An MSIX package declares a full trust desktop application (`runFullTrust`), and the capabilities of
+`windows.msix.capabilities`: general ones (`internetClient`), restricted ones (`allowElevation`), and the others with
+their kind (`rescap:packageQuery`, `uap:documentsLibrary`, `device:microphone`). Windows only installs it when it is
+signed, and its publisher (`windows.msix.publisher`, `CN=<vendor>` by default) has to be the subject of the signing
+certificate, as Windows writes it: `(Get-PfxCertificate acme.pfx).Subject` in PowerShell prints it.
 
-With a certificate, the launcher of the application and the three packages are signed by `signtool` of the Windows
-SDK:
+With a certificate, `signtool` of the Windows SDK signs the launcher of the application, the libraries and executables
+of the application image that have no signature (such as the `jvm.dll` and `java.dll` that native-image links), the
+three packages, and the uninstaller of the setup program:
 
 [source,properties]
 ----
@@ -229,6 +237,15 @@ quarkus.desktop.packaging.windows.sign.timestamp-url=http://timestamp.digicert.c
 ----
 
 `windows.sign.subject-name` or `windows.sign.thumbprint` select a certificate of the certificate store instead.
+`windows.sign.arguments` adds arguments to `signtool sign`, and signs on its own: a signing service such as Azure
+Trusted Signing, a key of a cryptographic provider (`/csp`, `/kc`), a certificate of the machine store (`/sm`). Write
+its paths with `/`: in a list, `\` escapes the next character.
+
+[source,properties]
+----
+quarkus.desktop.packaging.windows.sign.timestamp-url=http://timestamp.acs.microsoft.com
+quarkus.desktop.packaging.windows.sign.arguments=/dlib,C:/tools/Azure.CodeSigning.Dlib.dll,/dmdf,C:/tools/metadata.json
+----
 
 [[macos]]
 == macOS

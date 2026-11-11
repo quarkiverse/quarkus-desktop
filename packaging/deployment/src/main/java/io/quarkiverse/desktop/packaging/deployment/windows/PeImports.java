@@ -58,6 +58,27 @@ public final class PeImports {
     }
 
     /**
+     * Whether a PE file has no signature : the certificate table of its data directories is empty.
+     *
+     * @param file the file, or its first bytes : its headers
+     * @return false for a file that is not a PE file, which cannot be signed
+     */
+    public static boolean unsigned(byte[] file) {
+        ByteBuffer buffer = ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN);
+        int optional = optionalHeader(buffer);
+        if (optional < 0) {
+            return false;
+        }
+        // the data directories of a 64-bit file (PE32+) and of a 32-bit file, after their number : the certificate
+        // table is the fifth
+        int directories = optional + ((buffer.getShort(optional) & 0xffff) == 0x20b ? 112 : 96);
+        if (buffer.getInt(directories - 4) <= 4) {
+            return false;
+        }
+        return buffer.getInt(directories + 32) == 0 || buffer.getInt(directories + 36) == 0;
+    }
+
+    /**
      * Whether a library imports a file, whatever the case of its name.
      */
     public static boolean imports(byte[] file, String name) {

@@ -80,7 +80,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The version of the application. Defaults to `quarkus.application.version`. The formats that need numbers (MSI, MSIX, macOS) take its leading numbers : `1.2.3-SNAPSHOT` is `1.2.3` for them.
+The version of the application. Defaults to `quarkus.application.version`. The formats that need numbers (MSI, MSIX, macOS) take its leading numbers : `1.2.3-SNAPSHOT` is `1.2.3` for them. Windows compares them to upgrade the application, up to a limit : 255, 255 and 65535 for the three numbers of an MSI package, 65535 for an MSIX package. The build of such a package fails for a larger number, such as the year of `2025.1.0`.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -332,7 +332,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The upgrade code of the application, a GUID : the Windows installers of the next versions upgrade the application that has the same code. Defaults to a GUID derived from the identifier of the application : never change either once the application is released.
+The upgrade code of the application, a GUID, with or without braces : the Windows installers of the next versions upgrade the application that has the same code. Defaults to a GUID derived from the identifier of the application : never change either once the application is released.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -521,7 +521,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The capabilities of the application. A desktop application is a full trust application.
+The capabilities of the application : general capabilities (`internetClient`), restricted ones (`allowElevation`), and the others with their kind (`rescap:packageQuery`, `uap:documentsLibrary`, `device:microphone`). A desktop application is a full trust application : `runFullTrust` is always declared.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -563,7 +563,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The certificate file (`.pfx`) that signs the executable and the packages. Nothing is signed without a certificate file, a subject name or a thumbprint. An unsigned MSIX package cannot be installed.
+The certificate file (`.pfx`) that signs the executables and the packages. Nothing is signed without a certificate file, a subject name, a thumbprint or arguments. An unsigned MSIX package cannot be installed.
 
 
 ifdef::add-copy-button-to-env-var[]
@@ -658,6 +658,27 @@ Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_TIMESTAMP_URL++
 endif::add-copy-button-to-env-var[]
 --
 |string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-arguments]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-arguments[`+++quarkus.desktop.packaging.windows.sign.arguments+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.sign.arguments+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+More arguments of `signtool sign`, after the ones of the other properties : `/sm` (a certificate of the machine store), `/csp` and `/kc` (a key of a cryptographic provider), `/dlib` and `/dmdf` (a signing service such as Azure Trusted Signing). They sign on their own, without a certificate file, a subject name or a thumbprint. Write the paths with `/` : in a list, `++\++` escapes the next character.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_ARGUMENTS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_SIGN_ARGUMENTS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
 |
 
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-macos-category]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-macos-category[`+++quarkus.desktop.packaging.macos.category+++`]##

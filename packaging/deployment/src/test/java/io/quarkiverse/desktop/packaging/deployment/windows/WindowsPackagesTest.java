@@ -2,6 +2,7 @@ package io.quarkiverse.desktop.packaging.deployment.windows;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -9,6 +10,7 @@ import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -18,11 +20,13 @@ import java.util.Optional;
 import javax.xml.parsers.DocumentBuilderFactory;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
+import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.IconSet;
@@ -119,7 +123,51 @@ class WindowsPackagesTest {
     @Test
     void theVersionOfAWindowsInstallerProduct() {
         assertEquals("1.2.3", MsiPackager.version(app("1.2.3-SNAPSHOT")));
-        assertEquals("255.255.65535", MsiPackager.version(app("2026.1000.70000")));
+        assertEquals("24.10.5", MsiPackager.version(app("24.10.05")));
+        assertEquals("255.255.65535", MsiPackager.version(app("255.255.65535")));
+        // a larger number is refused : cut down, it would change the order of the versions
+        for (String version : List.of("2025.1.0", "256.0.0", "1.256.0", "1.0.65536", "999-SNAPSHOT")) {
+            PackagingException e = assertThrows(PackagingException.class, () -> MsiPackager.version(app(version)));
+            assertTrue(e.getMessage().contains("quarkus.desktop.packaging.version=" + version), e.getMessage());
+        }
+    }
+
+    @Test
+    void theVersionOfAnMsixPackage() {
+        assertEquals("1.2.3.0", MsixPackager.version(app("1.2.3-SNAPSHOT")));
+        assertEquals("2025.1.0.0", MsixPackager.version(app("2025.1.0")));
+        assertEquals("65535.65535.65535.0", MsixPackager.version(app("65535.65535.65535")));
+        assertThrows(PackagingException.class, () -> MsixPackager.version(app("1.0.65536")));
+    }
+
+    /**
+     * The upgrade code of the configuration, with or without braces, in any case : the same code in the MSI package
+     * and in the setup program.
+     */
+    @Test
+    void theUpgradeCodeOfTheConfiguration() throws Exception {
+        for (String written : List.of("abcdefab-1111-2222-3333-444444444444", "{ABCDEFAB-1111-2222-3333-444444444444}",
+                " {abcdefab-1111-2222-3333-444444444444} ")) {
+            DesktopPackagingConfig config = TestConfig.of(Map.of("windows.upgrade-code", written));
+            AppInfo app = TestConfig.app(config);
+            assertEquals("ABCDEFAB-1111-2222-3333-444444444444", MsiPackager.upgradeCode(app, config.windows()));
+            Element pkg = (Element) parse(wxs(config)).getElementsByTagName("Package").item(0);
+            assertEquals("ABCDEFAB-1111-2222-3333-444444444444", pkg.getAttribute("UpgradeCode"));
+            assertTrue(script(config).contains("AppId={{ABCDEFAB-1111-2222-3333-444444444444}\n"), script(config));
+        }
+        // not a GUID : neither the package nor the setup program is generated
+        for (String written : List.of("my-application", "{", "{}", "{{abcdefab-1111-2222-3333-444444444444}",
+                "abcdefab111122223333444444444444", "1-2-3-4-5", "abcdefab-1111-2222-3333-44444444444g")) {
+            DesktopPackagingConfig config = TestConfig.of(Map.of("windows.upgrade-code", written));
+            PackagingException e = assertThrows(PackagingException.class, () -> wxs(config));
+            assertTrue(e.getMessage().contains("quarkus.desktop.packaging.windows.upgrade-code="), e.getMessage());
+            assertThrows(PackagingException.class, () -> script(config));
+        }
+    }
+
+    static String script(DesktopPackagingConfig config) {
+        return InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), Path.of("out"), "Acme-Editor");
     }
 
     @Test
@@ -141,6 +189,10 @@ class WindowsPackagesTest {
         assertTrue(script.contains("Name: \"{autoprograms}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\""), script);
         assertTrue(script.contains("Name: \"{autodesktop}\\Acme Editor\""), script);
         assertTrue(script.contains("[Tasks]"), script);
+        assertTrue(script.contains("Description: \"{cm:LaunchProgram,Acme Editor}\"; Flags: nowait postinstall"
+                + " skipifsilent\n"), script);
+        // nothing to sign
+        assertFalse(script.contains("SignTool"), script);
 
         DesktopPackagingConfig perUser = TestConfig.of(Map.of("windows.per-user", "true", "windows.start-menu", "false"));
         String userScript = InnoSetupPackager.script(TestConfig.app(perUser), perUser.windows(), Arch.ARM64, ROOT,
@@ -149,6 +201,97 @@ class WindowsPackagesTest {
         assertTrue(userScript.contains("ArchitecturesAllowed=arm64\n"), userScript);
         assertFalse(userScript.contains("{autoprograms}"), userScript);
         assertFalse(userScript.contains("[Tasks]"), userScript);
+    }
+
+    /**
+     * The name of the application in the message of the last page of the wizard : the argument of a constant.
+     */
+    @Test
+    void theInnoSetupScriptEncodesTheArgumentOfTheLaunchMessage() {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        AppInfo app = new AppInfo("100% {Fun}, A&B|C", "fun", "org.acme.Fun", "1.0", "Acme", "Fun", Optional.empty(),
+                Optional.empty(), Optional.empty());
+        String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Fun.exe",
+                Path.of("application.ico"), Path.of("out"), "Fun-1.0");
+        assertTrue(script.contains("Description: \"{cm:LaunchProgram,100%25 {{Fun%7d%2c A&&B%7cC}\"; Flags:"), script);
+        // elsewhere the name is not the argument of a constant
+        assertTrue(script.contains("AppName=100% {{Fun}, A&B|C\n"), script);
+        assertTrue(script.contains("Name: \"{autoprograms}\\100% {{Fun}, A&B|C\"; Filename:"), script);
+    }
+
+    /**
+     * With a certificate, the compiler of Inno Setup signs the uninstaller and the setup program with a sign tool,
+     * the command of {@code signtool} : the quotes of its arguments are {@code $q}, its dollar signs {@code $$}.
+     */
+    @Test
+    void theSignToolOfTheSetupProgram() {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("windows.sign.thumbprint",
+                "0123456789abcdef0123456789abcdef01234567"));
+        String script = script(config);
+        assertTrue(script.contains("\nSignTool=quarkus\n"), script);
+        assertTrue(script.indexOf("SignTool=") < script.indexOf("[Languages]"), script);
+
+        assertEquals("$qC:\\Program Files (x86)\\Windows Kits\\10\\bin\\signtool.exe$q $qsign$q $q/fd$q $qSHA256$q $q/f$q"
+                + " $qC:\\acme\\acme.pfx$q $q/p$q $qPa$$$$w0rd $$f$q $q/n$q $qAcme \\$qEditor\\$q Inc\\\\$q $f",
+                InnoSetupPackager.signTool(List.of("C:\\Program Files (x86)\\Windows Kits\\10\\bin\\signtool.exe", "sign",
+                        "/fd", "SHA256", "/f", "C:\\acme\\acme.pfx", "/p", "Pa$$w0rd $f", "/n", "Acme \"Editor\" Inc\\")));
+    }
+
+    /**
+     * The command of {@code signtool} : the options of the configuration, then its arguments ; the description of an
+     * MSI package.
+     */
+    @Test
+    void theCommandOfSigntool() {
+        Path signtool = Path.of("signtool.exe");
+        Path project = Path.of("project");
+        assertFalse(WindowsSdk.signs(TestConfig.defaults().windows().sign()));
+
+        DesktopPackagingConfig.Sign file = TestConfig.of(Map.of("windows.sign.certificate-file", "acme.pfx",
+                "windows.sign.certificate-password", "secret", "windows.sign.timestamp-url", "http://timestamp.acme.org"))
+                .windows().sign();
+        assertTrue(WindowsSdk.signs(file));
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256", "/d", "Acme Editor", "/f",
+                project.resolve("acme.pfx").toAbsolutePath().toString(), "/p", "secret", "/tr", "http://timestamp.acme.org",
+                "/td", "SHA256"), WindowsSdk.command(signtool, file, project, "Acme Editor"));
+        assertFalse(WindowsSdk.command(signtool, file, project, null).contains("/d"));
+
+        // a signing service : arguments alone sign
+        DesktopPackagingConfig.Sign service = TestConfig.of(Map.of("windows.sign.timestamp-url",
+                "http://timestamp.acs.microsoft.com", "windows.sign.arguments",
+                "/dlib, C:/tools/Azure.CodeSigning.Dlib.dll,/dmdf,C:/tools/metadata.json")).windows().sign();
+        assertTrue(WindowsSdk.signs(service));
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256", "/tr",
+                "http://timestamp.acs.microsoft.com", "/td", "SHA256", "/dlib", "C:/tools/Azure.CodeSigning.Dlib.dll",
+                "/dmdf", "C:/tools/metadata.json"), WindowsSdk.command(signtool, service, project, null));
+
+        // the description of the arguments, rather than the one of the package : signtool refuses an option twice
+        DesktopPackagingConfig.Sign described = TestConfig.of(Map.of("windows.sign.thumbprint", "0123ABCD",
+                "windows.sign.arguments", "/sm,/d,Acme")).windows().sign();
+        assertEquals(List.of(signtool.toAbsolutePath().toString(), "sign", "/fd", "SHA256", "/sha1", "0123ABCD", "/sm",
+                "/d", "Acme"), WindowsSdk.command(signtool, described, project, "Acme Editor"));
+    }
+
+    /**
+     * The files of the application image that are signed : the launcher, and the libraries and executables without
+     * signature.
+     */
+    @Test
+    void theFilesOfTheApplicationImageToSign(@TempDir Path root) throws Exception {
+        byte[] unsigned = PeImportsTest.library(0x200);
+        ByteBuffer.wrap(unsigned).order(ByteOrder.LITTLE_ENDIAN).putInt(0x58 + 108, 16);
+        byte[] signed = unsigned.clone();
+        ByteBuffer.wrap(signed).order(ByteOrder.LITTLE_ENDIAN).putInt(0x58 + 112 + 32, 0x400).putInt(0x58 + 112 + 36, 1400);
+        Files.write(root.resolve("Acme Editor.exe"), new byte[] { 1 });
+        Files.write(root.resolve("jvm.dll"), unsigned);
+        Files.write(root.resolve("awt.dll"), signed);
+        Files.writeString(root.resolve("notes.dll"), "not a library");
+        Files.createDirectories(root.resolve("runtime/bin"));
+        Files.write(root.resolve("runtime/bin/JAVA.DLL"), unsigned);
+        Files.createDirectories(root.resolve("app"));
+        Files.write(root.resolve("app/data.txt"), unsigned);
+        assertEquals(List.of(root.resolve("Acme Editor.exe"), root.resolve("jvm.dll"), root.resolve("runtime/bin/JAVA.DLL")),
+                WindowsSdk.unsigned(new ApplicationImage(root, "Acme Editor.exe", true)));
     }
 
     @Test
@@ -174,6 +317,85 @@ class WindowsPackagesTest {
         DesktopPackagingConfig invalid = TestConfig.of(Map.of("windows.msix.identity-name", "a b"));
         assertThrows(PackagingException.class,
                 () -> MsixPackager.manifest(TestConfig.app(invalid), invalid.windows().msix(), Arch.X64, "a.exe"));
+    }
+
+    /**
+     * The capabilities of the MSIX manifest : trimmed, once, of their kind, {@code runFullTrust} always, the device
+     * capabilities last.
+     */
+    @Test
+    void theCapabilitiesOfTheMsixManifest() throws Exception {
+        assertEquals(List.of("<rescap:Capability Name=\"runFullTrust\" />"),
+                MsixPackager.capabilities(TestConfig.defaults().windows().msix()));
+        DesktopPackagingConfig config = TestConfig.of(Map.of("windows.msix.capabilities", "internetClient, allowElevation ,"
+                + " internetClient, rescap:packageQuery, uap:documentsLibrary, device:microphone, removableStorage"));
+        assertEquals(List.of("<Capability Name=\"internetClient\" />", "<uap:Capability Name=\"documentsLibrary\" />",
+                "<uap:Capability Name=\"removableStorage\" />", "<rescap:Capability Name=\"allowElevation\" />",
+                "<rescap:Capability Name=\"packageQuery\" />", "<rescap:Capability Name=\"runFullTrust\" />",
+                "<DeviceCapability Name=\"microphone\" />"), MsixPackager.capabilities(config.windows().msix()));
+        Document document = parse(MsixPackager.manifest(TestConfig.app(config), config.windows().msix(), Arch.X64,
+                "Acme Editor.exe"));
+        Element capabilities = (Element) document.getElementsByTagName("Capabilities").item(0);
+        Element last = null;
+        for (int i = 0; i < capabilities.getChildNodes().getLength(); i++) {
+            if (capabilities.getChildNodes().item(i) instanceof Element element) {
+                last = element;
+            }
+        }
+        assertEquals("DeviceCapability", last.getLocalName());
+        // a capability without kind that is not known, or of an unknown kind
+        for (String capability : List.of("runFullTrust,microphone", "runFulTrust", "uap3:x", "rescap:a b")) {
+            DesktopPackagingConfig wrong = TestConfig.of(Map.of("windows.msix.capabilities", capability));
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> MsixPackager.capabilities(wrong.windows().msix()));
+            assertTrue(e.getMessage().contains("quarkus.desktop.packaging.windows.msix.capabilities"), e.getMessage());
+        }
+    }
+
+    /**
+     * The mapping file of the MSIX package : only the paths of the generated files are refused in the image.
+     */
+    @Test
+    void theMsixMappingFile() {
+        Map<String, Path> generated = Map.of("AppxManifest.xml", Path.of("work", "AppxManifest.xml"),
+                "Assets\\StoreLogo.png", Path.of("work", "Assets", "StoreLogo.png"));
+        String mapping = MsixPackager.mapping(generated, ROOT, List.of(Path.of("Acme Editor.exe"),
+                Path.of("assets", "logo.png"), Path.of("Assets", "sounds", "beep.wav"), Path.of("app", "AppxManifest.xml")));
+        assertTrue(mapping.startsWith("[Files]\n"), mapping);
+        assertTrue(mapping.contains("\"" + Path.of("work", "Assets", "StoreLogo.png") + "\" \"Assets\\StoreLogo.png\"\n"),
+                mapping);
+        // a directory named as the one of the logos is a directory of the image like the others
+        assertTrue(mapping.contains("\"" + ROOT.resolve("assets").resolve("logo.png") + "\" \"assets\\logo.png\"\n"),
+                mapping);
+        assertTrue(mapping.contains("\" \"Assets\\sounds\\beep.wav\"\n"), mapping);
+        assertTrue(mapping.contains("\" \"app\\AppxManifest.xml\"\n"), mapping);
+        for (Path file : List.of(Path.of("appxmanifest.xml"), Path.of("ASSETS", "storelogo.png"))) {
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> MsixPackager.mapping(generated, ROOT, List.of(file)));
+            assertTrue(e.getMessage().contains("rename"), e.getMessage());
+        }
+    }
+
+    /**
+     * signtool only reports {@code 0x8007000b} when the publisher of the package is not the subject of the
+     * certificate : the failure says so.
+     */
+    @Test
+    void theFailureOfTheSignatureOfAnMsixPackageNamesThePublisher() {
+        PackagingException mismatch = new PackagingException("signtool failed to sign a.msix (exit code 1) :\n"
+                + "Done Adding Additional Store\n"
+                + "Error information: \"Error: SignerSign() failed.\" (-2147024885/0x8007000b)\n"
+                + "SignTool Error: An unexpected internal error has occurred.");
+        PackagingException explained = MsixPackager.signatureFailure(mismatch, "CN=Acme");
+        assertTrue(explained.getMessage().startsWith(mismatch.getMessage()), explained.getMessage());
+        assertTrue(explained.getMessage().contains("(CN=Acme)"), explained.getMessage());
+        assertTrue(explained.getMessage().contains("quarkus.desktop.packaging.windows.msix.publisher"),
+                explained.getMessage());
+        assertSame(mismatch, explained.getCause());
+        PackagingException timestamp = new PackagingException("signtool failed to sign a.msix (exit code 1) :\n"
+                + "SignTool Error: The specified timestamp server either could not be reached or\n"
+                + "returned an invalid response.");
+        assertSame(timestamp, MsixPackager.signatureFailure(timestamp, "CN=Acme"));
     }
 
     /**

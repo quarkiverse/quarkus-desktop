@@ -72,7 +72,7 @@ final class Packaging {
             throws IOException {
         List<Path> packages = new ArrayList<>();
         if (context.os() == TargetOs.WINDOWS) {
-            WindowsSdk.signLauncher(context, image);
+            WindowsSdk.signImage(context, image);
         }
         for (PackageFormat format : formats) {
             Path built = format == PackageFormat.DIRECTORY ? image.root() : packager(format).build(context, image);
