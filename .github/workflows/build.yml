@@ -265,7 +265,8 @@ jobs:
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           build="./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=$LINUX_FORMATS"
-          if getent group lxd > /dev/null; then
+          # the lxd group exists on the runner, whose user is only a member of it once LXD is set up
+          if [[ "$LINUX_FORMATS" == *snap* ]]; then
             sg lxd -c "$build" 2>&1 | tee maven.log
           else
             $build 2>&1 | tee maven.log

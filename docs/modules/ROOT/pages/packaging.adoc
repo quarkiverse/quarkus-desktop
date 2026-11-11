@@ -174,7 +174,13 @@ packaged too.
 On macOS, the image is an application bundle (`Acme Editor.app`), with its `Info.plist` and its icon.
 `macos.info-plist.<key>` adds entries, such as the usage descriptions of the privacy permissions.
 
-On Windows, the native executable gets the icon of the application and its version information (the Details tab of its
+On Windows, the executable of the image is named after the application (`Acme Editor.exe`). The libraries of the JDK
+that an AWT executable loads call the JVM through two libraries that native-image links with the executable by its
+file name (`jvm.dll`, `java.dll`): the extension changes the name that they import in the image. A name that is not
+ASCII cannot be imported: the executable then keeps the name of the build, which `quarkus.package.output-name` and
+`quarkus.package.jar.add-runner-suffix=false` choose.
+
+The Windows native executable also gets the icon of the application and its version information (the Details tab of its
 properties). They are linked in the executable when it is built, so the extension has to be in the application then,
 with or without packages; `windows.executable-resources=false` disables it. The subsystem of the executable (no console
 window) is an option of the toolkit extensions: `quarkus.desktop.awt.windows.subsystem=windows` or

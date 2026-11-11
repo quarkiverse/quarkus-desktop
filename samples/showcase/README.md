@@ -128,6 +128,20 @@ docker run --rm --init -v "$PWD":/showcase -v quarkus-desktop-linux-m2:/root/.m2
     java tools/Cycle.java linux
 ```
 
+## Installers
+
+The `packaging` profile adds the Desktop Packaging extension, which builds the installers of the showcase from its native
+executable (or from its jar with a Java runtime, without `-Dnative`). The formats of the other operating systems are
+skipped, and each format needs its tool on the build machine (see
+[Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)):
+
+```bash
+./mvnw clean package -Dnative -Dpackaging -Dquarkus.desktop.packaging.formats=msi,exe,dmg,deb,rpm,appimage
+```
+
+The packages are in `target/packaging`, the application image in `target/packaging/image`. On Windows, add
+`-Dquarkus.desktop.awt.windows.subsystem=windows` for an application without a console window.
+
 ## Third-party assets
 
 The fonts, sound banks and other test assets that were not created for this project are listed with their license in
