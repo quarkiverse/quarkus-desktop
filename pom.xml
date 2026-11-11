@@ -19,6 +19,7 @@
         <module>awt</module>
         <module>swing</module>
         <module>swt</module>
+        <module>packaging</module>
     </modules>
 
     <scm>

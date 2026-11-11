@@ -36,6 +36,7 @@ import io.quarkiverse.desktop.awt.runtime.graal.DesktopAwtFeature;
 import io.quarkiverse.desktop.awt.runtime.graal.OverrideChecksFeature;
 import io.quarkiverse.desktop.awt.runtime.macos.MacMainThread;
 import io.quarkiverse.desktop.awt.runtime.macos.ParkMainThreadEnabled;
+import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
 import io.quarkus.arc.deployment.BeanContainerBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
@@ -870,13 +871,21 @@ class DesktopAwtProcessor {
 
     /**
      * Copies the Visual C++ runtime next to the native executable. {@code ArtifactResultBuildItem} is never produced :
-     * it makes this step run after the native build.
+     * it makes this step run after the native build. The copied libraries are files of the native executable for the
+     * Desktop Packaging extension, which builds the packages of the application after this step.
      */
     @BuildStep(onlyIf = NativeBuild.class)
     void copyVcRuntime(DesktopTargetPlatformBuildItem platform, DesktopAwtConfig config, NativeConfig nativeConfig,
-            NativeImageBuildItem nativeImage, BuildProducer<ArtifactResultBuildItem> artifactResults) {
+            NativeImageBuildItem nativeImage, BuildProducer<ArtifactResultBuildItem> artifactResults,
+            BuildProducer<NativeExecutableFileBuildItem> executableFiles) {
         if (platform.isWindows() && config.windows().copyVcRuntime()) {
             WindowsExecutable.copyVcRuntime(builderJdkHome(nativeConfig), nativeImage.getPath());
+            Path directory = nativeImage.getPath().toAbsolutePath().getParent();
+            for (String library : WindowsExecutable.VC_RUNTIME) {
+                if (Files.isRegularFile(directory.resolve(library))) {
+                    executableFiles.produce(new NativeExecutableFileBuildItem(directory.resolve(library)));
+                }
+            }
         }
     }
 

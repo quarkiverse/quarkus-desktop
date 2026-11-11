@@ -19,6 +19,7 @@ import java.util.stream.Stream;
 
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
@@ -557,11 +558,14 @@ class DesktopSwtProcessor {
 
     /**
      * Copies the native libraries of SWT next to the native executable ({@code next-to-executable}). The
-     * {@code ArtifactResultBuildItem} is never produced : it makes this step run after the native build.
+     * {@code ArtifactResultBuildItem} is never produced : it makes this step run after the native build. The copied
+     * libraries are files of the native executable for the Desktop Packaging extension, which builds the packages of
+     * the application after this step.
      */
     @BuildStep(onlyIf = NativeBuild.class)
     void copyNativeLibraries(SwtPlatformBuildItem platform, DesktopSwtConfig config, NativeImageBuildItem nativeImage,
-            BuildProducer<ArtifactResultBuildItem> artifactResults) {
+            BuildProducer<ArtifactResultBuildItem> artifactResults,
+            BuildProducer<NativeExecutableFileBuildItem> executableFiles) {
         if (config.nativeLibraries() != NativeLibraries.NEXT_TO_EXECUTABLE) {
             return;
         }
@@ -575,6 +579,7 @@ class DesktopSwtProcessor {
                     throw new UncheckedIOException("Unable to copy the SWT library " + library + " to " + directory, e);
                 }
             });
+            executableFiles.produce(new NativeExecutableFileBuildItem(directory.resolve(library)));
         }
         LOGGER.debugf("Native libraries of SWT copied to %s", directory);
     }

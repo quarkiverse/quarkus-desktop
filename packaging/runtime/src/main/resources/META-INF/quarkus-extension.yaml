@@ -1,0 +1,21 @@
+name: "Desktop Packaging"
+description: "Package desktop (GUI) applications as the installers of Windows, macOS and Linux: MSI, EXE, MSIX, DMG, PKG, deb, RPM, AppImage, Flatpak and Snap, in JVM mode and as native executables"
+artifact: ${project.groupId}:${project.artifactId}:${project.version}
+metadata:
+  short-name: "desktop-packaging"
+  keywords:
+    - "desktop"
+    - "packaging"
+    - "installer"
+    - "msi"
+    - "dmg"
+    - "deb"
+    - "rpm"
+    - "appimage"
+    - "native"
+  guide: "https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html"
+  categories:
+    - "miscellaneous"
+  status: "experimental"
+  config:
+    - "quarkus.desktop.packaging."
