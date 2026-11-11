@@ -231,9 +231,10 @@ jobs:
           rm appimagetool
           # The snap store does not always answer the runners : the snap is then not built, and the job says so
           snap_tools() {
-            for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 20; done
-            for attempt in 1 2 3; do sudo snap install lxd && break || sleep 20; done
-            snap list snapcraft && snap list lxd
+            for attempt in 1 2; do sudo snap install snapcraft --classic && break || sleep 10; done
+            snap list snapcraft || return 1
+            for attempt in 1 2; do sudo snap install lxd && break || sleep 10; done
+            snap list lxd
           }
           if snap_tools; then
             sudo lxd init --auto
