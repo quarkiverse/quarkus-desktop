@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 import java.io.IOException;
+import java.lang.module.ModuleDescriptor;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
@@ -369,19 +370,38 @@ class ApplicationImageTest {
         assertEquals(Set.of(), JvmApplicationImage.releaseModules("JAVA_VERSION=\"25\"\n"));
         assertEquals(-1, JvmApplicationImage.releaseVersion(""));
 
-        // ALL-DEFAULT last, which jpackage ignores anywhere else ; jdk.crypto.mscapi only in the JDK of Windows
+        // without the default root modules of the JDK, ALL-DEFAULT last, which the jpackage of JDK 21 to 25 expands
+        // there only ; jdk.crypto.mscapi only in the JDK of Windows
         assertEquals(List.of("java.logging", "java.naming", "jdk.jfr", "jdk.unsupported", "jdk.zipfs", "jdk.localedata",
                 "jdk.charsets", "jdk.crypto.cryptoki", "jdk.naming.dns", "jdk.naming.rmi", "ALL-DEFAULT"),
-                JvmApplicationImage.defaultModules(JvmApplicationImage.releaseModules(release)));
+                JvmApplicationImage.defaultModules(JvmApplicationImage.releaseModules(release), List.of()));
         assertEquals(List.of("java.logging", "jdk.charsets", "jdk.crypto.mscapi", "ALL-DEFAULT"),
-                JvmApplicationImage.defaultModules(Set.of("java.base", "java.logging", "jdk.charsets", "jdk.crypto.mscapi")));
+                JvmApplicationImage.defaultModules(Set.of("java.base", "java.logging", "jdk.charsets", "jdk.crypto.mscapi"),
+                        List.of()));
+        // with them, no ALL-DEFAULT, which the jpackage of JDK 26 and later ignores
+        assertEquals(List.of("java.desktop", "java.logging", "jdk.charsets"), JvmApplicationImage
+                .defaultModules(Set.of("java.base", "java.logging", "jdk.charsets"), List.of("java.desktop", "java.logging")));
+
+        // the default root modules : the ones that export a package without qualification, not the incubator ones
+        assertEquals(List.of("java.desktop", "jdk.jfr"), JvmApplicationImage.defaultRoots(List.of(
+                ModuleDescriptor.newModule("jdk.jfr").exports("jdk.jfr").build(),
+                ModuleDescriptor.newModule("java.desktop").exports("java.awt").build(),
+                ModuleDescriptor.newModule("jdk.internal.vm.ci").exports(Set.of(), "jdk.vm.ci", Set.of("jdk.graal"))
+                        .build(),
+                ModuleDescriptor.newModule("jdk.localedata").build(),
+                ModuleDescriptor.newModule("jdk.incubator.vector").exports("jdk.incubator.vector").build())));
+        // the JDK of the build, which has Java SE
+        List<String> roots = JvmApplicationImage.defaultRoots(Path.of(System.getProperty("java.home")));
+        assertTrue(roots.containsAll(List.of("java.base", "java.desktop", "java.sql", "jdk.jfr")), roots.toString());
+        assertFalse(roots.contains("jdk.localedata"), roots.toString());
     }
 
     /**
      * The default Java runtime, as the {@code jpackage} of the JDK of the build builds it from the modules that the
-     * extension gives it : the modules of Java SE and of the JDK that export an API ({@code ALL-DEFAULT}, which
-     * {@code jpackage} expands as the last of its modules only), with the ones of Quarkus and the providers of
-     * services. In the build directory rather than in a temporary directory : an antivirus may still be reading the new
+     * extension gives it : the modules of Java SE and of the JDK that export an API (the default root modules, which
+     * the extension reads from the JDK : the {@code jpackage} of JDK 26 and later ignores {@code ALL-DEFAULT}), with
+     * the ones of Quarkus and the providers of services. In the build directory rather than in a temporary directory : an
+     * antivirus may still be reading the new
      * executables when the test deletes them.
      */
     @Test
@@ -630,35 +650,36 @@ class ApplicationImageTest {
         assertEquals(List.of("--add-modules", "java.desktop,java.logging,java.naming,jdk.jfr,jdk.unsupported,jdk.zipfs",
                 "--jlink-options", "--strip-debug --no-man-pages"),
                 JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")),
-                        Optional.of(List.of("--strip-debug", "--no-man-pages")), Optional.empty(), project, ""));
+                        Optional.of(List.of("--strip-debug", "--no-man-pages")), Optional.empty(), project, "", List::of));
         assertEquals(List.of("--add-modules",
                 "java.desktop,java.logging,java.naming,jdk.jfr,jdk.unsupported,jdk.zipfs,jdk.crypto.ec"),
                 JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")), Optional.empty(),
-                        Optional.empty(), project, jdk21));
+                        Optional.empty(), project, jdk21, List::of));
         // the default modules of jpackage, with the ones of Quarkus and the providers of services that the JDK has
         assertEquals(List.of("--add-modules", "java.logging,jdk.localedata,ALL-DEFAULT"), JvmApplicationImage
-                .runtimeArguments(Optional.empty(), Optional.empty(), Optional.empty(), project, jdk21));
+                .runtimeArguments(Optional.empty(), Optional.empty(), Optional.empty(), project, jdk21, List::of));
         assertEquals(List.of("--add-modules", "java.logging,jdk.localedata,ALL-DEFAULT", "--jlink-options",
                 "--strip-debug"),
                 JvmApplicationImage.runtimeArguments(Optional.of(List.of()),
-                        Optional.of(List.of("--strip-debug")), Optional.empty(), project, jdk21));
+                        Optional.of(List.of("--strip-debug")), Optional.empty(), project, jdk21, List::of));
         // without the release file of the JDK, the default modules of jpackage only
         assertEquals(List.of(), JvmApplicationImage.runtimeArguments(Optional.empty(), Optional.empty(), Optional.empty(),
-                project, ""));
+                project, "", List::of));
         // jpackage rejects modules with a given runtime
         assertEquals(List.of("--runtime-image", project.resolve("runtime").toString()), JvmApplicationImage
-                .runtimeArguments(Optional.of(List.of()), Optional.of(List.of()), Optional.of("runtime"), project, jdk21));
+                .runtimeArguments(Optional.of(List.of()), Optional.of(List.of()), Optional.of("runtime"), project, jdk21,
+                        List::of));
 
         // jpackage takes the given runtime as it is
         PackagingException modules = assertThrows(PackagingException.class,
                 () -> JvmApplicationImage.runtimeArguments(Optional.of(List.of("java.desktop")), Optional.empty(),
-                        Optional.of("runtime"), project, jdk21));
+                        Optional.of("runtime"), project, jdk21, List::of));
         assertTrue(modules.getMessage().contains("quarkus.desktop.packaging.jvm.runtime-image"), modules.getMessage());
         assertTrue(modules.getMessage().contains("quarkus.desktop.packaging.jvm.modules"), modules.getMessage());
         assertFalse(modules.getMessage().contains("jlink-options"), modules.getMessage());
         PackagingException options = assertThrows(PackagingException.class,
                 () -> JvmApplicationImage.runtimeArguments(Optional.empty(), Optional.of(List.of("--strip-debug")),
-                        Optional.of("runtime"), project, jdk21));
+                        Optional.of("runtime"), project, jdk21, List::of));
         assertTrue(options.getMessage().contains("quarkus.desktop.packaging.jvm.jlink-options"), options.getMessage());
         assertFalse(options.getMessage().contains("jvm.modules"), options.getMessage());
     }

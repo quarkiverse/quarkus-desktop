@@ -1,10 +1,18 @@
 package io.quarkiverse.desktop.packaging.deployment;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.lang.module.ModuleDescriptor;
+import java.lang.module.ModuleFinder;
+import java.lang.module.ModuleReference;
+import java.net.URI;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -99,19 +107,68 @@ final class JvmApplicationImage {
     }
 
     /**
-     * The modules of the Java runtime when the configuration has none : the default ones of {@code jpackage}
-     * ({@code ALL-DEFAULT} : the modules of the JDK that export an API, and the ones that they require), with the ones
-     * of Quarkus and the providers of services ({@link #PROVIDER_MODULES}), which the {@code jpackage} of JDK 25 and
-     * later leaves out. {@code ALL-DEFAULT} is the last module : {@code jpackage} ignores it anywhere else.
+     * The modules of the Java runtime when the configuration has none : the default root modules of the JDK (the ones
+     * that export an API, {@link #defaultRoots}), which {@code jlink} completes with the ones that they require, then
+     * the ones of Quarkus and the providers of services ({@link #PROVIDER_MODULES}), which the {@code jpackage} of JDK
+     * 25 and later leaves out of its default runtime. Without the default root modules (a JDK whose modules cannot be
+     * read), {@code ALL-DEFAULT}, as the last module : the {@code jpackage} of JDK 21 to 25 expands it there only, and
+     * the one of JDK 26 and later, which reorders its modules, ignores it.
      *
      * @param jdkModules the modules of the JDK of {@code jpackage} : the others are left out, as {@code jlink} fails on
      *        a module that the JDK does not have ({@code jdk.crypto.mscapi} is in the JDK of Windows only)
+     * @param roots the default root modules of that JDK, or none when they cannot be read
      */
-    static List<String> defaultModules(Set<String> jdkModules) {
-        List<String> modules = new ArrayList<>(Stream.concat(QUARKUS_MODULES.stream(), PROVIDER_MODULES.stream())
-                .filter(jdkModules::contains).toList());
-        modules.add("ALL-DEFAULT");
-        return modules;
+    static List<String> defaultModules(Set<String> jdkModules, List<String> roots) {
+        LinkedHashSet<String> modules = new LinkedHashSet<>(roots);
+        Stream.concat(QUARKUS_MODULES.stream(), PROVIDER_MODULES.stream()).filter(jdkModules::contains)
+                .forEach(modules::add);
+        if (roots.isEmpty()) {
+            modules.add("ALL-DEFAULT");
+        }
+        return new ArrayList<>(modules);
+    }
+
+    /**
+     * The default root modules of a JDK, the ones that {@code ALL-DEFAULT} names : the modules that export a package
+     * without qualification, except the incubator modules, which are not resolved by default. In the order of their
+     * names.
+     */
+    static List<String> defaultRoots(Collection<ModuleDescriptor> descriptors) {
+        return descriptors.stream()
+                .filter(descriptor -> !descriptor.name().startsWith("jdk.incubator."))
+                .filter(descriptor -> descriptor.exports().stream().anyMatch(export -> !export.isQualified()))
+                .map(ModuleDescriptor::name).sorted().toList();
+    }
+
+    /**
+     * The default root modules of the JDK of {@code jpackage} ({@link #defaultRoots(Collection)}) : the JDK that runs
+     * the build, or another one, read through its {@code jrt} file system, which the JVM of the build reads for a JDK
+     * of its version or an older one.
+     *
+     * @return none when the modules of that JDK cannot be read
+     */
+    static List<String> defaultRoots(Path jdkHome) {
+        try {
+            if (jdkHome.toRealPath().equals(Path.of(System.getProperty("java.home")).toRealPath())) {
+                return defaultRoots(ModuleFinder.ofSystem().findAll().stream().map(ModuleReference::descriptor).toList());
+            }
+            try (FileSystem jrt = FileSystems.newFileSystem(URI.create("jrt:/"), Map.of("java.home", jdkHome.toString()));
+                    Stream<Path> modules = Files.list(jrt.getPath("/modules"))) {
+                List<ModuleDescriptor> descriptors = new ArrayList<>();
+                for (Path module : modules.toList()) {
+                    Path info = module.resolve("module-info.class");
+                    if (Files.isRegularFile(info)) {
+                        try (InputStream input = Files.newInputStream(info)) {
+                            descriptors.add(ModuleDescriptor.read(input));
+                        }
+                    }
+                }
+                return defaultRoots(descriptors);
+            }
+        } catch (IOException | RuntimeException | LinkageError e) {
+            // the jrt file system of a JDK of a later version than the one of the build needs that version
+            return List.of();
+        }
     }
 
     /**
@@ -149,11 +206,23 @@ final class JvmApplicationImage {
      */
     private static String jdkRelease(Path jpackage) {
         try {
-            Path bin = jpackage.toRealPath().getParent();
-            Path release = bin == null || bin.getParent() == null ? null : bin.getParent().resolve("release");
-            return release != null && Files.isRegularFile(release) ? Files.readString(release) : "";
+            Optional<Path> release = jdkHome(jpackage).map(home -> home.resolve("release"));
+            return release.isPresent() && Files.isRegularFile(release.get()) ? Files.readString(release.get()) : "";
         } catch (IOException e) {
             return "";
+        }
+    }
+
+    /**
+     * The JDK of a {@code jpackage} ({@code <jdk>/bin/jpackage}), or none for a {@code jpackage} that is not in the
+     * {@code bin} directory of a JDK.
+     */
+    private static Optional<Path> jdkHome(Path jpackage) {
+        try {
+            Path bin = jpackage.toRealPath().getParent();
+            return Optional.ofNullable(bin == null ? null : bin.getParent());
+        } catch (IOException e) {
+            return Optional.empty();
         }
     }
 
@@ -299,7 +368,8 @@ final class JvmApplicationImage {
             command.add(context.config().macos().category().replaceFirst("^public\\.app-category\\.", ""));
         }
         command.addAll(runtimeArguments(config.modules(), config.jlinkOptions(), config.runtimeImage(),
-                context.projectDirectory(), jdkRelease(jpackage)));
+                context.projectDirectory(), jdkRelease(jpackage),
+                () -> jdkHome(jpackage).map(JvmApplicationImage::defaultRoots).orElse(List.of())));
         List<String> options = new ArrayList<>();
         // before the options of the configuration, which may set the version too
         versionOption(context.os(), MacBundle.version(app)).ifPresent(options::add);
@@ -376,10 +446,12 @@ final class JvmApplicationImage {
      * @param projectDirectory the directory of the relative path of the runtime
      * @param jdkRelease the {@code release} file of the JDK of {@code jpackage}, whose modules {@code jlink} links, or
      *        an empty text : then {@code jpackage} chooses the modules when the configuration has none
+     * @param roots the default root modules of the JDK of {@code jpackage} ({@link #defaultRoots(Collection)}), read
+     *        when the configuration has no modules
      * @throws PackagingException when a runtime is given with modules or options of {@code jlink}
      */
     static List<String> runtimeArguments(Optional<List<String>> modules, Optional<List<String>> jlinkOptions,
-            Optional<String> runtimeImage, Path projectDirectory, String jdkRelease) {
+            Optional<String> runtimeImage, Path projectDirectory, String jdkRelease, Supplier<List<String>> roots) {
         List<String> arguments = new ArrayList<>();
         List<String> properties = new ArrayList<>();
         Optional<List<String>> configured = modules.filter(list -> !list.isEmpty());
@@ -392,7 +464,7 @@ final class JvmApplicationImage {
             Set<String> jdkModules = releaseModules(jdkRelease);
             if (!jdkModules.isEmpty()) {
                 arguments.add("--add-modules");
-                arguments.add(String.join(",", defaultModules(jdkModules)));
+                arguments.add(String.join(",", defaultModules(jdkModules, roots.get())));
             }
         }
         jlinkOptions.filter(list -> !list.isEmpty()).ifPresent(list -> {
