@@ -124,7 +124,9 @@ jobs:
         with:
           java-version: '25'
           distribution: 'mandrel'
-          version: 'mandrel-25.0.5.0-Final'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
 
@@ -173,7 +175,9 @@ jobs:
         with:
           java-version: '25'
           distribution: 'mandrel'
-          version: 'mandrel-25.0.5.0-Final'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
 
@@ -220,7 +224,9 @@ jobs:
         with:
           java-version: '25'
           distribution: 'mandrel'
-          version: 'mandrel-25.0.5.0-Final'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The dependencies of the packaging modules only : a cache of their own, not the one of the full builds, which
