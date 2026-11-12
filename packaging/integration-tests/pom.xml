@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.quarkiverse.desktop</groupId>
+        <artifactId>quarkus-desktop-packaging-parent</artifactId>
+        <version>999-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>quarkus-desktop-packaging-integration-tests</artifactId>
+    <name>Quarkus Desktop - Packaging - Integration Tests</name>
+
+    <properties>
+        <!-- The packages that the build of this module writes, and that PackagingIT checks : the application image, which
+             needs no tool but the JDK. More formats on the command line, on a machine that has their tools :
+             -Dquarkus.desktop.packaging.formats=directory,msi,exe,msix (the formats of the other operating systems are
+             skipped) -->
+        <quarkus.desktop.packaging.formats>directory</quarkus.desktop.packaging.formats>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-packaging</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <!-- No user interface toolkit : the packages are the same for the applications of each of them -->
+        <dependency>
+            <groupId>io.quarkus</groupId>
+            <artifactId>quarkus-arc</artifactId>
+        </dependency>
+
+        <!-- test dependencies -->
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- Make sure the deployment module is built first (parallel builds, -pl) -->
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-packaging-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- PackagingIT runs after the package phase, which builds the packages : in JVM mode (a jar and a Java
+                 runtime, with jpackage) and with -Dnative (the native executable) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-failsafe-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>integration-test</goal>
+                            <goal>verify</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <systemPropertyVariables>
+                        <packaging.directory>${project.build.directory}/packaging</packaging.directory>
+                        <packaging.formats>${quarkus.desktop.packaging.formats}</packaging.formats>
+                        <packaging.native>${quarkus.native.enabled}</packaging.native>
+                        <packaging.version>${project.version}</packaging.version>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>native-image</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>

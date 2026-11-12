@@ -6,16 +6,43 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Desktop Packaging (`quarkus-desktop-packaging`), a new extension that builds the installers of a desktop application
+  at the end of the build, whatever its user interface toolkit: MSI (WiX), EXE (Inno Setup) and MSIX on Windows, DMG and
+  PKG on macOS, deb, RPM, AppImage, Flatpak and Snap on Linux (`quarkus.desktop.packaging.formats`). It packages the
+  native executable or, in JVM mode, the jar with a Java runtime (`jpackage`), derives the icons of every format from
+  one PNG file, gives the Windows native executable its icon and version information, and signs the Windows and macOS
+  packages (with notarization on macOS). Not verified yet, among others: applications with a user interface (beyond a
+  native Swing application in an MSI package), the snap, signing with a Developer ID certificate and the notarization,
+  Windows and Linux on arm64 and macOS on Intel, and Gradle builds (see Verification on the Desktop Packaging page).
+  The `quarkus-desktop-packaging-spi` artifact lets other extensions add the files of the native executable
+  (`NativeExecutableFileBuildItem`, optional for a library that the executable loads only in some cases: the Debian and
+  RPM packages do not depend on the libraries that it is linked with) and the options of the JVM
+  (`PackagedJvmOptionBuildItem`), give the name that the application gives itself at run time
+  (`ApplicationIdBuildItem`: the AppUserModelID of the shortcuts of the MSI package and of the setup program, the
+  default `StartupWMClass` of the desktop entry of the Linux packages), and read the name of the packages
+  (`PackagedApplicationNameBuildItem`). Desktop AWT and Desktop SWT declare the libraries that they copy next to the
+  native executable, and Desktop SWT the name that it gives to SWT.
 - Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
   native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
 
 ### Changed
 
-- Quarkus 4: the extensions are built with Quarkus 4.0.0.Beta2, the first Quarkus 4 release with the services API,
-  and need Java 21 or later. Their build steps register services (`ServiceRegistrar`) instead of
+- Quarkus 4: the extensions are built with Quarkus 4.0.0.Beta3 and need Quarkus 4.0.0.Beta3 or later (4.0.0.Beta2 was
+  the first Quarkus 4 release with the services API) and Java 21 or later; their native executables need GraalVM 25.0.4
+  or later, the minimum of Quarkus 4.0.0.Beta3. Their build steps register services (`ServiceRegistrar`) instead of
   recording bytecode: the run time code of the former recorders is in `DesktopAwtSupport`, `DesktopLifecycleSupport`,
   `DesktopSwingSupport` and `DesktopSwtSupport`.
 - Desktop SWT depends on SWT 3.135.0 (3.132.0 before, the last SWT release that runs on Java 17).
+- Desktop AWT and Desktop SWT, with the Desktop Packaging extension: when `quarkus.desktop.packaging.name` is set, the
+  application takes that name by default, rather than `quarkus.application.name`. Desktop AWT gives it to the menu bar
+  and the `Info.plist` of a macOS native executable (`quarkus.desktop.awt.macos.application-name`). Desktop SWT gives it
+  to SWT (`quarkus.desktop.swt.application-name`), in dev mode and tests too: `Display.getAppName()`, the application
+  menu of macOS, the AppUserModelID of the process on Windows, the `WM_CLASS` of the windows on Linux, and the folder
+  of the data of the Edge browser on Windows (`%LOCALAPPDATA%\<name>`, with the cookies and the local storage, unless
+  `org.eclipse.swt.browser.EdgeDataDir` is set) change with it. Set these properties to keep the former name.
+- Desktop SWT: in a strictly confined snap, which cannot write `~/.swt`, SWT extracts its native libraries into
+  `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>` (`swt.library.path`, unless it is set), with or without the Desktop
+  Packaging extension (not verified in a snap yet).
 
 ### Removed
 

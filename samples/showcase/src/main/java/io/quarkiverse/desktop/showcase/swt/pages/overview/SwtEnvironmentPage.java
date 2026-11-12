@@ -76,8 +76,7 @@ public class SwtEnvironmentPage implements SwtPage {
         checks.add(SwtChecks.expect("Display.getCurrent() is UiThread.display()", true,
                 () -> Display.getCurrent() == UiThread.display()));
         checks.add(SwtChecks.expect("SWT platform of the operating system", expectedPlatform(), SWT::getPlatform));
-        checks.add(SwtChecks.expect("Display.getAppName() (quarkus.application.name)", "quarkus-desktop-showcase",
-                Display::getAppName));
+        checks.add(SwtChecks.appName("Display.getAppName() (quarkus.application.name)"));
         Map<String, Object> env = SwtEnvironment.describe();
         env.forEach((key, value) -> {
             if (!SwtEnvironment.INFO_KEYS.contains(key)) {

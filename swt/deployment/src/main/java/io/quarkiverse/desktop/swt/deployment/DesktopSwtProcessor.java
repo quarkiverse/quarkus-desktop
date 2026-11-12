@@ -9,6 +9,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
@@ -17,12 +18,21 @@ import java.util.jar.Attributes;
 import java.util.jar.Manifest;
 import java.util.stream.Stream;
 
+import org.eclipse.microprofile.config.ConfigProvider;
+import org.jboss.jandex.ClassInfo;
+import org.jboss.jandex.DotName;
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.packaging.spi.ApplicationIdBuildItem;
+import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
+import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
+import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.deployment.SwtPlatformBuildItem.WindowingSystem;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtConfig.NativeLibraries;
 import io.quarkiverse.desktop.swt.runtime.DesktopSwtSupport;
+import io.quarkiverse.desktop.swt.runtime.SwtApplication;
 import io.quarkus.bootstrap.json.Json;
 import io.quarkus.bootstrap.model.ApplicationModel;
 import io.quarkus.core.deployment.service.ServiceRegistrar;
@@ -30,6 +40,7 @@ import io.quarkus.deployment.Capabilities;
 import io.quarkus.deployment.annotations.BuildProducer;
 import io.quarkus.deployment.annotations.BuildStep;
 import io.quarkus.deployment.annotations.Produce;
+import io.quarkus.deployment.builditem.ApplicationInfoBuildItem;
 import io.quarkus.deployment.builditem.CombinedIndexBuildItem;
 import io.quarkus.deployment.builditem.FeatureBuildItem;
 import io.quarkus.deployment.builditem.GeneratedResourceBuildItem;
@@ -101,6 +112,24 @@ class DesktopSwtProcessor {
     static final String REACHABILITY_METADATA = "META-INF/native-image/io.quarkiverse.desktop/quarkus-desktop-swt/"
             + "reachability-metadata.json";
 
+    /**
+     * The name of the application that the extension gives to SWT, a run time property
+     * ({@code DesktopSwtRuntimeConfig.applicationName()}).
+     */
+    static final String APPLICATION_NAME = "quarkus.desktop.swt.application-name";
+
+    /**
+     * {@code SwtLifecycle}, whose {@code run()} creates the {@code Display} of the application.
+     */
+    private static final DotName SWT_LIFECYCLE = DotName.createSimple(SwtLifecycle.class);
+
+    /**
+     * The packages of the classes of the extension, some of which use {@code SwtLifecycle} : its API and its
+     * implementation (its main, the user interface).
+     */
+    private static final Set<String> EXTENSION_PACKAGES = Set.of(SwtLifecycle.class.getPackageName(),
+            SwtApplication.class.getPackageName());
+
     @BuildStep
     FeatureBuildItem feature() {
         return new FeatureBuildItem(FEATURE);
@@ -164,6 +193,99 @@ class DesktopSwtProcessor {
         String module = platform.map(swt -> manifest(swt.getJar().getContentTree()).getMainAttributes()
                 .getValue("Automatic-Module-Name")).orElse(null);
         nativeAccess.produce(new ModuleEnableNativeAccessBuildItem(module != null ? module : SWT_HOST_ARTIFACT_ID));
+    }
+
+    /**
+     * The options of the JVM of an SWT application packaged in JVM mode by the Desktop Packaging extension. Its
+     * launcher does not start the runner jar as {@code java -jar} does : the {@code Enable-Native-Access} attribute of
+     * the manifest of the jar does not apply. On macOS, the {@code Display} is created on the first thread of the
+     * process.
+     */
+    @BuildStep
+    void packagedJvmOptions(BuildProducer<PackagedJvmOptionBuildItem> jvmOptions) {
+        jvmOptions.produce(new PackagedJvmOptionBuildItem("--enable-native-access=ALL-UNNAMED"));
+        jvmOptions.produce(new PackagedJvmOptionBuildItem("-XstartOnFirstThread", OS.MAC));
+    }
+
+    /**
+     * The name that SWT gives the application at run time ({@code Display.setAppName}), for the packages of the Desktop
+     * Packaging extension : the AppUserModelID of its process on Windows, which the shortcuts of the Windows packages
+     * get, and the class of its windows on Linux, the default {@code StartupWMClass} of the desktop entry of the Linux
+     * packages. The value of {@code quarkus.desktop.swt.application-name} that the build sees : set it in
+     * {@code application.properties}, which the build and the run time both read. A value given at run time only (an
+     * environment variable, a system property) is not the one of the packages, and a value given to the build only (a
+     * property of the build tool, {@code -D} on its command line) is not the one of the application at run time.
+     * <p>
+     * None for an application without an SWT user interface ({@link #namesApplication}) : the extension does not name
+     * its process (an AWT or Swing user interface, a {@code Display} created by the application), whose windows and
+     * shortcuts with a name that the process does not have would be two taskbar buttons on Windows. An application that
+     * creates its {@code Display} itself sets {@code quarkus.desktop.packaging.linux.startup-wm-class} itself, and its
+     * Windows shortcuts get no AppUserModelID.
+     *
+     * @param packagedName the name of the application in its packages (Desktop Packaging extension)
+     * @param userInterface present when the application observes {@code SwtStartupEvent}
+     * @param combinedIndex the indexed classes, the ones that use {@code SwtLifecycle} among them
+     */
+    @BuildStep
+    void packagedApplicationId(ApplicationInfoBuildItem applicationInfo,
+            Optional<PackagedApplicationNameBuildItem> packagedName, Optional<SwtUiBuildItem> userInterface,
+            CombinedIndexBuildItem combinedIndex, BuildProducer<ApplicationIdBuildItem> applicationId) {
+        if (!namesApplication(userInterface.isPresent(),
+                combinedIndex.getIndex().getKnownUsers(SWT_LIFECYCLE).stream().map(ClassInfo::name).toList())) {
+            LOGGER.debug("The application has no SWT user interface (no SwtStartupEvent observer, no class using"
+                    + " SwtLifecycle) : the extension does not name it, its packages get no application id");
+            return;
+        }
+        applicationId(ConfigProvider.getConfig().getOptionalValue(APPLICATION_NAME, String.class),
+                defaultApplicationName(packagedName, applicationInfo.getName()))
+                .ifPresent(id -> applicationId.produce(new ApplicationIdBuildItem(id)));
+    }
+
+    /**
+     * Whether the extension names the application at run time : {@code SwtLifecycle.run()} gives the name to SWT, then
+     * creates the {@code Display}. It runs when the application observes {@code SwtStartupEvent} (the main of the
+     * extension calls it), or when a class of the application calls it (a {@code @QuarkusMain}, a Picocli command...) :
+     * a class outside the extension that uses {@code SwtLifecycle}.
+     *
+     * @param userInterface whether the application observes {@code SwtStartupEvent}
+     * @param lifecycleUsers the indexed classes that use {@code SwtLifecycle}, the ones of the extension included
+     */
+    static boolean namesApplication(boolean userInterface, Collection<DotName> lifecycleUsers) {
+        return userInterface || lifecycleUsers.stream().anyMatch(name -> !EXTENSION_PACKAGES.contains(packageName(name)));
+    }
+
+    /**
+     * The package of a class, empty for the default package.
+     */
+    private static String packageName(DotName className) {
+        String name = className.toString();
+        return name.substring(0, Math.max(name.lastIndexOf('.'), 0));
+    }
+
+    /**
+     * The name that SWT gives the application at run time : {@code quarkus.desktop.swt.application-name}, else its
+     * default name ({@link #defaultApplicationName}). Empty when SWT gives it none : a blank name, which the extension
+     * does not give to SWT, or the default name of SWT ({@code SWT}), which SWT does not give the process.
+     *
+     * @param configured {@code quarkus.desktop.swt.application-name}
+     * @param defaultName the default name of the application
+     */
+    static Optional<String> applicationId(Optional<String> configured, Optional<String> defaultName) {
+        return configured.or(() -> defaultName).filter(name -> !name.isBlank() && !"SWT".equalsIgnoreCase(name));
+    }
+
+    /**
+     * The name that the extension gives to SWT when {@code quarkus.desktop.swt.application-name} is not set : the name
+     * of the application in its packages ({@code quarkus.desktop.packaging.name}, with the Desktop Packaging
+     * extension), else {@code quarkus.application.name}. Empty when neither is set (in tests).
+     *
+     * @param packagedName the name of the application in its packages
+     * @param applicationName {@code quarkus.application.name}
+     */
+    static Optional<String> defaultApplicationName(Optional<PackagedApplicationNameBuildItem> packagedName,
+            String applicationName) {
+        return packagedName.map(PackagedApplicationNameBuildItem::getName).or(() -> Optional.ofNullable(applicationName)
+                .filter(name -> !ApplicationInfoBuildItem.UNSET_VALUE.equals(name)));
     }
 
     private static Manifest manifest(PathTree tree) {
@@ -561,11 +683,15 @@ class DesktopSwtProcessor {
 
     /**
      * Copies the native libraries of SWT next to the native executable ({@code next-to-executable}). The
-     * {@code ArtifactResultBuildItem} is never produced : it makes this step run after the native build.
+     * {@code ArtifactResultBuildItem} is never produced : it makes this step run after the native build. The copied
+     * libraries are files of the native executable for the Desktop Packaging extension, which builds the packages of
+     * the application after this step : the ones that SWT loads only in some cases are optional
+     * ({@link #isOptionalLibrary}).
      */
     @BuildStep(onlyIf = NativeBuild.class)
     void copyNativeLibraries(SwtPlatformBuildItem platform, DesktopSwtConfig config, NativeImageBuildItem nativeImage,
-            BuildProducer<ArtifactResultBuildItem> artifactResults) {
+            BuildProducer<ArtifactResultBuildItem> artifactResults,
+            BuildProducer<NativeExecutableFileBuildItem> executableFiles) {
         if (config.nativeLibraries() != NativeLibraries.NEXT_TO_EXECUTABLE) {
             return;
         }
@@ -579,8 +705,20 @@ class DesktopSwtProcessor {
                     throw new UncheckedIOException("Unable to copy the SWT library " + library + " to " + directory, e);
                 }
             });
+            executableFiles.produce(new NativeExecutableFileBuildItem(directory.resolve(library), "",
+                    isOptionalLibrary(library)));
         }
         LOGGER.debugf("Native libraries of SWT copied to %s", directory);
+    }
+
+    /**
+     * Whether SWT loads a native library only in some cases : the GTK 4 port ({@code libswt-pi4-gtk-*}), which it loads
+     * with {@code SWT_GTK4=1} only (or when GTK 3 does not load), and the OpenGL library ({@code libswt-glx-gtk-*}),
+     * which only a {@code GLCanvas} loads. The Linux packages do not depend on the libraries that they are linked with,
+     * GTK 4 and OpenGL.
+     */
+    static boolean isOptionalLibrary(String name) {
+        return name.startsWith("libswt-pi4-gtk-") || name.startsWith("libswt-glx-gtk-");
     }
 
     // ---------------------------------------------------------------------------------------------- Windows executable

@@ -34,7 +34,10 @@ public interface DesktopSwtRuntimeConfig {
      * The name of the application, given to SWT ({@code Display.setAppName}) before the {@code Display} is created : the
      * name of the application menu and of the Dock on macOS, the program name and the {@code WM_CLASS} of the windows on
      * Linux (matched with the {@code .desktop} file of the application), the application identifier of the taskbar on
-     * Windows. Defaults to {@code quarkus.application.name}.
+     * Windows. Defaults to the name of the packages of the Desktop Packaging extension
+     * ({@code quarkus.desktop.packaging.name}) when it is set, else to {@code quarkus.application.name}. The packages
+     * of that extension give the value of the build to their shortcuts and desktop entry : one set at run time only is
+     * not theirs.
      */
     Optional<String> applicationName();
 

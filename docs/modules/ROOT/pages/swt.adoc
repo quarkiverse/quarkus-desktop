@@ -1127,7 +1127,9 @@ By default (`quarkus.desktop.swt.native-libraries=embedded`), the native librari
 `libswt-gtk-<version>.so`... on Linux, `libswt-cocoa-<version>.jnilib` and `libswt-pi-cocoa-<version>.jnilib` on macOS)
 are resources of the native executable: a single file to distribute. SWT extracts them on the first run into
 `~/.swt/lib/<os>/<arch>` (or into the directory of the `swt.library.path` system property, when it is set), as it does
-in JVM mode, and loads them from there.
+in JVM mode, and loads them from there. A strictly confined snap cannot write the hidden directories of the home
+directory: there, in JVM mode too, the extension sets `swt.library.path` to `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>`,
+unless it is set.
 
 With `quarkus.desktop.swt.native-libraries=next-to-executable`, the libraries are not embedded in the executable: the
 native build copies them next to it, and the executable loads them from its directory (it sets the `swt.library.path`
@@ -1135,7 +1137,8 @@ system property before the `StartupEvent` observers; a `swt.library.path` set by
 the home directory, and the libraries can be signed with the executable (a macOS application bundle). Distribute them
 with the executable. Only a full native build copies them, not a build of the native sources
 (`quarkus.native.sources-only=true`). When they are missing next to the executable, it logs a warning, and SWT looks
-for them in `java.library.path` and `~/.swt`, and fails when it does not find them there.
+for them in `java.library.path` and `~/.swt` (in a strictly confined snap, in `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>`),
+and fails when it does not find them there.
 
 The library of the SWT_AWT bridge is never included (see <<limitations>>).
 
@@ -1463,10 +1466,13 @@ See xref:index.adoc#configuration[the overview of the properties]. The run time 
 `quarkus.desktop.swt.windows.subsystem` and `quarkus.desktop.swt.macos.jdk-build-version` only apply to native
 executables.
 
-`quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built:
-overriding `quarkus.application.name` at run time does not change it, set `quarkus.desktop.swt.application-name`
-instead. The extension also gives `quarkus.application.version` to `Display.setAppVersion`. In tests, where
+`quarkus.desktop.swt.application-name` defaults to `quarkus.application.name` as it was when the application was built,
+or to the name of its packages with the Desktop Packaging extension (`quarkus.desktop.packaging.name`, see
+xref:packaging.adoc[Desktop Packaging]): overriding `quarkus.application.name` at run time does not change it, set
+`quarkus.desktop.swt.application-name` instead. The packages give the value of the build to their shortcuts and desktop
+entry, which match the windows of the application by this name: set it in `application.properties` rather than at run
+time only. The extension also gives `quarkus.application.version` to `Display.setAppVersion`. In tests, where
 `quarkus.application.name` and `quarkus.application.version` are not set, SWT gets neither (unless
-`quarkus.desktop.swt.application-name` is set).
+`quarkus.desktop.swt.application-name` or the name of the packages is set).
 
 include::includes/quarkus-desktop-swt.adoc[leveloffset=+1, opts=optional]

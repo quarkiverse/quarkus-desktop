@@ -23,13 +23,22 @@ on:
       - '*.txt'
       - '.all-contributorsrc'
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: 'The jobs to run'
+        type: choice
+        default: all
+        options:
+          - all
+          - packaging
 
 permissions:
   contents: read
   pull-requests: read
 
+# A manual run of the packaging job alone has its group : it does not cancel the full build of the branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.jobs || 'all' }}
   cancel-in-progress: true
 
 # bash runs the steps with -eo pipefail : a build piped to tee still fails its step
@@ -39,6 +48,7 @@ defaults:
 
 jobs:
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' }}
     name: JVM - JDK ${{ matrix.java-version }} on ${{ matrix.os }}
     # a hung GUI test (an event loop, a modal dialog) : about 2 minutes otherwise
     timeout-minutes: 30
@@ -90,6 +100,7 @@ jobs:
     # builds them
     # exact : the integration tests built with --exact-reachability-metadata, in the default configuration of the
     # extensions (they fail on the first lookup missing from the metadata)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' }}
     name: Native${{ matrix.exact && ' (exact)' || '' }} on ${{ matrix.os }}
     # a hung native executable or GUI test : about 15 minutes otherwise
     timeout-minutes: 60
@@ -142,6 +153,7 @@ jobs:
     # The SWT modules alone (the native job explains why the AWT and Swing ones cannot run on macOS yet). macOS runs the
     # event loop of an SWT native executable on the first thread of the process, and NativeExecutableIT compares the
     # minimum macOS version and the SDK version of the executable with the java launcher of this GraalVM (otool -l)
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' }}
     name: Native SWT${{ matrix.exact && ' (exact)' || '' }} on macos-latest
     # a hung native executable or GUI test : about 10 minutes otherwise
     timeout-minutes: 60
@@ -165,6 +177,419 @@ jobs:
 
       - name: Build the SWT native executables and run the integration tests
         run: ./mvnw -B -ntp clean install -Dnative -Dno-format -Dnative.surefire.skip -pl swt/integration-tests -am $EXACT_ARGS 2>&1 | tee maven.log
+
+      - name: Report the failures
+        if: failure()
+        run: java .github/scripts/ReportFailures.java maven.log
+
+  packaging:
+    # The packages of the integration tests of the Desktop Packaging extension, in every format of the operating system
+    # but the snap (the packaging-snap job) : built by Maven with the tool of each format (PackagingIT checks the files),
+    # then installed, started and removed by the steps below. In JVM mode (the jar with a Java runtime, built by
+    # jpackage) and for the native executable. In JVM mode, the packages of a next version are installed over the first
+    # ones (msi, exe, deb), and the macOS bundle is signed with an identity rather than ad hoc
+    name: Packaging${{ matrix.native && ' (native)' || '' }} on ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        native: [ false, true ]
+    runs-on: ${{ matrix.os }}
+    env:
+      NATIVE_ARGS: ${{ matrix.native && '-Dnative' || '' }}
+    steps:
+      - name: Prepare git
+        run: git config --global core.autocrlf false
+        if: startsWith(matrix.os, 'windows')
+
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        if: ${{ !matrix.native }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Set up GraalVM for JDK 25
+        if: ${{ matrix.native }}
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # The dependencies of the packaging modules only : a cache of their own, not the one of the full builds, which
+      # would then restore a partial repository
+      - name: Cache the Maven repository of the packaging modules
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: packaging-${{ runner.os }}-${{ matrix.native }}-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
+
+      # dpkg-deb is part of Ubuntu. appimagetool, and the runtime that it puts at the head of each AppImage (which it
+      # downloads from the latest build at each run otherwise) : releases, checked against their SHA-256
+      - name: Install the packaging tools of Linux
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          set -x
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev rpm dpkg-dev flatpak desktop-file-utils
+          curl -fsSL --retry 3 --retry-all-errors -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
+          sudo install -m 755 appimagetool /usr/local/bin/appimagetool
+          rm appimagetool
+          runtime="$RUNNER_TEMP/runtime-x86_64"
+          curl -fsSL --retry 3 --retry-all-errors -o "$runtime" https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  $runtime" | sha256sum -c -
+          echo "APPIMAGE_ARGS=-Dquarkus.desktop.packaging.linux.appimage.runtime-file=$runtime" >> "$GITHUB_ENV"
+
+      # makeappx and signtool are part of the Windows SDK of the runner. An MSIX package is only installed when it is
+      # signed : a self-signed certificate, trusted by the runner, whose subject is the publisher of the package. A root
+      # certificate too, so that the signatures that it makes are valid, which the steps below check
+      - name: Install the packaging tools of Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+          $file = "$env:RUNNER_TEMP\packaging-it.pfx"
+          $password = ConvertTo-SecureString -String 'packaging-it' -Force -AsPlainText
+          $certificate = New-SelfSignedCertificate -Type Custom -Subject 'CN=Quarkiverse' -KeyUsage DigitalSignature `
+            -CertStoreLocation 'Cert:\CurrentUser\My' -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}')
+          Export-PfxCertificate -Cert $certificate -FilePath $file -Password $password | Out-Null
+          Import-PfxCertificate -FilePath $file -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -Password $password | Out-Null
+          Import-PfxCertificate -FilePath $file -CertStoreLocation 'Cert:\LocalMachine\Root' -Password $password | Out-Null
+          "SIGN_ARGS=-Dquarkus.desktop.packaging.windows.sign.certificate-file=$file -Dquarkus.desktop.packaging.windows.sign.certificate-password=packaging-it" >> $env:GITHUB_ENV
+
+      # JVM mode on macOS : a self-signed code signing identity, in a keychain of its own, signs the bundle as a
+      # Developer ID certificate does (the hardened runtime, a secure time stamp, the entitlements of the JVM) and the
+      # disk image, where the native executable keeps the ad hoc signature of the default. Neither the installer package
+      # nor the notarization : they need certificates of Apple. The identity is the SHA-1 hash of its certificate, which
+      # codesign takes as it takes a name
+      - name: Install a signing identity of macOS
+        if: ${{ startsWith(matrix.os, 'macos') && !matrix.native }}
+        run: |
+          set -x
+          keychain="$RUNNER_TEMP/packaging-it.keychain-db"
+          cat > "$RUNNER_TEMP/packaging-it.cnf" << 'EOF'
+          [req]
+          distinguished_name = subject
+          x509_extensions = extensions
+          prompt = no
+          [subject]
+          CN = Packaging IT
+          [extensions]
+          basicConstraints = critical, CA:false
+          keyUsage = critical, digitalSignature
+          extendedKeyUsage = critical, codeSigning
+          EOF
+          openssl req -x509 -newkey rsa:2048 -nodes -days 2 -config "$RUNNER_TEMP/packaging-it.cnf" \
+            -keyout "$RUNNER_TEMP/packaging-it.key" -out "$RUNNER_TEMP/packaging-it.crt"
+          # the algorithms that the keychain imports, rather than the defaults of OpenSSL 3
+          openssl pkcs12 -export -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 -passout pass:packaging-it \
+            -inkey "$RUNNER_TEMP/packaging-it.key" -in "$RUNNER_TEMP/packaging-it.crt" -out "$RUNNER_TEMP/packaging-it.p12"
+          security create-keychain -p packaging-it "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p packaging-it "$keychain"
+          security import "$RUNNER_TEMP/packaging-it.p12" -k "$keychain" -f pkcs12 -P packaging-it -T /usr/bin/codesign
+          # codesign uses the key without asking
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k packaging-it "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | xargs)
+          security find-identity -p codesigning "$keychain"
+          identity=$(openssl x509 -in "$RUNNER_TEMP/packaging-it.crt" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
+          echo "SIGN_ARGS=-Dquarkus.desktop.packaging.macos.sign.identity=$identity -Dquarkus.desktop.packaging.macos.sign.keychain=$keychain" >> "$GITHUB_ENV"
+
+      - name: Build the packages of Linux
+        if: startsWith(matrix.os, 'ubuntu')
+        run: ./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=directory,deb,rpm,appimage,flatpak $APPIMAGE_ARGS 2>&1 | tee maven.log
+
+      - name: Build the packages
+        if: ${{ !startsWith(matrix.os, 'ubuntu') }}
+        run: ./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=directory,msi,exe,msix,dmg,pkg $SIGN_ARGS 2>&1 | tee maven.log
+
+      # JVM mode : the packages of a next version, in target/packaging-next, which the steps below install over the first
+      # ones (the formats of the other operating systems are skipped)
+      - name: Build the packages of the next version
+        if: ${{ !matrix.native && !startsWith(matrix.os, 'macos') }}
+        run: ./mvnw -B -ntp package -pl packaging/integration-tests -Dno-format -Dquarkus.desktop.packaging.formats=msi,exe,deb -Dquarkus.desktop.packaging.version=1.1.0 -Dquarkus.desktop.packaging.output-directory=packaging-next $SIGN_ARGS 2>&1 | tee -a maven.log
+
+      # The RPM package is installed in a Fedora container. In JVM mode, the Debian package of the next version upgrades
+      # the installed one
+      - name: Install, start and remove the packages of Linux
+        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: packaging/integration-tests/target/packaging
+        run: |
+          started() {
+            grep -qF "started 999-SNAPSHOT [$1]" "$2" || { echo "::error::The application of the $1 package did not start"; exit 1; }
+            echo "$1 : $(cat "$2")"
+          }
+          ls -l
+
+          sudo apt-get install -y ./packaging-it_*.deb
+          desktop-file-validate /usr/share/applications/packaging-it.desktop
+          packaging-it --marker="$RUNNER_TEMP/deb.txt" deb
+          started deb "$RUNNER_TEMP/deb.txt"
+          if [[ -z "$NATIVE_ARGS" ]]; then
+            sudo apt-get install -y ../packaging-next/packaging-it_*.deb
+            version=$(dpkg-query -W -f '${Version}' packaging-it)
+            [[ "$version" == 1.1.0-1 ]] || { echo "::error::The Debian package of the next version installed the version $version"; exit 1; }
+            packaging-it --marker="$RUNNER_TEMP/deb-next.txt" deb
+            started deb "$RUNNER_TEMP/deb-next.txt"
+          fi
+          sudo apt-get remove -y packaging-it
+          test ! -e /opt/packaging-it
+
+          docker run --rm -v "$PWD:/packages:ro" fedora:latest sh -c "dnf install -y /packages/packaging-it-*.rpm \
+            && packaging-it --marker=/tmp/rpm.txt rpm && cat /tmp/rpm.txt && rpm -e packaging-it && test ! -e /opt/packaging-it" \
+            | tee "$RUNNER_TEMP/rpm.txt"
+          started rpm "$RUNNER_TEMP/rpm.txt"
+
+          ./Packaging-IT-*.AppImage --appimage-extract-and-run --marker="$RUNNER_TEMP/appimage.txt" appimage
+          started appimage "$RUNNER_TEMP/appimage.txt"
+
+          # No remote before : the installation adds Flathub, the repository of the runtime that the bundle names
+          flatpak install --user -y --noninteractive ./Packaging-IT-*.flatpak
+          remotes=$(flatpak remotes --user --columns=name,url)
+          echo "flatpak remotes : $remotes"
+          grep -q 'dl.flathub.org/repo' <<< "$remotes"
+          # The command and the default permissions of the sandbox (linux.flatpak.finish-args)
+          metadata=$(flatpak info --user --show-metadata io.quarkiverse.desktop.PackagingIt)
+          permissions=$(flatpak info --user --show-permissions io.quarkiverse.desktop.PackagingIt)
+          echo "$metadata"
+          grep -qx 'command=packaging-it' <<< "$metadata"
+          for permission in 'sockets=x11;wayland;pulseaudio;' 'devices=dri;' 'filesystems=home;'; do
+            grep -q "$permission" <<< "$permissions"
+          done
+          flatpak run io.quarkiverse.desktop.PackagingIt --marker="$HOME/flatpak.txt" flatpak
+          started flatpak "$HOME/flatpak.txt"
+          flatpak uninstall --user -y --noninteractive io.quarkiverse.desktop.PackagingIt
+
+      - name: Install, start and remove the packages of macOS
+        if: startsWith(matrix.os, 'macos')
+        working-directory: packaging/integration-tests/target/packaging
+        run: |
+          # LaunchServices, which opens the bundles as the Finder does, may pass the serial number of the process
+          # (-psn_...) before the arguments
+          started() {
+            grep -qE "^started 999-SNAPSHOT \[(-psn_[0-9_]+, )?$1\]$" "$2" || { echo "::error::The application of the $1 package did not start"; exit 1; }
+            echo "$1 : $(cat "$2")"
+          }
+          # Starts the bundle of a package twice : its executable, whose exit status fails the step and whose output goes
+          # to the log, then the bundle as the Finder opens it, by LaunchServices, which reads its Info.plist. open passes
+          # on neither the exit status nor the output of the application : the output goes to files, which the log shows
+          start_bundle() {
+            "$2/Contents/MacOS/Packaging IT" --marker="$RUNNER_TEMP/$1-direct.txt" "$1"
+            started "$1" "$RUNNER_TEMP/$1-direct.txt"
+            touch "$RUNNER_TEMP/$1.out" "$RUNNER_TEMP/$1.err"
+            open -W -n --stdout "$RUNNER_TEMP/$1.out" --stderr "$RUNNER_TEMP/$1.err" "$2" --args --marker="$RUNNER_TEMP/$1.txt" "$1"
+            cat "$RUNNER_TEMP/$1.out" "$RUNNER_TEMP/$1.err"
+            started "$1" "$RUNNER_TEMP/$1.txt"
+          }
+          ls -l
+          codesign --verify --deep --strict --verbose=2 "image/Packaging IT.app"
+          # A line of the signature of the bundle
+          signature_has() {
+            grep -qE "$1" <<< "$signature" || { echo "::error::The signature of the bundle has no line $1"; exit 1; }
+          }
+          signature=$(codesign -dvv "image/Packaging IT.app" 2>&1)
+          echo "$signature"
+          if [[ -z "$NATIVE_ARGS" ]]; then
+            # JVM mode : the identity of the job, the hardened runtime, a secure time stamp, and the entitlements of the
+            # JVM, without which it does not start under the hardened runtime (the steps below start it)
+            signature_has '^Authority=Packaging IT$'
+            signature_has '^CodeDirectory .* flags=[^ ]*runtime'
+            signature_has '^Timestamp='
+            entitlements=$(codesign -d --entitlements - "image/Packaging IT.app" 2>&1)
+            echo "$entitlements"
+            grep -q 'com.apple.security.cs.allow-jit' <<< "$entitlements" || { echo "::error::The bundle lacks the entitlements of the JVM"; exit 1; }
+            codesign --verify --verbose=2 Packaging-IT-*.dmg
+          else
+            signature_has '^Signature=adhoc$'
+          fi
+          plutil -lint "image/Packaging IT.app/Contents/Info.plist"
+          # The icon that the Info.plist names, which macOS decodes
+          icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "image/Packaging IT.app/Contents/Info.plist")
+          sips -s format png "image/Packaging IT.app/Contents/Resources/${icon%.icns}.icns" --out "$RUNNER_TEMP/icon.png"
+          test -s "$RUNNER_TEMP/icon.png"
+
+          hdiutil attach Packaging-IT-*.dmg -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
+          test -L "$RUNNER_TEMP/dmg/Applications"
+          start_bundle dmg "$RUNNER_TEMP/dmg/Packaging IT.app"
+          hdiutil detach "$RUNNER_TEMP/dmg" || { sleep 5; hdiutil detach -force "$RUNNER_TEMP/dmg"; }
+
+          sudo installer -pkg Packaging-IT-*.pkg -target /
+          start_bundle pkg "/Applications/Packaging IT.app"
+          pkgutil --pkg-info io.quarkiverse.desktop.PackagingIt
+          sudo rm -rf "/Applications/Packaging IT.app"
+
+      - name: Install, start and remove the packages of Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        working-directory: packaging/integration-tests/target/packaging
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $directory = "$env:ProgramFiles\Packaging IT"
+          $launcher = "$directory\Packaging IT.exe"
+          $shortcut = "$env:ProgramData\Microsoft\Windows\Start Menu\Programs\Packaging IT.lnk"
+          # The entries of the installed programs (Settings, Apps) named after the application
+          function Get-UninstallEntry {
+            Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*' -ErrorAction SilentlyContinue |
+              Where-Object DisplayName -eq 'Packaging IT'
+          }
+          # A valid signature of the certificate of the job : not the one of another signer, nor of a file changed after
+          # its signature (HashMismatch)
+          function Assert-Signed([string]$file) {
+            $signature = Get-AuthenticodeSignature -FilePath $file
+            "$($signature.Status) $($signature.SignerCertificate.Subject) $file"
+            if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -ne 'CN=Quarkiverse') {
+              throw "$file : $($signature.Status) $($signature.SignerCertificate.Subject) $($signature.StatusMessage)"
+            }
+          }
+          # The shortcut of the Start menu, which starts the launcher, the entry of the installed programs, and the
+          # signature of the installed launcher
+          function Assert-Installed([string]$format, [string]$version) {
+            if (-not (Test-Path $shortcut)) { throw "$format : $shortcut is not installed" }
+            $target = (New-Object -ComObject WScript.Shell).CreateShortcut($shortcut).TargetPath
+            if ($target -ne $launcher) { throw "$format : the shortcut of the Start menu starts $target" }
+            $entries = @(Get-UninstallEntry)
+            if ($entries.Count -ne 1) { throw "$format : $($entries.Count) entries of the installed programs" }
+            $entry = "$($entries[0].DisplayName) $($entries[0].DisplayVersion) of $($entries[0].Publisher)"
+            if ($entry -ne "Packaging IT $version of Quarkiverse") { throw "$format : the installed programs list $entry" }
+            Assert-Signed $launcher
+            "$format : $entry, $shortcut"
+          }
+          function Start-Installed([string]$format) {
+            if (-not (Test-Path $launcher)) { throw "$format : $launcher is not installed" }
+            $marker = "$env:RUNNER_TEMP\$format.txt"
+            # not the marker of the version before an upgrade
+            Remove-Item $marker -ErrorAction SilentlyContinue
+            $process = Start-Process -FilePath $launcher -ArgumentList "--marker=$marker", $format -Wait -PassThru
+            $line = Get-Content $marker
+            if ($process.ExitCode -ne 0 -or $line -ne "started 999-SNAPSHOT [$format]") { throw "$format : exit code $($process.ExitCode), $line" }
+            "$format : $line"
+          }
+          function Assert-Removed([string]$format) {
+            if (Test-Path $launcher) { throw "$format : $launcher is still installed" }
+            foreach ($path in $directory, $shortcut) {
+              if (Test-Path $path) { throw "$format : $path remains" }
+            }
+            if (@(Get-UninstallEntry).Count -ne 0) { throw "$format : the entry of the installed programs remains" }
+          }
+          Get-ChildItem
+          $signed = @((Get-ChildItem *.msi, *.exe, *.msix).FullName) + (Resolve-Path 'image\Packaging IT\Packaging IT.exe').Path
+          foreach ($file in $signed) { Assert-Signed $file }
+
+          $msi = (Get-ChildItem *.msi).FullName
+          $process = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "msi : msiexec /i exited with $($process.ExitCode)" }
+          # the MSI package has the numbers of the version of the packages : 1.0.0-SNAPSHOT (application.properties)
+          Assert-Installed 'msi' '1.0.0'
+          Start-Installed 'msi'
+          if (-not $env:NATIVE_ARGS) {
+            # JVM mode : the MSI package of the next version replaces the installed one, which has its upgrade code
+            $msi = (Get-ChildItem ..\packaging-next\*.msi).FullName
+            $process = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "msi : msiexec /i of the next version exited with $($process.ExitCode)" }
+            Assert-Installed 'msi' '1.1.0'
+            Start-Installed 'msi'
+          }
+          $process = Start-Process msiexec -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "msi : msiexec /x exited with $($process.ExitCode)" }
+          Assert-Removed 'msi'
+          # the registry value of the shortcut, written for the user who installs the package
+          if (Test-Path 'HKCU:\Software\Quarkiverse\Packaging IT') { throw 'msi : HKCU:\Software\Quarkiverse\Packaging IT remains' }
+
+          $process = Start-Process (Get-ChildItem *.exe).FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "exe : the setup program exited with $($process.ExitCode)" }
+          Assert-Installed 'exe' '1.0.0-SNAPSHOT'
+          Start-Installed 'exe'
+          if (-not $env:NATIVE_ARGS) {
+            # JVM mode : the setup program of the next version installs over the installed one, in its directory
+            $process = Start-Process (Get-ChildItem ..\packaging-next\*.exe).FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+            if ($process.ExitCode -ne 0) { throw "exe : the setup program of the next version exited with $($process.ExitCode)" }
+            Assert-Installed 'exe' '1.1.0'
+            Start-Installed 'exe'
+          }
+          # the compiler of Inno Setup signs the uninstaller that the setup program installs
+          $uninstaller = (Get-ChildItem "$env:ProgramFiles\Packaging IT\unins*.exe").FullName
+          Assert-Signed $uninstaller
+          Start-Process $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait
+          # the uninstaller ends in a copy of itself, which removes the directory after it
+          for ($second = 0; $second -lt 30 -and (Test-Path $directory); $second++) { Start-Sleep -Seconds 1 }
+          Assert-Removed 'exe'
+
+          Add-AppxPackage -Path (Get-ChildItem *.msix).FullName
+          $package = Get-AppxPackage -Name 'io.quarkiverse.desktop.PackagingIt'
+          if (-not $package) { throw 'msix : the package is not installed' }
+          "msix : $($package.PackageFullName) in $($package.InstallLocation)"
+          if (-not (Test-Path "$($package.InstallLocation)\Packaging IT.exe")) { throw 'msix : the launcher is not installed' }
+          # The executable of the application of the manifest, started with the identity of the package. The cmdlet does
+          # not wait for it : the marker, then the end of the process
+          $application = (Get-AppxPackageManifest -Package $package.PackageFullName).Package.Applications.Application
+          $marker = "$env:RUNNER_TEMP\msix.txt"
+          Invoke-CommandInDesktopPackage -PackageFamilyName $package.PackageFamilyName -AppId $application.Id `
+            -Command (Join-Path $package.InstallLocation $application.Executable) -Args "`"--marker=$marker`" msix"
+          for ($second = 0; $second -lt 60 -and -not (Test-Path $marker); $second++) { Start-Sleep -Seconds 1 }
+          Get-Process -Name 'Packaging IT' -ErrorAction SilentlyContinue | Wait-Process -Timeout 60
+          $line = if (Test-Path $marker) { Get-Content $marker } else { "no $marker" }
+          if ($line -ne 'started 999-SNAPSHOT [msix]') { throw "msix : the application did not start ($line)" }
+          "msix : $line"
+          Remove-AppxPackage -Package $package.PackageFullName
+
+      - name: Report the failures
+        if: failure()
+        run: java .github/scripts/ReportFailures.java maven.log
+
+  packaging-snap:
+    # The snap of the integration tests of the Desktop Packaging extension, in a job of its own : its tools come from the
+    # snap store, which does not always answer the runners, and the job has not passed yet (continue-on-error until it
+    # does). Snapcraft builds the snap in an LXD container : the build runs in the lxd group. JVM mode only
+    name: Packaging (snap) on ubuntu-latest
+    timeout-minutes: 60
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      # The cache that the JVM mode leg of the packaging job saves, which has the same dependencies
+      - name: Restore the Maven repository of the packaging modules
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository
+          key: packaging-${{ runner.os }}-false-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
+
+      - name: Install Snapcraft and LXD
+        run: |
+          set -x
+          for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 30; done
+          snap list snapcraft || { echo "::error::Snapcraft could not be installed from the snap store"; exit 1; }
+          for attempt in 1 2 3; do sudo snap install lxd && break || sleep 30; done
+          snap list lxd || { echo "::error::LXD could not be installed from the snap store"; exit 1; }
+          sudo lxd init --auto
+          sudo usermod --append --groups lxd "$USER"
+          sudo iptables -P FORWARD ACCEPT
+
+      # the lxd group exists on the runner, whose user is only a member of it once LXD is set up
+      - name: Build the snap (in the lxd group)
+        run: sg lxd -c "./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format -Dquarkus.desktop.packaging.formats=directory,snap" 2>&1 | tee maven.log
+
+      - name: Install, start and remove the snap
+        working-directory: packaging/integration-tests/target/packaging
+        run: |
+          ls -l
+          sudo snap install --dangerous ./packaging-it_*.snap
+          /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
+          grep -qF 'started 999-SNAPSHOT [snap]' "$HOME/snap.txt" || { echo "::error::The application of the snap did not start"; exit 1; }
+          echo "snap : $(cat "$HOME/snap.txt")"
+          sudo snap remove packaging-it
 
       - name: Report the failures
         if: failure()

@@ -17,6 +17,7 @@ executables.
 | Desktop AWT | `io.quarkiverse.desktop:quarkus-desktop-awt` | AWT windows, Java2D, fonts, images, printing, clipboard, drag and drop |
 | Desktop Swing | `io.quarkiverse.desktop:quarkus-desktop-swing` | Swing components, the look and feels of the JDK (Metal, Nimbus, Synth, Windows, GTK, Aqua, Motif), text, printing (includes Desktop AWT) |
 | Desktop SWT | `io.quarkiverse.desktop:quarkus-desktop-swt` | Eclipse SWT: the native widgets of Windows, GTK and macOS, graphics, images, the user interface thread with CDI (independent of Desktop AWT) |
+| Desktop Packaging | `io.quarkiverse.desktop:quarkus-desktop-packaging` | The installers of the application, whatever its toolkit: MSI, EXE and MSIX on Windows, DMG and PKG on macOS, deb, RPM, AppImage, Flatpak and Snap on Linux, from the native executable or from the jar with a Java runtime |
 
 Please refer to the documentation available at https://docs.quarkiverse.io/quarkus-desktop/dev/index.html
 (in this repository: [docs/modules/ROOT/pages](docs/modules/ROOT/pages)): installation, supported platforms, every
@@ -249,6 +250,32 @@ stops, the user interface stops first: the shells are disposed before the `Shutd
 platform), the user interface thread, the exit and quit requests, the build checks, macOS (`-XstartOnFirstThread`),
 native executables (the native libraries of SWT embedded or next to the executable), SWT versions, dev mode and
 tests.
+
+## Packaging
+
+The `quarkus-desktop-packaging` extension builds the installers of the application at the end of the build, from its
+native executable (`./mvnw package -Dnative`) or from its jar with a Java runtime (`./mvnw package`, with `jpackage`). It
+does not depend on a toolkit: it packages AWT, Swing, SWT and JavaFX applications. Its tests package an application
+without a user interface; with one, only a native Swing application in an MSI package has been verified.
+
+```properties
+quarkus.desktop.packaging.name=Acme Editor
+quarkus.desktop.packaging.identifier=org.acme.editor
+quarkus.desktop.packaging.vendor=Acme
+# the formats of the other operating systems are skipped : one list for the builds of Windows, macOS and Linux
+quarkus.desktop.packaging.formats=msi,exe,msix,dmg,pkg,deb,rpm,appimage,flatpak,snap
+```
+
+The packages are in `target/packaging` (`build/packaging` with Gradle). Each format is built on its operating system
+with its tool (WiX, Inno Setup, the Windows SDK, `hdiutil`, `pkgbuild`, `dpkg-deb`, `rpmbuild`, `appimagetool`,
+`flatpak`, `snapcraft`); the icons of every format come from one PNG file (`src/main/packaging/icon.png`), and the
+Windows native executable gets the icon and the version information of the application. Not verified yet, among
+others: applications with a user interface (beyond that MSI package), the snap, signing with a Developer ID certificate
+and the notarization, Windows and Linux on arm64 and macOS on Intel, and Gradle builds. The page
+[Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)
+([docs/modules/ROOT/pages/packaging.adoc](docs/modules/ROOT/pages/packaging.adoc)) covers the application image, the
+Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, the dependencies of the Linux
+packages, and what is verified.
 
 ## Platforms
 

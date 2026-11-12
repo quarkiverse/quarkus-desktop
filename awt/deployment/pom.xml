@@ -26,6 +26,13 @@
             <artifactId>quarkus-desktop-awt</artifactId>
             <version>${project.version}</version>
         </dependency>
+        <!-- The build items of the Desktop Packaging extension : the files that this extension writes next to the
+             native executable are in the packages of the application -->
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-packaging-spi</artifactId>
+            <version>${project.version}</version>
+        </dependency>
         <dependency>
             <groupId>io.quarkus</groupId>
             <artifactId>quarkus-junit-internal</artifactId>

@@ -268,7 +268,7 @@ endif::add-copy-button-to-config-props[]
 
 [.description]
 --
-The name of the application in the menu bar and the Dock : the default value of the `apple.awt.application.name` system property in the native executable (the `java` launcher sets it to the simple name of the main class). The Quarkus application name (`quarkus.application.name`) by default.
+The name of the application in the menu bar and the Dock : the default value of the `apple.awt.application.name` system property in the native executable (the `java` launcher sets it to the simple name of the main class). By default, the name of the packages of the application (`quarkus.desktop.packaging.name`) with the Desktop Packaging extension, else the Quarkus application name (`quarkus.application.name`).
 
 
 ifdef::add-copy-button-to-env-var[]

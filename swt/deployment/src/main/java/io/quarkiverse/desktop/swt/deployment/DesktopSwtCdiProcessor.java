@@ -28,6 +28,7 @@ import org.jboss.jandex.MethodInfo;
 import org.jboss.jandex.Type;
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkiverse.desktop.swt.RunOnUiThread;
 import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.SwtStartupEvent;
@@ -241,13 +242,18 @@ class DesktopSwtCdiProcessor {
      * CDI container is initialized : they may queue tasks for the user interface thread. The service stops after the
      * {@code ShutdownEvent} observers, and before the CDI container stops (it starts after the ArC service that shuts the
      * container down).
+     *
+     * @param packagedName the name of the application in its packages (Desktop Packaging extension), the default name
+     *        of the application rather than {@code quarkus.application.name}
      */
     @BuildStep
     ServiceStartBuildItem configureUserInterface(ServiceRegistrar serviceRegistrar, LaunchModeBuildItem launchMode,
-            ArcConfig arcConfig, ApplicationInfoBuildItem applicationInfo) {
+            ArcConfig arcConfig, ApplicationInfoBuildItem applicationInfo,
+            Optional<PackagedApplicationNameBuildItem> packagedName) {
         LaunchMode mode = launchMode.getLaunchMode();
         boolean lifecycleObserversDisabled = arcConfig.test().disableApplicationLifecycleObservers();
-        String applicationName = valueOf(applicationInfo.getName());
+        String applicationName = DesktopSwtProcessor.defaultApplicationName(packagedName, applicationInfo.getName())
+                .orElse(null);
         String applicationVersion = valueOf(applicationInfo.getVersion());
         serviceRegistrar
                 .forService("io.quarkiverse.desktop.swt.configure-user-interface")

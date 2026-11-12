@@ -3,4 +3,5 @@
 * xref:swing.adoc[Desktop Swing]
 * xref:swt.adoc[Desktop SWT]
 * xref:cdi.adoc[Application model and CDI]
+* xref:packaging.adoc[Desktop Packaging]
 * xref:config-reference.adoc[Configuration Reference]

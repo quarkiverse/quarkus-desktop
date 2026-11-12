@@ -1,7 +1,9 @@
 package io.quarkiverse.desktop.swt.runtime;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 import java.util.Optional;
 
 import org.jboss.logging.Logger;
@@ -12,8 +14,8 @@ import io.quarkus.runtime.ApplicationLifecycleManager;
 import io.quarkus.runtime.LaunchMode;
 
 /**
- * Run time support of the user interface, and of the native libraries of SWT in native executables : what the services
- * of the extension do when the application starts and stops.
+ * Run time support of the user interface, and of the native libraries of SWT in native executables and snaps : what the
+ * services of the extension do when the application starts and stops.
  */
 public final class DesktopSwtSupport {
 
@@ -30,6 +32,12 @@ public final class DesktopSwtSupport {
      */
     static volatile String librariesNextToExecutable;
 
+    /**
+     * The directory of a snap that {@link #useSnapLibraryPath} gave to {@code swt.library.path}, {@code null}
+     * otherwise : the libraries next to the native executable take precedence over it.
+     */
+    static String snapLibraryPath;
+
     private DesktopSwtSupport() {
     }
 
@@ -37,18 +45,22 @@ public final class DesktopSwtSupport {
      * Configures the user interface ({@code SwtLifecycle.run()}, {@code UiThread}...), before the {@code StartupEvent}
      * observers : the tasks they queue for the user interface thread run once it started. The service stops the user
      * interface after the {@code ShutdownEvent} observers, when the start fails before the user interface started : the
-     * queued tasks are rejected.
+     * queued tasks are rejected. In a snap, it first chooses where SWT extracts its native libraries
+     * ({@link #useSnapLibraryPath}), before the observers, which may load them.
      *
      * @param context the start context of the service
      * @param beans the CDI container
      * @param config the run time configuration of the extension
      * @param lifecycleObserversDisabled {@code quarkus.arc.test.disable-application-lifecycle-observers}
-     * @param applicationName {@code quarkus.application.name}
+     * @param applicationName the default name of the application : the name of its packages
+     *        ({@code quarkus.desktop.packaging.name}) with the Desktop Packaging extension, else
+     *        {@code quarkus.application.name}
      * @param applicationVersion {@code quarkus.application.version}
      */
     public static void configureUserInterface(StartContext context, BeanContainer beans, DesktopSwtRuntimeConfig config,
             LaunchMode launchMode, boolean lifecycleObserversDisabled, String applicationName,
             String applicationVersion) {
+        useSnapLibraryPath(System.getenv());
         SwtUi ui = beans.beanInstance(SwtUi.class);
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
         if (!enabled || launchMode == LaunchMode.TEST && lifecycleObserversDisabled) {
@@ -112,14 +124,28 @@ public final class DesktopSwtSupport {
 
     /**
      * Native executables built with {@code quarkus.desktop.swt.native-libraries=next-to-executable} : SWT loads its native
-     * libraries from the directory of the executable ({@code swt.library.path}), unless the property is set. When the
-     * libraries are missing there, SWT would extract them into that directory : the property is not set then, and SWT
-     * fails with a list of the places it looked into.
+     * libraries from the directory of the executable ({@code swt.library.path}), unless the property is set, other than
+     * to the directory of a snap ({@link #useSnapLibraryPath}). When the libraries are missing there, SWT would extract
+     * them into that directory : the property is not set to it then. SWT looks for them in {@code java.library.path} and
+     * in {@code ~/.swt/lib/<os>/<arch>}, or in the directory of {@link #useSnapLibraryPath} in a strictly confined snap
+     * (this method applies it first), and fails with a list of the places it looked into.
      *
      * @param library the file name of the main native library of SWT ({@code swt-win32-4974r10.dll}...)
      */
     public static void useLibrariesNextToExecutable(String library) {
-        if (System.getProperty(SWT_LIBRARY_PATH) != null) {
+        useLibrariesNextToExecutable(library, System.getenv());
+    }
+
+    /**
+     * {@link #useLibrariesNextToExecutable(String)} in an environment.
+     *
+     * @param library the file name of the main native library of SWT
+     * @param environment the environment variables of the process
+     */
+    static synchronized void useLibrariesNextToExecutable(String library, Map<String, String> environment) {
+        String libraryPath = System.getProperty(SWT_LIBRARY_PATH);
+        // the directory of a snap is for the libraries that SWT extracts, which this native executable does not have
+        if (libraryPath != null && !libraryPath.equals(snapLibraryPath)) {
             return;
         }
         Optional<Path> directory = ProcessHandle.current().info().command().map(Path::of).map(Path::toAbsolutePath)
@@ -128,8 +154,85 @@ public final class DesktopSwtSupport {
             System.setProperty(SWT_LIBRARY_PATH, directory.get().toString());
             librariesNextToExecutable = directory.get().toString();
         } else {
-            LOGGER.warnf("The native library %s of SWT is not next to the native executable (%s) : SWT looks for it in"
-                    + " java.library.path and in ~/.swt", library, directory.map(Path::toString).orElse("unknown"));
+            // the directory of a snap, where SWT looks for them : this service runs before the one of the user interface,
+            // which applies it too
+            useSnapLibraryPath(environment);
+            LOGGER.warn(missingLibraryMessage(library, directory.map(Path::toString).orElse("unknown"),
+                    System.getProperty(SWT_LIBRARY_PATH), System.getProperty("os.name", ""),
+                    System.getProperty("os.arch", "")));
         }
+    }
+
+    /**
+     * The warning of a main native library of SWT that is missing next to the native executable : the places where SWT
+     * looks for it, in its order.
+     *
+     * @param library the file name of the library
+     * @param directory the directory of the executable
+     * @param libraryPath {@code swt.library.path}, the directory of a strictly confined snap
+     *        ({@link #useSnapLibraryPath}) : {@code null} when it is not set
+     * @param osName {@code os.name}
+     * @param osArch {@code os.arch}
+     */
+    static String missingLibraryMessage(String library, String directory, String libraryPath, String osName,
+            String osArch) {
+        String places = libraryPath != null ? libraryPath + " (swt.library.path) and in java.library.path"
+                : "java.library.path and in ~/.swt/lib/" + SwtUi.swtOs(osName) + "/" + SwtUi.swtArch(osArch);
+        return "The native library " + library + " of SWT is not next to the native executable (" + directory
+                + ") : SWT looks for it in " + places;
+    }
+
+    /**
+     * In a strictly confined snap, SWT extracts its native libraries into
+     * {@code $SNAP_USER_COMMON/.swt/lib/<os>/<arch>} ({@code swt.library.path}), unless the property is set : the
+     * {@code home} interface of the snap denies the hidden directories of the home directory of the user, such as
+     * {@code ~/.swt}, where SWT extracts them otherwise. The directory is created : SWT does not create the directory of
+     * {@code swt.library.path}.
+     *
+     * @param environment the environment variables of the process
+     */
+    static synchronized void useSnapLibraryPath(Map<String, String> environment) {
+        if (System.getProperty(SWT_LIBRARY_PATH) != null) {
+            return;
+        }
+        Optional<Path> directory = snapLibraryPath(environment, System.getProperty("user.home", ""),
+                System.getProperty("os.name", ""), System.getProperty("os.arch", ""));
+        if (directory.isEmpty()) {
+            return;
+        }
+        try {
+            Files.createDirectories(directory.get());
+        } catch (IOException | RuntimeException e) {
+            LOGGER.warnf("Unable to create %s, where SWT extracts its native libraries in a snap : %s", directory.get(),
+                    e.toString());
+            return;
+        }
+        snapLibraryPath = directory.get().toString();
+        System.setProperty(SWT_LIBRARY_PATH, snapLibraryPath);
+        LOGGER.debugf("SWT extracts its native libraries into %s (swt.library.path)", snapLibraryPath);
+    }
+
+    /**
+     * The directory where SWT extracts its native libraries in a strictly confined snap :
+     * {@code $SNAP_USER_COMMON/.swt/lib/<os>/<arch>}, rather than in the home directory of the user
+     * ({@code user.home}, which the JDK takes from the user database). snapd gives such a snap a home directory of its
+     * own ({@code HOME}) and the directory {@code SNAP_USER_COMMON}, which its revisions share. Empty elsewhere :
+     * outside a snap, in a classic snap, whose {@code HOME} is the home directory of the user, and in the applications
+     * that a classic snap starts, which inherit its environment variables.
+     *
+     * @param environment the environment variables of the process
+     * @param userHome {@code user.home}
+     * @param osName {@code os.name}
+     * @param osArch {@code os.arch}
+     */
+    static Optional<Path> snapLibraryPath(Map<String, String> environment, String userHome, String osName,
+            String osArch) {
+        String common = environment.get("SNAP_USER_COMMON");
+        String home = environment.get("HOME");
+        if (common == null || common.isBlank() || home == null || home.isBlank()
+                || Path.of(home).equals(Path.of(userHome))) {
+            return Optional.empty();
+        }
+        return Optional.of(Path.of(common, ".swt", "lib", SwtUi.swtOs(osName), SwtUi.swtArch(osArch)));
     }
 }

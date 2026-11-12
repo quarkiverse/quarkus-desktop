@@ -213,8 +213,9 @@ public interface DesktopAwtConfig {
         /**
          * The name of the application in the menu bar and the Dock : the default value of the
          * {@code apple.awt.application.name} system property in the native executable (the {@code java} launcher sets it
-         * to the simple name of the main class). The Quarkus application name ({@code quarkus.application.name}) by
-         * default.
+         * to the simple name of the main class). By default, the name of the packages of the application
+         * ({@code quarkus.desktop.packaging.name}) with the Desktop Packaging extension, else the Quarkus application name
+         * ({@code quarkus.application.name}).
          */
         Optional<String> applicationName();
 
