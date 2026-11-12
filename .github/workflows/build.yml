@@ -223,7 +223,7 @@ jobs:
       # The dependencies of the packaging modules only : a cache of their own, not the one of the full builds, which
       # would then restore a partial repository
       - name: Cache the Maven repository of the packaging modules
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.m2/repository
           key: packaging-${{ runner.os }}-${{ matrix.native }}-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
@@ -606,7 +606,7 @@ jobs:
 
       # The cache that the JVM mode leg of the packaging job saves, which has the same dependencies
       - name: Restore the Maven repository of the packaging modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ~/.m2/repository
           key: packaging-${{ runner.os }}-false-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
