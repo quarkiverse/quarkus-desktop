@@ -27,7 +27,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Quarkus 4: the extensions are built with Quarkus 4.0.0.Beta3 and need Quarkus 4.0.0.Beta3 or later (4.0.0.Beta2 was
+- Quarkus 4: the extensions are built with Quarkus 4.0.0.CR1 and need Quarkus 4.0.0.Beta3 or later (4.0.0.Beta2 was
   the first Quarkus 4 release with the services API) and Java 21 or later; their native executables need GraalVM 25.0.4
   or later, the minimum of Quarkus 4.0.0.Beta3. Their build steps register services (`ServiceRegistrar`) instead of
   recording bytecode: the run time code of the former recorders is in `DesktopAwtSupport`, `DesktopLifecycleSupport`,

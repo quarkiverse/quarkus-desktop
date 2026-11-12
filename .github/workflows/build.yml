@@ -119,11 +119,14 @@ jobs:
 
       - uses: actions/checkout@v7
 
-      - name: Set up GraalVM for JDK 25
+      - name: Set up Mandrel 25.0.5 (JDK 25)
         uses: graalvm/setup-graalvm@v1
         with:
           java-version: '25'
-          distribution: 'graalvm'
+          distribution: 'mandrel'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
 
@@ -167,11 +170,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up GraalVM for JDK 25
+      - name: Set up Mandrel 25.0.5 (JDK 25)
         uses: graalvm/setup-graalvm@v1
         with:
           java-version: '25'
-          distribution: 'graalvm'
+          distribution: 'mandrel'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           cache: 'maven'
 
@@ -212,12 +218,15 @@ jobs:
           distribution: temurin
           java-version: 25
 
-      - name: Set up GraalVM for JDK 25
+      - name: Set up Mandrel 25.0.5 (JDK 25)
         if: ${{ matrix.native }}
         uses: graalvm/setup-graalvm@v1
         with:
           java-version: '25'
-          distribution: 'graalvm'
+          distribution: 'mandrel'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       # The dependencies of the packaging modules only : a cache of their own, not the one of the full builds, which
