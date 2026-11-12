@@ -542,6 +542,51 @@ jobs:
         if: failure()
         run: java .github/scripts/ReportFailures.java maven.log
 
+  packaging-latest-jdk:
+    # The default Java runtime of JVM mode (no jvm.modules) built by the jpackage of the latest JDK : the extension gives
+    # jpackage ALL-DEFAULT as the last of its modules, which a jpackage that reorders them may ignore. The order of a set
+    # changes with each process, so the test runs five times
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'packaging' }}
+    name: Packaging - JDK 27 on ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Prepare git
+        run: git config --global core.autocrlf false
+        if: startsWith(matrix.os, 'windows')
+
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 27
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 27
+          cache: 'maven'
+
+      - name: Build the packaging modules
+        run: ./mvnw -B -ntp install -pl packaging/deployment -am -DskipTests -Dno-format 2>&1 | tee maven.log
+
+      - name: Build the default Java runtime five times
+        run: |
+          for run in 1 2 3 4 5; do
+            echo "::group::run $run"
+            ./mvnw -B -ntp surefire:test -pl packaging/deployment \
+                -Dtest=ApplicationImageTest#theDefaultJavaRuntimeHasTheProvidersOfServices 2>&1 | tee -a maven.log
+            echo "::endgroup::"
+          done
+          # the test is skipped when the JDK has no jpackage : that is no check
+          ran=$(grep -c 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0' maven.log || true)
+          [ "$ran" -ge 5 ] || { echo "::error::The test of the default Java runtime did not run five times ($ran)"; exit 1; }
+
+      - name: Report the failures
+        if: failure()
+        run: java .github/scripts/ReportFailures.java maven.log
+
   packaging-snap:
     # The snap of the integration tests of the Desktop Packaging extension, in a job of its own : its tools come from the
     # snap store, which does not always answer the runners, and the job has not passed yet (continue-on-error until it
