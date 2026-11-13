@@ -579,12 +579,12 @@ the native executable has the ad hoc signature of the default. In JVM mode, a se
 a Developer ID certificate does (with the hardened runtime, a secure time stamp and the entitlements of the JVM), and
 the disk image too.
 * Linux: the Debian package (on Ubuntu; in JVM mode, the package of a next version is installed over it), the RPM
-package (in a Fedora container), the AppImage (made by appimagetool 1.9.1) and the Flatpak bundle.
+package (in a Fedora container), the AppImage (made by appimagetool 1.9.1), the Flatpak bundle and, in JVM mode, the
+snap (built by Snapcraft in an LXD container, and installed with `--dangerous`, since it is not signed by the store).
 
 Not verified yet:
 
-* the snap: its job (`packaging-snap`), which builds it, installs it and starts it, has not passed yet, and does not
-fail the build until it does;
+* the snap of a native executable;
 * signing with Developer ID certificates (the installer package is not signed), and the notarization;
 * the upgrade of the MSIX package, of the RPM package, of the macOS packages, of the AppImage and of the Flatpak bundle;
 * applications with a user interface, beyond a native Swing application in an MSI package on Windows, and JavaFX
