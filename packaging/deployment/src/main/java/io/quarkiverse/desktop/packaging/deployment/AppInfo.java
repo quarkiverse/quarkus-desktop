@@ -30,10 +30,11 @@ import org.jboss.logging.Logger;
  * @param applicationId the name that the application gives itself at run time ({@code ApplicationIdBuildItem}) : the
  *        AppUserModelID of its process on Windows, the class of its windows on Linux ; empty when its user interface
  *        toolkit gives it none
+ * @param associations the file types and URL schemes that the packages register the application for
  */
 public record AppInfo(String name, String packageName, String identifier, String version, String vendor,
         String description, Optional<String> copyright, Optional<String> homepage, Optional<Path> licenseFile,
-        Optional<String> applicationId) {
+        Optional<String> applicationId, Associations associations) {
 
     /**
      * The value of the name and version of an application that has none (the {@code UNSET_VALUE} of
@@ -72,7 +73,7 @@ public record AppInfo(String name, String packageName, String identifier, String
     public AppInfo(String name, String packageName, String identifier, String version, String vendor,
             String description, Optional<String> copyright, Optional<String> homepage, Optional<Path> licenseFile) {
         this(name, packageName, identifier, version, vendor, description, copyright, homepage, licenseFile,
-                Optional.empty());
+                Optional.empty(), Associations.NONE);
     }
 
     /**
@@ -127,7 +128,8 @@ public record AppInfo(String name, String packageName, String identifier, String
             throw new PackagingException("quarkus.desktop.packaging.license-file : " + licenseFile.get() + " not found");
         }
         return new AppInfo(name, packageName, identifier, version, config.vendor(), config.description().orElse(name),
-                config.copyright(), config.homepage(), licenseFile);
+                config.copyright(), config.homepage(), licenseFile, Optional.empty(),
+                Associations.of(config, packageName, name, projectDirectory));
     }
 
     /**
@@ -292,6 +294,14 @@ public record AppInfo(String name, String packageName, String identifier, String
      */
     public AppInfo withApplicationId(Optional<String> applicationId) {
         return new AppInfo(name, packageName, identifier, version, vendor, description, copyright, homepage, licenseFile,
-                applicationId);
+                applicationId, associations);
+    }
+
+    /**
+     * This application, registered for these file types and URL schemes.
+     */
+    public AppInfo withAssociations(Associations associations) {
+        return new AppInfo(name, packageName, identifier, version, vendor, description, copyright, homepage, licenseFile,
+                applicationId, associations);
     }
 }
