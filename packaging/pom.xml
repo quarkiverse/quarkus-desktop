@@ -32,5 +32,18 @@
                 <module>integration-tests</module>
             </modules>
         </profile>
+        <profile>
+            <!-- The packaged application with a window, which the packaging-ui job of the build workflow installs and
+                 starts : -Dui-it (-Pswt for its SWT variant) -->
+            <id>ui-it</id>
+            <activation>
+                <property>
+                    <name>ui-it</name>
+                </property>
+            </activation>
+            <modules>
+                <module>ui-integration-tests</module>
+            </modules>
+        </profile>
     </profiles>
 </project>

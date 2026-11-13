@@ -57,6 +57,10 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
         java-version: [ 21, 25 ]
+        # macOS on Intel
+        include:
+          - os: macos-15-intel
+            java-version: 25
     runs-on: ${{ matrix.os }}
     steps:
       - name: Prepare git
@@ -157,14 +161,16 @@ jobs:
     # event loop of an SWT native executable on the first thread of the process, and NativeExecutableIT compares the
     # minimum macOS version and the SDK version of the executable with the java launcher of this GraalVM (otool -l)
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' }}
-    name: Native SWT${{ matrix.exact && ' (exact)' || '' }} on macos-latest
+    name: Native SWT${{ matrix.exact && ' (exact)' || '' }} on ${{ matrix.os }}
     # a hung native executable or GUI test : about 10 minutes otherwise
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
+        # Apple silicon and Intel
+        os: [ macos-latest, macos-15-intel ]
         exact: [ false, true ]
-    runs-on: macos-latest
+    runs-on: ${{ matrix.os }}
     env:
       EXACT_ARGS: ${{ matrix.exact && '-Dquarkus.native.additional-build-args=--exact-reachability-metadata' || '' }}
     steps:
@@ -193,7 +199,10 @@ jobs:
     # built by Maven with the tool of each format (PackagingIT checks the files), then installed, started and removed by
     # the steps below. In JVM mode (the jar with a Java runtime, built by jpackage) and for the native executable. In JVM
     # mode, the packages of a next version are installed over the first ones (msi, exe, deb), the macOS bundle is signed
-    # with an identity rather than ad hoc, and Linux has the snap too
+    # with an identity rather than ad hoc. Linux has the snap too, and in JVM mode the AppImage of the next version
+    # updates the first one (AppImageUpdate), and Windows installs the MSIX package from its App Installer file, then
+    # the one of the next version. On arm64 (Windows : JVM mode only, GraalVM has no Windows arm64 native image) and on
+    # macOS Intel too
     name: Packaging${{ matrix.native && ' (native)' || '' }} on ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -201,9 +210,24 @@ jobs:
       matrix:
         os: [ ubuntu-latest, windows-latest, macos-latest ]
         native: [ false, true ]
+        include:
+          - os: ubuntu-24.04-arm
+            native: false
+          - os: ubuntu-24.04-arm
+            native: true
+          - os: windows-11-arm
+            native: false
+          - os: macos-15-intel
+            native: false
+          - os: macos-15-intel
+            native: true
     runs-on: ${{ matrix.os }}
     env:
       NATIVE_ARGS: ${{ matrix.native && '-Dnative' || '' }}
+      # The update information of the AppImage : the .zsync file of the latest version, which the step of the packages
+      # of Linux serves on the loopback interface (an environment variable : sg runs the build in a shell, which would
+      # take the | of a command line for a pipe)
+      QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_UPDATE_INFORMATION: 'zsync|http://127.0.0.1:8123/Packaging-IT-latest.AppImage.zsync'
     steps:
       - name: Prepare git
         run: git config --global core.autocrlf false
@@ -244,20 +268,36 @@ jobs:
         run: |
           set -x
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev rpm dpkg-dev flatpak desktop-file-utils
-          curl -fsSL --retry 3 --retry-all-errors -o appimagetool https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
-          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  appimagetool" | sha256sum -c -
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev rpm dpkg-dev flatpak desktop-file-utils zsync
+          if [[ "$RUNNER_ARCH" == ARM64 ]]; then
+            arch=aarch64
+            appimagetool_sha=f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158
+            runtime_sha=00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444
+            update_sha=7aaf89dd4cf66ebd940d416c67e1c240c57a139cee38d9c0ed3bb9387bc435b0
+          else
+            arch=x86_64
+            appimagetool_sha=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+            runtime_sha=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+            update_sha=d976cdac667b03dee8cb23fb95ef74b042c406c5cbab3ff294d2b16efeaff84f
+          fi
+          curl -fsSL --retry 3 --retry-all-errors -o appimagetool "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-$arch.AppImage"
+          echo "$appimagetool_sha  appimagetool" | sha256sum -c -
           sudo install -m 755 appimagetool /usr/local/bin/appimagetool
           rm appimagetool
-          runtime="$RUNNER_TEMP/runtime-x86_64"
-          curl -fsSL --retry 3 --retry-all-errors -o "$runtime" https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
-          echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  $runtime" | sha256sum -c -
+          # the updater of the AppImages (AppImageUpdate), which the step of the packages runs
+          curl -fsSL --retry 3 --retry-all-errors -o appimageupdatetool "https://github.com/AppImageCommunity/AppImageUpdate/releases/download/2.0.0-alpha-1-20251018/appimageupdatetool-$arch.AppImage"
+          echo "$update_sha  appimageupdatetool" | sha256sum -c -
+          sudo install -m 755 appimageupdatetool /usr/local/bin/appimageupdatetool
+          rm appimageupdatetool
+          runtime="$RUNNER_TEMP/runtime-$arch"
+          curl -fsSL --retry 3 --retry-all-errors -o "$runtime" "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-$arch"
+          echo "$runtime_sha  $runtime" | sha256sum -c -
           echo "APPIMAGE_ARGS=-Dquarkus.desktop.packaging.linux.appimage.runtime-file=$runtime" >> "$GITHUB_ENV"
 
-      # JVM mode on Linux : the snap. Snapcraft and LXD come from the snap store, which does not always answer the
-      # runners. Snapcraft builds the snap in an LXD container : the build runs in the lxd group
+      # The snap, of the jar and of the native executable. Snapcraft and LXD come from the snap store, which does not
+      # always answer the runners. Snapcraft builds the snap in an LXD container : the build runs in the lxd group
       - name: Install Snapcraft and LXD
-        if: ${{ startsWith(matrix.os, 'ubuntu') && !matrix.native }}
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           set -x
           for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 30; done
@@ -286,6 +326,8 @@ jobs:
           Import-PfxCertificate -FilePath $file -CertStoreLocation 'Cert:\LocalMachine\TrustedPeople' -Password $password | Out-Null
           Import-PfxCertificate -FilePath $file -CertStoreLocation 'Cert:\LocalMachine\Root' -Password $password | Out-Null
           "SIGN_ARGS=-Dquarkus.desktop.packaging.windows.sign.certificate-file=$file -Dquarkus.desktop.packaging.windows.sign.certificate-password=packaging-it" >> $env:GITHUB_ENV
+          # The App Installer file of the MSIX package, whose URLs are those of the server of the step of the packages
+          'QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_UPDATE_URL=http://127.0.0.1:8124' >> $env:GITHUB_ENV
 
       # JVM mode on macOS : a self-signed code signing identity, in a keychain of its own, signs the bundle as a
       # Developer ID certificate does (the hardened runtime, a secure time stamp, the entitlements of the JVM) and the
@@ -325,7 +367,7 @@ jobs:
           identity=$(openssl x509 -in "$RUNNER_TEMP/packaging-it.crt" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
           echo "SIGN_ARGS=-Dquarkus.desktop.packaging.macos.sign.identity=$identity -Dquarkus.desktop.packaging.macos.sign.keychain=$keychain" >> "$GITHUB_ENV"
 
-      # the lxd group exists on the runner, whose user is only a member of it once LXD is set up (JVM mode)
+      # the lxd group exists on the runner, whose user is only a member of it once LXD is set up
       - name: Build the packages of Linux
         if: startsWith(matrix.os, 'ubuntu')
         run: |
@@ -340,7 +382,7 @@ jobs:
       # ones (the formats of the other operating systems are skipped)
       - name: Build the packages of the next version
         if: ${{ !matrix.native && !startsWith(matrix.os, 'macos') }}
-        run: ./mvnw -B -ntp package -pl packaging/integration-tests -Dno-format -Dquarkus.desktop.packaging.formats=msi,exe,deb -Dquarkus.desktop.packaging.version=1.1.0 -Dquarkus.desktop.packaging.output-directory=packaging-next $SIGN_ARGS 2>&1 | tee -a maven.log
+        run: ./mvnw -B -ntp package -pl packaging/integration-tests -Dno-format -Dquarkus.desktop.packaging.formats=msi,exe,msix,deb,appimage -Dquarkus.desktop.packaging.version=1.1.0 -Dquarkus.desktop.packaging.output-directory=packaging-next $SIGN_ARGS $APPIMAGE_ARGS 2>&1 | tee -a maven.log
 
       # The RPM package is installed in a Fedora container. In JVM mode, the Debian package of the next version upgrades
       # the installed one
@@ -383,6 +425,32 @@ jobs:
 
           ./Packaging-IT-*.AppImage --appimage-extract-and-run --marker="$RUNNER_TEMP/appimage.txt" appimage
           started appimage "$RUNNER_TEMP/appimage.txt"
+          # The update information of the AppImage, and its .zsync file
+          appimage=$(ls Packaging-IT-*.AppImage)
+          test -s "$appimage.zsync"
+          ./"$appimage" --appimage-updateinformation | tee "$RUNNER_TEMP/updateinformation.txt"
+          grep -qF 'zsync|http://127.0.0.1:8123/Packaging-IT-latest.AppImage.zsync' "$RUNNER_TEMP/updateinformation.txt"
+          if [[ -z "$NATIVE_ARGS" ]]; then
+            # JVM mode : the AppImage of the next version, published with its .zsync file under the name of the update
+            # information, updates this one (AppImageUpdate writes the new AppImage next to it, by the name in the .zsync
+            # file)
+            next=$(cd ../packaging-next && ls Packaging-IT-*.AppImage)
+            mkdir "$RUNNER_TEMP/appimage-server" "$RUNNER_TEMP/appimage-update"
+            cp "../packaging-next/$next" "$RUNNER_TEMP/appimage-server/"
+            cp "../packaging-next/$next.zsync" "$RUNNER_TEMP/appimage-server/Packaging-IT-latest.AppImage.zsync"
+            python3 -m http.server 8123 --bind 127.0.0.1 --directory "$RUNNER_TEMP/appimage-server" > "$RUNNER_TEMP/appimage-server.log" 2>&1 &
+            server=$!
+            sleep 2
+            cp "$appimage" "$RUNNER_TEMP/appimage-update/"
+            # an update is available : exit code 1 of --check-for-update
+            status=0
+            appimageupdatetool --appimage-extract-and-run --check-for-update "$RUNNER_TEMP/appimage-update/$appimage" || status=$?
+            [[ "$status" == 1 ]] || { echo "::error::appimageupdatetool found no update of the AppImage ($status)"; cat "$RUNNER_TEMP/appimage-server.log"; exit 1; }
+            appimageupdatetool --appimage-extract-and-run "$RUNNER_TEMP/appimage-update/$appimage"
+            ls -l "$RUNNER_TEMP/appimage-update"
+            cmp "$RUNNER_TEMP/appimage-update/$next" "../packaging-next/$next" || { echo "::error::The updated AppImage is not the one of the next version"; exit 1; }
+            kill "$server"
+          fi
 
           # No remote before : the installation adds Flathub, the repository of the runtime that the bundle names
           flatpak install --user -y --noninteractive ./Packaging-IT-*.flatpak
@@ -617,6 +685,154 @@ jobs:
           if ($line -ne "started 999-SNAPSHOT [$document]") { throw "msix : the document did not open the application ($line)" }
           "msix : opened $document"
           Remove-AppxPackage -Package $package.PackageFullName
+
+          if (-not $env:NATIVE_ARGS) {
+            # JVM mode : the MSIX package installed from its App Installer file, served on the loopback interface, then
+            # updated from the one of the next version, published at the same URL, which Windows keeps with the package
+            $server = "$env:RUNNER_TEMP\msix-server"
+            New-Item -ItemType Directory $server | Out-Null
+            Copy-Item *.msix, *.appinstaller $server
+            $appInstaller = (Get-ChildItem "$server\*.appinstaller").Name
+            "msix : App Installer file $appInstaller"
+            Get-Content "$server\$appInstaller"
+            $python = Start-Process python -ArgumentList '-m', 'http.server', '8124', '--bind', '127.0.0.1', '--directory', "`"$server`"" -PassThru -WindowStyle Hidden
+            Start-Sleep -Seconds 3
+            Add-AppxPackage -AppInstallerFile "http://127.0.0.1:8124/$appInstaller"
+            $package = Get-AppxPackage -Name 'io.quarkiverse.desktop.PackagingIt'
+            if ("$($package.Version)" -ne '1.0.0.0') { throw "msix : the App Installer file installed the version $($package.Version)" }
+            $uri = $package.GetAppInstallerInfo().Uri
+            if ("$uri" -ne "http://127.0.0.1:8124/$appInstaller") { throw "msix : the App Installer URL of the package is $uri" }
+            "msix : $($package.PackageFullName) from $uri"
+            Remove-Item "$server\*"
+            Copy-Item ..\packaging-next\*.msix, ..\packaging-next\*.appinstaller $server
+            if (-not (Test-Path "$server\$appInstaller")) { throw "msix : the next version has no $appInstaller" }
+            Add-AppxPackage -AppInstallerFile "http://127.0.0.1:8124/$appInstaller"
+            $package = Get-AppxPackage -Name 'io.quarkiverse.desktop.PackagingIt'
+            if ("$($package.Version)" -ne '1.1.0.0') { throw "msix : the App Installer file of the next version installed the version $($package.Version)" }
+            "msix : updated to $($package.PackageFullName)"
+            Remove-AppxPackage -Package $package.PackageFullName
+            Stop-Process -Id $python.Id
+          }
+
+      - name: Report the failures
+        if: failure()
+        run: java .github/scripts/ReportFailures.java maven.log
+
+  packaging-ui:
+    # The packaged application with a window (packaging/ui-integration-tests), with Desktop Swing and Desktop SWT, in
+    # JVM mode and as a native executable (not the Swing native executable on macOS, see the native job) : its package
+    # is installed (deb, msi, pkg), then .github/scripts/packaging-ui.* start the application with a file, start it a
+    # second time (single instance), open a file and a URL with it as the system does, stop it, and take a screenshot
+    name: Packaging UI - ${{ matrix.toolkit }}${{ matrix.native && ' (native)' || '' }} on ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest, windows-latest, macos-latest ]
+        toolkit: [ swing, swt ]
+        native: [ false, true ]
+        exclude:
+          - os: macos-latest
+            toolkit: swing
+            native: true
+    runs-on: ${{ matrix.os }}
+    env:
+      NATIVE_ARGS: ${{ matrix.native && '-Dnative' || '' }}
+      TOOLKIT: ${{ matrix.toolkit }}
+      MODE: ${{ matrix.native && 'native' || 'jvm' }}
+      SCREENSHOT: ${{ github.workspace }}/screenshots/${{ matrix.os }}-${{ matrix.toolkit }}-${{ matrix.native && 'native' || 'jvm' }}.png
+    steps:
+      - name: Prepare git
+        run: git config --global core.autocrlf false
+        if: startsWith(matrix.os, 'windows')
+
+      - uses: actions/checkout@v7
+
+      - name: Set up JDK 25
+        if: ${{ !matrix.native }}
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 25
+
+      - name: Set up Mandrel 25.0.5 (JDK 25)
+        if: ${{ matrix.native }}
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'mandrel'
+          # setup-graalvm names the macOS archive of a given Mandrel version 'darwin' (Mandrel publishes 'macos'): the
+          # latest Mandrel release, 25.0.5.0-Final, on macOS
+          version: ${{ runner.os == 'macOS' && 'mandrel-latest' || 'mandrel-25.0.5.0-Final' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache the Maven repository of the packaging modules
+        uses: actions/cache@v6
+        with:
+          path: ~/.m2/repository
+          key: packaging-ui-${{ runner.os }}-${{ matrix.toolkit }}-${{ matrix.native }}-maven-${{ hashFiles('**/pom.xml') }}
+
+      # Not the libraries of the application : the Debian package depends on them. A virtual X display, the screenshot
+      # (ImageMagick) and gio, which opens files and URLs as the file managers do
+      - name: Install the tools of Linux
+        if: startsWith(matrix.os, 'ubuntu')
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev dpkg-dev xvfb imagemagick libglib2.0-bin
+
+      - name: Install the tools of Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: dotnet tool install --global wix --version 5.0.2
+
+      - name: Build the package
+        run: |
+          case "$RUNNER_OS" in
+            Linux) format=deb ;;
+            Windows) format=msi ;;
+            macOS) format=pkg ;;
+          esac
+          ./mvnw -B -ntp install -pl packaging/ui-integration-tests -am -Dui-it -P${{ matrix.toolkit }} -DskipTests -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=$format 2>&1 | tee maven.log
+
+      - name: Install, use and remove the package of Linux
+        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: packaging/ui-integration-tests/target/packaging
+        run: |
+          ls -l
+          sudo apt-get install -y ./packaging-ui-it_*.deb
+          xvfb-run -a -s '-screen 0 1280x800x24' bash "$GITHUB_WORKSPACE/.github/scripts/packaging-ui.sh"
+          sudo apt-get remove -y packaging-ui-it
+
+      - name: Install, use and remove the package of macOS
+        if: startsWith(matrix.os, 'macos')
+        working-directory: packaging/ui-integration-tests/target/packaging
+        run: |
+          ls -l
+          sudo installer -pkg Packaging-UI-IT-*.pkg -target /
+          bash "$GITHUB_WORKSPACE/.github/scripts/packaging-ui.sh"
+          sudo rm -rf "/Applications/Packaging UI IT.app"
+
+      - name: Install, use and remove the package of Windows
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        working-directory: packaging/ui-integration-tests/target/packaging
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Get-ChildItem
+          $msi = (Get-ChildItem *.msi).FullName
+          $process = Start-Process msiexec -ArgumentList '/i', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "msiexec /i exited with $($process.ExitCode)" }
+          & "$env:GITHUB_WORKSPACE\.github\scripts\packaging-ui.ps1"
+          $process = Start-Process msiexec -ArgumentList '/x', "`"$msi`"", '/qn', '/norestart' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "msiexec /x exited with $($process.ExitCode)" }
+
+      - name: Upload the screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-${{ matrix.os }}-${{ matrix.toolkit }}-${{ matrix.native && 'native' || 'jvm' }}
+          path: screenshots/
+          if-no-files-found: ignore
 
       - name: Report the failures
         if: failure()

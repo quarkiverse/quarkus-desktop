@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>io.quarkiverse.desktop</groupId>
+        <artifactId>quarkus-desktop-packaging-parent</artifactId>
+        <version>999-SNAPSHOT</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>quarkus-desktop-packaging-ui-integration-tests</artifactId>
+    <name>Quarkus Desktop - Packaging - User Interface Integration Tests</name>
+
+    <!-- A packaged application with a window, built with Desktop Swing (by default) or Desktop SWT (-Pswt) : the
+         packaging-ui job of the build workflow installs its package, starts it, opens files and URLs with it as the
+         system does, starts it a second time (single instance), and removes it. The module is in the build with
+         -Dui-it only (see the parent) : the integration tests of the packages are in the integration-tests module -->
+
+    <properties>
+        <quarkus.desktop.packaging.formats>directory</quarkus.desktop.packaging.formats>
+        <!-- The sources of the toolkit : src/swing/java or src/swt/java -->
+        <packaging.ui.toolkit>swing</packaging.ui.toolkit>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-packaging</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
+        <!-- Make sure the deployment module is built first (parallel builds, -pl) -->
+        <dependency>
+            <groupId>io.quarkiverse.desktop</groupId>
+            <artifactId>quarkus-desktop-packaging-deployment</artifactId>
+            <version>${project.version}</version>
+            <type>pom</type>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>*</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <sourceDirectory>src/${packaging.ui.toolkit}/java</sourceDirectory>
+        <plugins>
+            <plugin>
+                <groupId>io.quarkus</groupId>
+                <artifactId>quarkus-maven-plugin</artifactId>
+                <extensions>true</extensions>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>build</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>swing</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <dependencies>
+                <dependency>
+                    <groupId>io.quarkiverse.desktop</groupId>
+                    <artifactId>quarkus-desktop-swing</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+                <dependency>
+                    <groupId>io.quarkiverse.desktop</groupId>
+                    <artifactId>quarkus-desktop-swing-deployment</artifactId>
+                    <version>${project.version}</version>
+                    <type>pom</type>
+                    <scope>test</scope>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>*</groupId>
+                            <artifactId>*</artifactId>
+                        </exclusion>
+                    </exclusions>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>swt</id>
+            <properties>
+                <packaging.ui.toolkit>swt</packaging.ui.toolkit>
+            </properties>
+            <dependencies>
+                <dependency>
+                    <groupId>io.quarkiverse.desktop</groupId>
+                    <artifactId>quarkus-desktop-swt</artifactId>
+                    <version>${project.version}</version>
+                </dependency>
+                <dependency>
+                    <groupId>io.quarkiverse.desktop</groupId>
+                    <artifactId>quarkus-desktop-swt-deployment</artifactId>
+                    <version>${project.version}</version>
+                    <type>pom</type>
+                    <scope>test</scope>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>*</groupId>
+                            <artifactId>*</artifactId>
+                        </exclusion>
+                    </exclusions>
+                </dependency>
+            </dependencies>
+        </profile>
+        <profile>
+            <id>native-image</id>
+            <activation>
+                <property>
+                    <name>native</name>
+                </property>
+            </activation>
+            <properties>
+                <quarkus.native.enabled>true</quarkus.native.enabled>
+                <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+            </properties>
+        </profile>
+    </profiles>
+</project>
