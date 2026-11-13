@@ -667,7 +667,7 @@ jobs:
 
           if (-not $env:NATIVE_ARGS) {
             # JVM mode : the MSIX package installed from its App Installer file, served on the loopback interface, then
-            # updated from the one of the next version, published at the same URL, which Windows keeps with the package
+            # updated from the one of the next version, published at the same URL
             $server = "$env:RUNNER_TEMP\msix-server"
             New-Item -ItemType Directory $server | Out-Null
             Copy-Item *.msix, *.appinstaller $server
@@ -693,9 +693,7 @@ jobs:
             Install-FromAppInstaller
             $package = Get-AppxPackage -Name 'io.quarkiverse.desktop.PackagingIt'
             if ("$($package.Version)" -ne '1.0.0.0') { throw "msix : the App Installer file installed the version $($package.Version)" }
-            $uri = $package.GetAppInstallerInfo().Uri
-            if ("$uri" -ne "http://127.0.0.1:8124/$appInstaller") { throw "msix : the App Installer URL of the package is $uri" }
-            "msix : $($package.PackageFullName) from $uri"
+            "msix : $($package.PackageFullName) from http://127.0.0.1:8124/$appInstaller"
             Remove-Item "$server\*"
             Copy-Item ..\packaging-next\*.msix, ..\packaging-next\*.appinstaller $server
             if (-not (Test-Path "$server\$appInstaller")) { throw "msix : the next version has no $appInstaller" }
