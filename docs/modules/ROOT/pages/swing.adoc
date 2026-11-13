@@ -309,16 +309,6 @@ queries without the JavaBeans registration of the Swing classes: the components 
 handler reads (`new TransferHandler("text")`, with the listener interfaces of their event sets), and the classes named
 in the Synth XML files of the application, whose constructors, methods and properties the Synth parser looks up.
 
-== Verification
-
-The integration tests of the extension run a gallery of the components with every look and feel of the platform (in JVM
-mode and as a native executable, on Windows, Linux and macOS), and check that the native executable gets the same look
-and feel defaults (UI delegates, icons, painters, borders, colors, fonts, texts), the same key bindings, the same font
-metrics, the same rendering (pixel by pixel) and the same PostScript output as JVM mode. The
-https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] compares JVM mode and native executables
-page by page, with its Swing components, containers, text, look and feel, data transfer, printing and JavaBeans pages
-(see xref:index.adoc#verification[Verification]).
-
 == Configuration
 
 See xref:index.adoc#configuration[the overview of the properties].

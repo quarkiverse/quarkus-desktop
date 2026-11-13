@@ -1038,8 +1038,6 @@ public class DesktopStart {
 }
 ----
 
-This combination is not verified yet on macOS.
-
 [[configuration]]
 == Configuration
 
