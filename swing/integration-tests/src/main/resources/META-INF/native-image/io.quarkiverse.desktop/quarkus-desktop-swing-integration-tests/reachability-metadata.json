@@ -2,7 +2,6 @@
   "resources": [
     { "glob": "application.properties" },
     { "glob": "application-prod.properties" },
-    { "glob": "META-INF/microprofile-config.properties" },
-    { "glob": "META-INF/services/java.net.spi.URLStreamHandlerProvider" }
+    { "glob": "META-INF/microprofile-config.properties" }
   ]
 }
