@@ -152,6 +152,18 @@ jobs:
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
         run: ./mvnw -B -ntp clean install -Dnative -Dno-format -Dnative.surefire.skip $EXACT_ARGS 2>&1 | tee maven.log
 
+      # The integration tests of a @QuarkusMainIntegrationTest keep the output of the native executable : its log files
+      # and the reports of Failsafe, with the missing registrations of exact reachability metadata
+      - name: Print the logs of the integration tests
+        if: failure()
+        run: |
+          find . -path '*/integration-tests/target/*' -not -path '*/native-image-source-jar/*' \
+            \( -name '*.log' -o -name '*-output.txt' -o -name 'TEST-*.xml' \) -print0 | while IFS= read -r -d '' file; do
+            echo "::group::$file"
+            tail -n 300 "$file"
+            echo "::endgroup::"
+          done
+
       - name: Report the failures
         if: failure()
         run: java .github/scripts/ReportFailures.java maven.log
