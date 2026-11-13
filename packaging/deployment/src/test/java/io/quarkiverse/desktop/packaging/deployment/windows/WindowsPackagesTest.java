@@ -1398,8 +1398,9 @@ class WindowsPackagesTest {
         assertEquals("http://schemas.microsoft.com/appx/appinstaller/2018", root.getNamespaceURI());
         assertEquals("AppInstaller", root.getLocalName());
         assertEquals("1.2.3.0", root.getAttribute("Version"));
-        assertEquals("https://acme.org/down%20loads/Acme%20%C3%89diteur%201.2.3-arm64.appinstaller",
-                root.getAttribute("Uri"));
+        // without the version : the file of the next version replaces it, at the URL that Windows checks
+        assertEquals("https://acme.org/down%20loads/" + app.fileName() + "-arm64.appinstaller", root.getAttribute("Uri"));
+        assertEquals(app.fileName() + "-arm64.appinstaller", MsixPackager.appInstallerName(app, Arch.ARM64));
         Element main = (Element) document.getElementsByTagName("MainPackage").item(0);
         assertEquals("org.acme.AcmeEditor", main.getAttribute("Name"));
         assertEquals("CN=Acme & Sons", main.getAttribute("Publisher"));
@@ -1415,7 +1416,7 @@ class WindowsPackagesTest {
         assertEquals(24, MsixPackager.updateHours(defaults.windows().msix()));
         assertTrue(MsixPackager.appInstaller(TestConfig.app(defaults), defaults.windows().msix(), Arch.X64,
                 MsixPackager.updateUrl(defaults.windows().msix()).orElseThrow(), "a.msix")
-                .contains(" Uri=\"HTTP://acme.org/a.appinstaller\">"));
+                .contains(" Uri=\"HTTP://acme.org/" + TestConfig.app(defaults).fileName() + "-x64.appinstaller\">"));
         assertEquals(Optional.empty(), MsixPackager.updateUrl(TestConfig.defaults().windows().msix()));
         assertEquals(Optional.empty(), MsixPackager.updateUrl(TestConfig.of(Map.of("windows.msix.update-url", " "))
                 .windows().msix()));

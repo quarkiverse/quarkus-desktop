@@ -361,8 +361,9 @@ jobs:
           grep -q 'application/x-packaging-it-document' /usr/share/mime/packages/packaging-it.xml
           grep -q '^application/x-packaging-it-document=.*packaging-it.desktop' /usr/share/applications/mimeinfo.cache             || { echo "::error::The desktop database has no application for the type of the package"; exit 1; }
           grep -q '^x-scheme-handler/packaging-it=.*packaging-it.desktop' /usr/share/applications/mimeinfo.cache             || { echo "::error::The desktop database has no application for the URL scheme of the package"; exit 1; }
-          echo document > "$RUNNER_TEMP/deb.pit"
-          [[ "$(xdg-mime query filetype "$RUNNER_TEMP/deb.pit")" == application/x-packaging-it-document ]]             || { echo "::error::The MIME type of the files of the package is not known"; exit 1; }
+          # the extension of the type in the MIME database, which the file managers read (xdg-mime query filetype
+          # does not without a desktop environment : it runs file --mime-type)
+          grep -q ':application/x-packaging-it-document:\*\.pit$' /usr/share/mime/globs2             || { echo "::error::The MIME database has no extension for the type of the package"; exit 1; }
           packaging-it --marker="$RUNNER_TEMP/deb.txt" deb
           started deb "$RUNNER_TEMP/deb.txt"
           if [[ -z "$NATIVE_ARGS" ]]; then

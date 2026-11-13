@@ -80,7 +80,9 @@ public final class DesktopSwtSupport {
                     : "The user interface is disabled (quarkus.desktop.swt.startup-event.enabled)");
             return;
         }
-        if (singleInstance(context, ui, config, launchMode, identifier, openRequests, extensions, schemes)) {
+        SingleInstance.Result instance = singleInstance(ui, config, launchMode, identifier, openRequests, extensions,
+                schemes);
+        if (instance != null && instance.forwarded()) {
             ui.disable(launchMode, "The application runs already : this launch gave its files and URIs to it, and stops");
             Quarkus.asyncExit(0);
             return;
@@ -93,8 +95,18 @@ public final class DesktopSwtSupport {
         ui.configure(launchMode, mainRuns, config.exitOnLastShellClosed() && launchMode != LaunchMode.TEST,
                 config.applicationName().or(() -> Optional.ofNullable(applicationName)),
                 Optional.ofNullable(applicationVersion));
-        // when the start fails before the user interface service : the queued tasks are rejected
-        context.onStop(ui::stop);
+        // when the start fails before the user interface service : the queued tasks are rejected. One stop handler per
+        // service : the one of the single instance too, which stops listening once the user interface stopped
+        SingleInstance running = instance != null ? instance.instance() : null;
+        context.onStop(() -> {
+            try {
+                ui.stop();
+            } finally {
+                if (running != null) {
+                    running.close();
+                }
+            }
+        });
     }
 
     /**
@@ -104,22 +116,24 @@ public final class DesktopSwtSupport {
      * instance. Only in production : dev mode restarts the application in the same JVM, and would take the launches of
      * the installed application, and the tests start many applications.
      *
-     * @return whether this launch forwarded its request to the running instance : it stops
+     * @return the result of the single instance, {@code null} when the application does not run once per user : whether
+     *         this launch forwarded its request to the running instance (it stops), else the instance that it runs,
+     *         which the caller closes when the application stops
      */
-    private static boolean singleInstance(StartContext context, SwtUi ui, DesktopSwtRuntimeConfig config,
+    private static SingleInstance.Result singleInstance(SwtUi ui, DesktopSwtRuntimeConfig config,
             LaunchMode launchMode, String identifier, boolean openRequests, List<String> extensions,
             List<String> schemes) {
         if (!config.singleInstance()) {
-            return false;
+            return null;
         }
         if (launchMode != LaunchMode.NORMAL) {
             LOGGER.debugf("quarkus.desktop.swt.single-instance is ignored in %s mode", launchMode.getDefaultProfile());
-            return false;
+            return null;
         }
         if (identifier == null || identifier.isBlank()) {
             LOGGER.warn("quarkus.desktop.swt.single-instance needs the name of the application (quarkus.application.name"
                     + " or the identifier of its packages) : another instance may run");
-            return false;
+            return null;
         }
         OpenRequest request = openRequests
                 ? new OpenArguments(extensions, schemes).request(ui.arguments(), Source.ANOTHER_LAUNCH)
@@ -131,12 +145,8 @@ public final class DesktopSwtSupport {
                 SingleInstance.TIMEOUT);
         if (result.forwarded()) {
             LOGGER.debugf("The application runs already : %s is forwarded to it, and this launch stops", request);
-            return true;
         }
-        if (result.instance() != null) {
-            context.onStop(result.instance()::close);
-        }
-        return false;
+        return result;
     }
 
     /**

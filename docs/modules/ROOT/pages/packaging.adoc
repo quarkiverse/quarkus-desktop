@@ -520,7 +520,8 @@ xref:cdi.adoc[] and xref:swt.adoc[].
 Two formats update the application themselves, from where the packages are published:
 
 * the MSIX package: with `windows.msix.update-url`, the URL of the directory of the packages, the build writes an App
-Installer file next to the package (`<package>.appinstaller`). Publish both files in that directory, and give the users
+Installer file next to the package (`<name>-<architecture>.appinstaller`, without the version: Windows reads it again
+at its URL to find the next version, whose file replaces it). Publish both files in that directory, and give the users
 the URL of the App Installer file: Windows installs the package from it, and looks for a new version at the start of
 the application, every `windows.msix.update-hours` hours (24 by default);
 * the AppImage: with `linux.appimage.update-information` (`gh-releases-zsync|acme|editor|latest|Acme-Editor-*-x86_64.AppImage.zsync`

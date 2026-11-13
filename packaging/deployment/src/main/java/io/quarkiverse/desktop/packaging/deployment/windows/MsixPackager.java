@@ -138,8 +138,7 @@ public final class MsixPackager implements Packager {
         }
         // the App Installer file of a previous build is deleted too
         String msixName = msix.getFileName().toString();
-        Path appInstaller = context.output(msixName.substring(0, msixName.length() - ".msix".length())
-                + ".appinstaller");
+        Path appInstaller = context.output(appInstallerName(context.app(), context.arch()));
         Optional<String> updateUrl = updateUrl(context.config().windows().msix());
         if (updateUrl.isPresent()) {
             FileTrees.write(appInstaller, appInstaller(context.app(), context.config().windows().msix(), context.arch(),
@@ -200,14 +199,11 @@ public final class MsixPackager implements Packager {
      */
     static String appInstaller(AppInfo app, DesktopPackagingConfig.Msix config, Arch arch, String updateUrl,
             String msixFileName) {
-        String baseName = msixFileName.endsWith(".msix")
-                ? msixFileName.substring(0, msixFileName.length() - ".msix".length())
-                : msixFileName;
         String version = version(app);
         StringBuilder xml = new StringBuilder();
         xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
         xml.append("<AppInstaller xmlns=\"http://schemas.microsoft.com/appx/appinstaller/2018\" Version=\"")
-                .append(version).append("\" Uri=\"").append(Xml.escape(updateUrl + "/" + uriPath(baseName + ".appinstaller")))
+                .append(version).append("\" Uri=\"").append(Xml.escape(updateUrl + "/" + uriPath(appInstallerName(app, arch))))
                 .append("\">\n");
         xml.append("  <MainPackage Name=\"").append(Xml.escape(identityName(app, config))).append("\" Publisher=\"")
                 .append(Xml.escape(publisher(app, config))).append("\" Version=\"").append(version)
@@ -218,6 +214,15 @@ public final class MsixPackager implements Packager {
         xml.append("  </UpdateSettings>\n");
         xml.append("</AppInstaller>\n");
         return xml.toString();
+    }
+
+    /**
+     * The name of the App Installer file, without the version : Windows downloads the file again from its own URL (its
+     * {@code Uri}) to find a new version, so the file of every version has the same name, which the next one replaces
+     * where the packages are published.
+     */
+    static String appInstallerName(AppInfo app, Arch arch) {
+        return app.fileName() + "-" + arch.windows() + ".appinstaller";
     }
 
     /**
