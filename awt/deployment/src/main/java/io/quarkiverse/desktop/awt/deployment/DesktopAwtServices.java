@@ -33,6 +33,12 @@ public final class DesktopAwtServices {
     static final String USER_INTERFACE = "io.quarkiverse.desktop.awt.user-interface";
 
     /**
+     * Checks for another instance of the application ({@code quarkus.desktop.awt.single-instance}) before the
+     * {@code StartupEvent} observers, and listens for the next launches until the application stops.
+     */
+    static final String SINGLE_INSTANCE = "io.quarkiverse.desktop.awt.single-instance";
+
+    /**
      * The ArC service firing {@code StartupEvent} when it starts, and {@code ShutdownEvent} when it stops : a service
      * started after it starts after the {@code StartupEvent} observers, and stops before the {@code ShutdownEvent} ones.
      * A build step producing a {@code ServiceStartBuildItem} has its services started before it.

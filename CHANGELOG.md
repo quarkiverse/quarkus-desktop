@@ -13,8 +13,7 @@ All notable changes to this project will be documented in this file.
   one PNG file, gives the Windows native executable its icon and version information, and signs the Windows and macOS
   packages (with notarization on macOS). Not verified yet, among others: applications with a user interface (beyond a
   native Swing application in an MSI package), the snap of a native executable, signing with a Developer ID
-  certificate and the notarization, Windows and Linux on arm64 and macOS on Intel, and Gradle builds (see Verification
-  on the Desktop Packaging page).
+  certificate and the notarization, Windows and Linux on arm64, and macOS on Intel.
   The `quarkus-desktop-packaging-spi` artifact lets other extensions add the files of the native executable
   (`NativeExecutableFileBuildItem`, optional for a library that the executable loads only in some cases: the Debian and
   RPM packages do not depend on the libraries that it is linked with) and the options of the JVM
@@ -23,6 +22,15 @@ All notable changes to this project will be documented in this file.
   default `StartupWMClass` of the desktop entry of the Linux packages), and read the name of the packages
   (`PackagedApplicationNameBuildItem`). Desktop AWT and Desktop SWT declare the libraries that they copy next to the
   native executable, and Desktop SWT the name that it gives to SWT.
+- File types and URL schemes of the packages (`quarkus.desktop.packaging.file-types.<type>.*`,
+  `quarkus.desktop.packaging.url-schemes`): every format registers the application for them (the registry keys of the
+  MSI package and the setup program, the extensions of the MSIX package, the `Info.plist` of the macOS bundle, the
+  `MimeType` of the desktop entry and a shared-mime-info file on Linux). Desktop AWT and Desktop SWT fire an
+  `OpenRequest` with the files and the URLs that the application is opened with, from its arguments on Windows and Linux
+  and from the events of macOS, and with `single-instance` a second launch gives them to the running instance
+  (`OpenedTypesBuildItem` of the SPI gives the toolkits the extensions, the schemes and the identifier).
+- Automatic updates of the MSIX package (an App Installer file, `quarkus.desktop.packaging.windows.msix.update-url`) and
+  of the AppImage (its update information and `.zsync` file, `quarkus.desktop.packaging.linux.appimage.update-information`).
 - Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
   native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
 

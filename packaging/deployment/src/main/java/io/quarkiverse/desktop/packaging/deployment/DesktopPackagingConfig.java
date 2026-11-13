@@ -124,6 +124,22 @@ public interface DesktopPackagingConfig {
     Map<String, String> tools();
 
     /**
+     * The types of files that the application opens, by name ({@code document}) : the packages register the
+     * application for their extensions, so that the file managers open the files with it. On Windows and Linux the
+     * application is then started with the file as an argument, on macOS it gets the file as an event : Desktop AWT and
+     * Desktop SWT fire an {@code OpenRequest} with it, in both cases.
+     */
+    @ConfigDocMapKey("type")
+    Map<String, FileType> fileTypes();
+
+    /**
+     * The URL schemes of the application ({@code acme} for the URLs {@code acme://...}) : the packages register the
+     * application for them, so that the browsers and the other applications open these URLs with it, as they open the
+     * files of {@code file-types}.
+     */
+    Optional<List<@WithConverter(TrimmedStringConverter.class) String>> urlSchemes();
+
+    /**
      * The packages of Windows.
      */
     Windows windows();
@@ -142,6 +158,34 @@ public interface DesktopPackagingConfig {
      * The application image of JVM mode.
      */
     Jvm jvm();
+
+    /**
+     * A type of files that the application opens.
+     */
+    interface FileType {
+
+        /**
+         * The extensions of the files, without their dot ({@code acme}).
+         */
+        List<@WithConverter(TrimmedStringConverter.class) String> extensions();
+
+        /**
+         * The MIME type of the files, which Linux knows the files by. Defaults to
+         * {@code application/x-<package name>-<type>}.
+         */
+        Optional<String> mimeType();
+
+        /**
+         * The description of the type, which the file managers show. Defaults to the name of the application followed
+         * by the name of the type.
+         */
+        Optional<String> description();
+
+        /**
+         * The icon of the files, a square PNG file of 256 pixels or more. Defaults to the icon of the application.
+         */
+        Optional<String> icon();
+    }
 
     /**
      * The packages of Windows.
@@ -249,6 +293,21 @@ public interface DesktopPackagingConfig {
          */
         @WithDefault("10.0.17763.0")
         String minVersion();
+
+        /**
+         * The URL of the directory where the MSIX package is published ({@code https://acme.org/downloads}) : the build
+         * then writes an App Installer file next to the package ({@code <name>.appinstaller}), which Windows installs the
+         * package from, and with which it updates the application when that directory has a new version. Publish both
+         * files in that directory, and give the users the URL of the App Installer file.
+         */
+        Optional<String> updateUrl();
+
+        /**
+         * How often Windows looks for a new version of an application installed from the App Installer file, in hours,
+         * when it starts : {@code 0} at every start.
+         */
+        @WithDefault("24")
+        int updateHours();
     }
 
     /**
@@ -547,6 +606,14 @@ public interface DesktopPackagingConfig {
          * {@code appimagetool} downloads the latest runtime at each build.
          */
         Optional<String> runtimeFile();
+
+        /**
+         * The update information of the AppImage, which the AppImage updaters (AppImageUpdate, AppImageLauncher) read
+         * to download a new version : {@code gh-releases-zsync|<owner>|<repository>|latest|<name>-*-<arch>.AppImage.zsync}
+         * for the releases of GitHub, or {@code zsync|<URL of the .zsync file>}. The build then writes the
+         * {@code .zsync} file next to the AppImage (with {@code zsyncmake}), to publish with it.
+         */
+        Optional<String> updateInformation();
     }
 
     /**

@@ -755,7 +755,8 @@ of the JDK; without an observer of `PreferencesEvent`, the Preferences item is d
 <2> The files opened with the application (from the Finder, or dropped on its Dock icon), including the file that
 started it: the JDK keeps them until the handler is installed, and the extension installs it just before firing
 `DesktopStartupEvent`, so they are fired once the main window is created. `PrintFilesEvent` is the same for printing.
-<3> A URL of a scheme of the application (`myapp://...`).
+<3> A URL of a scheme of the application (`myapp://...`). To get the files and URLs on every platform, observe
+`OpenRequest` instead (see <<open-requests>>).
 <4> The Dock icon clicked while the application runs (for instance with no window visible, see
 `quarkus.desktop.awt.exit-on-last-window-closed`).
 <5> Quit in the application menu, Cmd-Q, Quit in the Dock, a logout or a shutdown.
@@ -794,6 +795,86 @@ is shown.
 information property list of an application bundle declaring the document types (`CFBundleDocumentTypes`) and the URL
 schemes (`CFBundleURLTypes`): `quarkus.desktop.awt.macos.info-plist` does not declare them, write the `Info.plist` of the
 bundle.
+
+[[open-requests]]
+== Opened files and URLs
+
+The packages of the xref:packaging.adoc[Desktop Packaging extension] register the application for file types and URL
+schemes (`quarkus.desktop.packaging.file-types` and `url-schemes`). Observe `OpenRequest` to get the files and URLs
+that the application is asked to open, on every platform: the observers run on the event dispatch thread, after
+`DesktopStartupEvent`, so the main window exists.
+
+[source,java]
+----
+import java.awt.Frame;
+
+import io.quarkiverse.desktop.awt.OpenRequest;
+
+@Singleton
+public class Documents {
+
+    @Inject
+    Instance<MainWindow> main;
+
+    void open(@Observes OpenRequest request) {
+        MainWindow window = main.get();
+        request.files().forEach(window::openDocument); // <1>
+        request.uris().forEach(window::openLink); // <2>
+        if (request.source() == OpenRequest.Source.ANOTHER_LAUNCH) { // <3>
+            window.setExtendedState(window.getExtendedState() & ~Frame.ICONIFIED);
+            window.toFront();
+            window.requestFocus();
+        }
+    }
+}
+----
+<1> The files, as absolute `Path`s.
+<2> The URLs of the schemes of the application (`acme://...`), as `URI`s.
+<3> A second launch of the application (single instance, see below), maybe without files nor URLs: the user started
+it again. Bring the window to front. Windows may only flash the taskbar button instead of activating the window of a
+process that is not in the foreground.
+
+Where the requests come from (`request.source()`):
+
+* `LAUNCH`, *the program arguments*: on Windows and Linux, the system starts the application with the file or the URL as
+an argument (`"%1"` on Windows, `%F` or `%U` in the desktop entry on Linux, where a local file may arrive as a `file://`
+URI). An argument is a file to open when it names an existing regular file of one of the file types (its extension,
+ignoring the case), or is the `file:` URI of one, and a URL to open when its scheme is one of the URL schemes. The
+other arguments are left to the application (`@CommandLineArguments`, the `@QuarkusMain`). Without the Desktop
+Packaging extension, no argument is taken. The request is fired once, when the arguments name files or URLs.
+* `SYSTEM`, *macOS*: the Finder and the Dock send Apple Events, at launch and while the application runs. The extension
+installs the handlers of `java.awt.Desktop` for `OpenRequest` too, and fires both events when the application also
+observes `OpenFilesEvent` or `OpenURIEvent` (see <<desktop-events>>).
+* `ANOTHER_LAUNCH`, *the single instance*: see below.
+
+=== Single instance
+
+With `quarkus.desktop.awt.single-instance=true`, the application runs once per user: a second launch, while the
+application runs, gives its files and URLs to the running instance, which fires an `OpenRequest` of source
+`ANOTHER_LAUNCH` (maybe empty), and exits with the code 0 before its user interface starts. The running instance
+decides what to do: open them, bring its window to front.
+
+[source,properties]
+----
+quarkus.desktop.awt.single-instance=true
+----
+
+How it works:
+
+* The running instance holds an exclusive lock on a file of the user for its whole life, and listens on the loopback
+interface (`127.0.0.1`, an ephemeral port). It writes the port and a random token into a file readable by the user only.
+The files are in the temporary directory (per user on Windows and macOS), on Linux in `$XDG_RUNTIME_DIR` when it is
+set, and are named after a hash of the identifier of the application (`quarkus.desktop.packaging.identifier`, else
+`quarkus.application.name`) and of the user name: two applications, or two users, do not share them.
+* A second launch does not get the lock: it sends the token and its files and URLs, waits for the answer, and stops
+(`Quarkus.asyncExit(0)`). Its `StartupEvent` observers still run: keep the work that must not run twice in the user
+interface. The connections without the token are ignored.
+* When the running instance cannot be reached within a few seconds (it hangs, or another version holds the lock), the
+second launch starts as usual and logs a warning.
+* Only in production: in dev mode, where the restarts of the application run in the same JVM, the application would
+take the launches of the installed one, and the tests start many applications. The property is ignored there.
+* macOS starts a bundle once anyway, and sends the files of the next opens to the running application (`SYSTEM`):
+the single instance matters for the launches of the executable itself (a terminal, a script).
 
 [[dev-mode]]
 == Dev mode

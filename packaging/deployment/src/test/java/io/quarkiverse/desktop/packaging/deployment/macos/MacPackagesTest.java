@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 import javax.xml.parsers.DocumentBuilderFactory;
 
@@ -25,8 +27,15 @@ import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
+import org.xml.sax.ErrorHandler;
+import org.xml.sax.InputSource;
+import org.xml.sax.SAXParseException;
 
+import io.quarkiverse.desktop.packaging.deployment.AppInfo;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
+import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
 import io.quarkiverse.desktop.packaging.deployment.TestConfig;
 import io.quarkiverse.desktop.packaging.deployment.Tools;
@@ -166,7 +175,7 @@ class MacPackagesTest {
                 "macos.info-plist.NSCameraUsageDescription", "Scans <documents>",
                 "macos.info-plist.NSMicrophoneUsageDescription", "Records notes",
                 "macos.info-plist.NSHighResolutionCapable", "false", "macos.info-plist.LSUIElement", "true"));
-        String withEntries = MacBundle.jvmInfoPlist(plist, config.macos());
+        String withEntries = MacBundle.jvmInfoPlist(plist, TestConfig.app(config), config.macos());
         Map<String, String> entries = entries(withEntries);
         assertEquals("13.0", entries.get("LSMinimumSystemVersion"));
         assertEquals("Scans <documents>", entries.get("NSCameraUsageDescription"));
@@ -193,17 +202,244 @@ class MacPackagesTest {
         // an entry of info-plist replaces the minimum version of macOS
         DesktopPackagingConfig minimum = TestConfig.of(Map.of("macos.minimum-system-version", "13.0",
                 "macos.info-plist.LSMinimumSystemVersion", "14.0"));
-        assertEquals("14.0", entries(MacBundle.jvmInfoPlist(plist, minimum.macos())).get("LSMinimumSystemVersion"));
+        assertEquals("14.0",
+                entries(MacBundle.jvmInfoPlist(plist, TestConfig.app(minimum), minimum.macos())).get("LSMinimumSystemVersion"));
         // without entries, the property list of jpackage as it is
-        assertSame(plist, MacBundle.jvmInfoPlist(plist, TestConfig.defaults().macos()));
+        assertSame(plist, MacBundle.jvmInfoPlist(plist, TestConfig.app(TestConfig.defaults()), TestConfig.defaults().macos()));
         // an array or a dictionary cannot be replaced
         DesktopPackagingConfig types = TestConfig.of(Map.of("macos.info-plist.CFBundleDocumentTypes", "none"));
         String withArray = plist.replace(" </dict>", "  <key>CFBundleDocumentTypes</key>\n  <array>\n  </array>\n </dict>");
         PackagingException array = assertThrows(PackagingException.class,
-                () -> MacBundle.jvmInfoPlist(withArray, types.macos()));
+                () -> MacBundle.jvmInfoPlist(withArray, TestConfig.app(types), types.macos()));
         assertTrue(array.getMessage().contains("quarkus.desktop.packaging.macos.info-plist.CFBundleDocumentTypes"),
                 array.getMessage());
-        assertThrows(PackagingException.class, () -> MacBundle.jvmInfoPlist("<plist version=\"1.0\"/>", config.macos()));
+        assertThrows(PackagingException.class,
+                () -> MacBundle.jvmInfoPlist("<plist version=\"1.0\"/>", TestConfig.app(config), config.macos()));
+    }
+
+    /**
+     * The document type definition of the property lists ({@code PropertyList-1.0.dtd}).
+     */
+    private static final String PLIST_DTD = """
+            <!ENTITY % plistObject "(array | data | date | dict | real | integer | string | true | false )" >
+            <!ELEMENT plist %plistObject;>
+            <!ATTLIST plist version CDATA "1.0" >
+            <!ELEMENT array (%plistObject;)*>
+            <!ELEMENT dict (key, %plistObject;)*>
+            <!ELEMENT key (#PCDATA)>
+            <!ELEMENT string (#PCDATA)>
+            <!ELEMENT data (#PCDATA)>
+            <!ELEMENT date (#PCDATA)>
+            <!ELEMENT true EMPTY>
+            <!ELEMENT false EMPTY>
+            <!ELEMENT real (#PCDATA)>
+            <!ELEMENT integer (#PCDATA)>
+            """;
+
+    /**
+     * A property list, validated with its document type definition : its dictionaries as maps, its arrays as lists, its
+     * strings as strings and its Booleans as Booleans.
+     *
+     * @throws Exception when the property list is not valid
+     */
+    static Object parse(String plist) throws Exception {
+        DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+        factory.setValidating(true);
+        factory.setIgnoringElementContentWhitespace(true);
+        var builder = factory.newDocumentBuilder();
+        builder.setEntityResolver((publicId, systemId) -> new InputSource(new StringReader(PLIST_DTD)));
+        List<SAXParseException> errors = new ArrayList<>();
+        builder.setErrorHandler(new ErrorHandler() {
+            @Override
+            public void warning(SAXParseException exception) {
+                errors.add(exception);
+            }
+
+            @Override
+            public void error(SAXParseException exception) {
+                errors.add(exception);
+            }
+
+            @Override
+            public void fatalError(SAXParseException exception) throws SAXParseException {
+                throw exception;
+            }
+        });
+        Document document = builder.parse(new ByteArrayInputStream(plist.getBytes(StandardCharsets.UTF_8)));
+        assertEquals(List.of(), errors.stream().map(SAXParseException::getMessage).toList(), plist);
+        return value(children(document.getDocumentElement()).get(0));
+    }
+
+    private static List<Element> children(Element element) {
+        List<Element> children = new ArrayList<>();
+        NodeList nodes = element.getChildNodes();
+        for (int i = 0; i < nodes.getLength(); i++) {
+            if (nodes.item(i) instanceof Element child) {
+                children.add(child);
+            }
+        }
+        return children;
+    }
+
+    private static Object value(Element element) {
+        return switch (element.getTagName()) {
+            case "dict" -> {
+                Map<String, Object> dict = new LinkedHashMap<>();
+                List<Element> children = children(element);
+                for (int i = 0; i < children.size(); i += 2) {
+                    assertTrue(dict.put(children.get(i).getTextContent(), value(children.get(i + 1))) == null,
+                            "a key twice : " + children.get(i).getTextContent());
+                }
+                yield dict;
+            }
+            case "array" -> children(element).stream().map(MacPackagesTest::value).toList();
+            case "true", "false" -> Boolean.valueOf(element.getTagName());
+            default -> element.getTextContent();
+        };
+    }
+
+    /**
+     * An application that opens the files of a type, {@code document}, with an icon or not, and the URLs of schemes.
+     */
+    static AppInfo withAssociations(AppInfo app, Optional<Path> icon, List<String> schemes) {
+        Associations.FileType document = new Associations.FileType("document", List.of("acme", "acmex"),
+                "application/x-acme-editor-document", "Acme Editor <document>", icon);
+        return app.withAssociations(new Associations(List.of(document), schemes));
+    }
+
+    /**
+     * The information property list of an application that opens files and URLs : the types of documents, their
+     * declarations and the URL schemes, in the bundle of a native executable and in the one of {@code jpackage}.
+     */
+    @Test
+    void theFileTypesAndUrlSchemesOfTheBundle() throws Exception {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        AppInfo app = withAssociations(TestConfig.app(config), Optional.of(Path.of("document.png")),
+                List.of("acme", "acme-editor"));
+        Map<?, ?> expectedDocument = Map.of("CFBundleTypeName", "Acme Editor <document>", "CFBundleTypeRole", "Editor",
+                "LSHandlerRank", "Owner", "LSItemContentTypes", List.of("org.acme.AcmeEditor.document"),
+                "CFBundleTypeIconFile", "org.acme.AcmeEditor.document.icns");
+        Map<?, ?> expectedDeclaration = Map.of("UTTypeIdentifier", "org.acme.AcmeEditor.document", "UTTypeDescription",
+                "Acme Editor <document>", "UTTypeConformsTo", List.of("public.data"), "UTTypeIconFile",
+                "org.acme.AcmeEditor.document.icns", "UTTypeTagSpecification", Map.of("public.filename-extension",
+                        List.of("acme", "acmex"), "public.mime-type", "application/x-acme-editor-document"));
+        Map<?, ?> expectedUrls = Map.of("CFBundleURLName", "org.acme.AcmeEditor", "CFBundleURLSchemes",
+                List.of("acme", "acme-editor"));
+
+        String nativePlist = MacBundle.infoPlist(app, config.macos(), "Acme Editor", "Acme-Editor.icns");
+        Map<?, ?> entries = (Map<?, ?>) parse(nativePlist);
+        assertEquals(List.of(expectedDocument), entries.get("CFBundleDocumentTypes"));
+        assertEquals(List.of(expectedDeclaration), entries.get("UTExportedTypeDeclarations"));
+        assertEquals(List.of(expectedUrls), entries.get("CFBundleURLTypes"));
+        assertEquals("org.acme.AcmeEditor", entries.get("CFBundleIdentifier"));
+        assertTrue(nativePlist.contains("    <key>CFBundleURLTypes</key>\n    <array>\n        <dict>\n"
+                + "            <key>CFBundleURLName</key>\n            <string>org.acme.AcmeEditor</string>\n"), nativePlist);
+        assertTrue(nativePlist.endsWith("        </dict>\n    </array>\n</dict>\n</plist>\n"), nativePlist);
+
+        String jvmPlist = String.join("\n", "<?xml version=\"1.0\" ?>",
+                "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"https://www.apple.com/DTDs/PropertyList-1.0.dtd\">",
+                "<plist version=\"1.0\">", " <dict>", "  <key>CFBundleName</key>", "  <string>Acme Editor</string>",
+                " </dict>", "</plist>", "");
+        String withEntries = MacBundle.jvmInfoPlist(jvmPlist, app, config.macos());
+        Map<?, ?> jvmEntries = (Map<?, ?>) parse(withEntries);
+        assertEquals(List.of(expectedDocument), jvmEntries.get("CFBundleDocumentTypes"));
+        assertEquals(List.of(expectedDeclaration), jvmEntries.get("UTExportedTypeDeclarations"));
+        assertEquals(List.of(expectedUrls), jvmEntries.get("CFBundleURLTypes"));
+        assertEquals("Acme Editor", jvmEntries.get("CFBundleName"));
+        assertTrue(withEntries.contains("  <key>CFBundleURLTypes</key>\n  <array>\n    <dict>\n"
+                + "      <key>CFBundleURLName</key>\n"), withEntries);
+        assertTrue(withEntries.endsWith("    </dict>\n  </array>\n </dict>\n</plist>\n"), withEntries);
+
+        // without icon, the icon of the application ; without URL schemes, no URL types
+        AppInfo withoutIcon = withAssociations(TestConfig.app(config), Optional.empty(), List.of());
+        Map<?, ?> other = (Map<?, ?>) parse(MacBundle.infoPlist(withoutIcon, config.macos(), "Acme Editor",
+                "Acme-Editor.icns"));
+        Map<?, ?> document = (Map<?, ?>) ((List<?>) other.get("CFBundleDocumentTypes")).get(0);
+        assertFalse(document.containsKey("CFBundleTypeIconFile"), document.toString());
+        assertFalse(((Map<?, ?>) ((List<?>) other.get("UTExportedTypeDeclarations")).get(0))
+                .containsKey("UTTypeIconFile"));
+        assertFalse(other.containsKey("CFBundleURLTypes"));
+        // URL schemes only
+        AppInfo schemes = TestConfig.app(config).withAssociations(new Associations(List.of(), List.of("acme")));
+        Map<?, ?> schemeEntries = (Map<?, ?>) parse(MacBundle.jvmInfoPlist(jvmPlist, schemes, config.macos()));
+        assertEquals(List.of(Map.of("CFBundleURLName", "org.acme.AcmeEditor", "CFBundleURLSchemes", List.of("acme"))),
+                schemeEntries.get("CFBundleURLTypes"));
+        assertFalse(schemeEntries.containsKey("CFBundleDocumentTypes"));
+
+        // an entry of info-plist replaces them
+        DesktopPackagingConfig replaced = TestConfig.of(Map.of("macos.info-plist.CFBundleURLTypes", "none"));
+        String replacedPlist = MacBundle.infoPlist(app, replaced.macos(), "Acme Editor", "Acme-Editor.icns");
+        assertEquals("none", ((Map<?, ?>) parse(replacedPlist)).get("CFBundleURLTypes"));
+        assertEquals("none", ((Map<?, ?>) parse(MacBundle.jvmInfoPlist(jvmPlist, app, replaced.macos())))
+                .get("CFBundleURLTypes"));
+        // jpackage wrote its own file associations
+        String withTypes = jvmPlist.replace(" </dict>", "  <key>CFBundleDocumentTypes</key>\n  <array>\n  </array>\n"
+                + " </dict>");
+        assertThrows(PackagingException.class, () -> MacBundle.jvmInfoPlist(withTypes, app, config.macos()));
+    }
+
+    /**
+     * Without file types and URL schemes, the information property list of the bundle of a native executable is as it
+     * was before them, byte for byte, and valid.
+     */
+    @Test
+    void theInformationPropertyListWithoutAssociations() throws Exception {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        String plist = MacBundle.infoPlist(TestConfig.app(config), config.macos(), "Acme Editor", "Acme-Editor.icns");
+        assertEquals("""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+                <plist version="1.0">
+                <dict>
+                    <key>CFBundleDevelopmentRegion</key>
+                    <string>en</string>
+                    <key>CFBundleExecutable</key>
+                    <string>Acme Editor</string>
+                    <key>CFBundleIconFile</key>
+                    <string>Acme-Editor.icns</string>
+                    <key>CFBundleIdentifier</key>
+                    <string>org.acme.AcmeEditor</string>
+                    <key>CFBundleInfoDictionaryVersion</key>
+                    <string>6.0</string>
+                    <key>CFBundleName</key>
+                    <string>Acme Editor</string>
+                    <key>CFBundleDisplayName</key>
+                    <string>Acme Editor</string>
+                    <key>CFBundlePackageType</key>
+                    <string>APPL</string>
+                    <key>CFBundleShortVersionString</key>
+                    <string>1.2.3</string>
+                    <key>CFBundleVersion</key>
+                    <string>1.2.3</string>
+                    <key>LSApplicationCategoryType</key>
+                    <string>public.app-category.utilities</string>
+                    <key>NSHighResolutionCapable</key>
+                    <true/>
+                    <key>NSSupportsAutomaticGraphicsSwitching</key>
+                    <true/>
+                </dict>
+                </plist>
+                """, plist);
+        assertEquals("org.acme.AcmeEditor", ((Map<?, ?>) parse(plist)).get("CFBundleIdentifier"));
+        // the validation finds a key without value
+        assertThrows(AssertionError.class, () -> parse(plist.replace("    <string>en</string>\n", "")));
+    }
+
+    /**
+     * The icons of the file types that have one, in the resources of the bundle.
+     */
+    @Test
+    void theIconsOfTheFileTypes(@TempDir Path directory) throws IOException {
+        Path icon = IconSet.generic().writePng(directory.resolve("document.png"), 64);
+        AppInfo app = withAssociations(TestConfig.app(TestConfig.defaults()), Optional.of(icon), List.of());
+        Path resources = directory.resolve("Resources");
+        MacBundle.writeTypeIcons(app, resources);
+        byte[] icns = Files.readAllBytes(resources.resolve("org.acme.AcmeEditor.document.icns"));
+        assertEquals("icns", new String(icns, 0, 4, StandardCharsets.US_ASCII));
+        assertEquals(List.of(Path.of("org.acme.AcmeEditor.document.icns")), FileTrees.files(resources));
+        MacBundle.writeTypeIcons(withAssociations(TestConfig.app(TestConfig.defaults()), Optional.empty(), List.of()),
+                directory.resolve("none"));
+        assertFalse(Files.exists(directory.resolve("none")));
     }
 
     /**

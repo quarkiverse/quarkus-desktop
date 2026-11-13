@@ -204,6 +204,10 @@ public final class RpmPackager implements Packager {
             spec.append("/usr/share/icons/hicolor/").append(size).append('x').append(size).append("/apps/").append(name)
                     .append(".png\n");
         }
+        // the MIME types of the file types, which the file triggers of shared-mime-info register
+        for (String file : LinuxDesktop.mimeFiles(app, name, IconSet.LINUX_SIZES)) {
+            spec.append("/usr/share/").append(file).append('\n');
+        }
         if (app.licenseFile().isPresent()) {
             spec.append("%dir /usr/share/licenses/").append(name).append('\n');
             spec.append("%license /usr/share/licenses/").append(name).append("/LICENSE\n");

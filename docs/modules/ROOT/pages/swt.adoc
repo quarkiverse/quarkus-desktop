@@ -223,7 +223,8 @@ public class OpenedDocuments {
 ----
 
 On macOS, the URLs opened with the application (a URL scheme of its bundle) never reach the `SWT.OpenUrl` listeners
-with SWT 3.132.0 and 3.135.0, a bug of SWT (see <<macos>>).
+with SWT 3.132.0 and 3.135.0, a bug of SWT (see <<macos>>). To get the files and URLs on every platform, the program
+arguments included, observe `OpenRequest` instead (see <<open-requests>>).
 
 `@Priority` orders several observers. Keep them short, they delay the first shell: load the data on another thread (see
 <<background-work>>).
@@ -245,6 +246,88 @@ environment"). In a native executable, the error is an `UnsatisfiedLinkError`.
 
 The build logs a warning for an `@ObservesAsync` observer of `SwtStartupEvent`, which is never notified. In tests, the
 user interface does not run unless it is enabled (see <<testing>>).
+
+[[open-requests]]
+=== Opened files and URLs
+
+The packages of the xref:packaging.adoc[Desktop Packaging extension] register the application for file types and URL
+schemes (`quarkus.desktop.packaging.file-types` and `url-schemes`). Observe `OpenRequest` to get the files and URLs
+that the application is asked to open, on every platform: the observers run on the user interface thread, after
+`SwtStartupEvent`, so the main shell exists.
+
+[source,java]
+----
+import io.quarkiverse.desktop.swt.OpenRequest;
+
+@Singleton
+public class Documents {
+
+    @Inject
+    MainShell main;
+
+    void open(@Observes OpenRequest request) {
+        request.files().forEach(main::openDocument); // <1>
+        request.uris().forEach(main::openLink); // <2>
+        if (request.source() == OpenRequest.Source.ANOTHER_LAUNCH) { // <3>
+            Shell shell = main.shell();
+            shell.setMinimized(false);
+            shell.forceActive();
+        }
+    }
+}
+----
+<1> The files, as absolute `Path`s.
+<2> The URLs of the schemes of the application (`acme://...`), as `URI`s.
+<3> A second launch of the application (single instance, see below), maybe without files nor URLs: the user started
+it again. Bring the shell to front. Windows may only flash the taskbar button instead of activating the shell of a
+process that is not in the foreground.
+
+Where the requests come from (`request.source()`):
+
+* `LAUNCH`, *the program arguments*: on Windows and Linux, the system starts the application with the file or the URL as
+an argument (`"%1"` on Windows, `%F` or `%U` in the desktop entry on Linux, where a local file may arrive as a `file://`
+URI). An argument is a file to open when it names an existing regular file of one of the file types (its extension,
+ignoring the case), or is the `file:` URI of one, and a URL to open when its scheme is one of the URL schemes. The
+other arguments are left to the application (`@CommandLineArguments`, the `@QuarkusMain`). Without the Desktop
+Packaging extension, no argument is taken. The request is fired once, when the arguments name files or URLs.
+* `SYSTEM`, *the `SWT.OpenDocument` and `SWT.OpenUrl` events of the `Display`*: macOS sends the files opened from the
+Finder or the Dock, at launch and while the application runs (never the URLs, a bug of SWT, see <<macos>>). The
+extension adds its listeners to the `Display` before `SwtStartupEvent`, and fires the events that came before once the
+observers of `SwtStartupEvent` returned, after the program arguments. The listeners of the application get them too.
+* `ANOTHER_LAUNCH`, *the single instance*: see below.
+
+The build logs a warning for an `@ObservesAsync` observer of `OpenRequest`, which is never notified.
+
+[[single-instance]]
+==== Single instance
+
+With `quarkus.desktop.swt.single-instance=true`, the application runs once per user: a second launch, while the
+application runs, gives its files and URLs to the running instance, which fires an `OpenRequest` of source
+`ANOTHER_LAUNCH` (maybe empty) on its user interface thread, and exits with the code 0 before its user interface starts.
+The running instance decides what to do: open them, bring its shell to front.
+
+[source,properties]
+----
+quarkus.desktop.swt.single-instance=true
+----
+
+How it works:
+
+* The running instance holds an exclusive lock on a file of the user for its whole life, and listens on the loopback
+interface (`127.0.0.1`, an ephemeral port). It writes the port and a random token into a file readable by the user only.
+The files are in the temporary directory (per user on Windows and macOS), on Linux in `$XDG_RUNTIME_DIR` when it is
+set, and are named after a hash of the identifier of the application (`quarkus.desktop.packaging.identifier`, else
+`quarkus.application.name`) and of the user name: two applications, or two users, do not share them.
+* A second launch does not get the lock, before the `StartupEvent` observers: it sends the token and its files and URLs,
+waits for the answer, and stops (`Quarkus.asyncExit(0)`, `SwtLifecycle.run()` returns at once). Its `StartupEvent`
+observers still run, and the tasks they queue for the user interface thread are rejected: keep the work that must not
+run twice in the user interface. The connections without the token are ignored.
+* When the running instance cannot be reached within a few seconds (it hangs, or another version holds the lock), the
+second launch starts as usual and logs a warning.
+* Only in production: in dev mode, where the restarts of the application run in the same JVM, the application would
+take the launches of the installed one, and the tests start many applications. The property is ignored there.
+* macOS starts a bundle once anyway, and sends the files of the next opens to the running application (`SYSTEM`):
+the single instance matters for the launches of the executable itself (a terminal, a script).
 
 [[quarkus-main]]
 === A @QuarkusMain
@@ -992,7 +1075,7 @@ parked for AWT (`quarkus.desktop.awt.macos.park-main-thread` is ignored): SWT ow
 application through Quarkus, and so may a `SIGTERM` or a `SIGINT` (see <<quit-requests>>). The other items of the
 application menu (About, Settings) are SWT menu items (`Display.getSystemMenu()`, `SWT.ID_ABOUT` and
 `SWT.ID_PREFERENCES`: verified on macOS), and the files opened with the application are `SWT.OpenDocument` events of
-the `Display` (see <<startup>>), not CDI events. The URLs opened with the application (a URL scheme of the bundle) never
+the `Display` (see <<startup>>), which the extension also fires as `OpenRequest` CDI events (see <<open-requests>>). The URLs opened with the application (a URL scheme of the bundle) never
 reach `SWT.OpenUrl` with SWT 3.132.0 and 3.135.0: SWT registers its delegate method as `application:openUrls:`, while
 AppKit calls `application:openURLs:` (a bug of SWT).
 * An application bundle that signs its content keeps the native libraries of SWT next to the executable

@@ -303,6 +303,111 @@ endif::add-copy-button-to-env-var[]
 |Map<String,String>
 |
 
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-extensions]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-extensions[`+++quarkus.desktop.packaging.file-types."type".extensions+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.file-types."type".extensions+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The extensions of the files, without their dot (`acme`).
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__EXTENSIONS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__EXTENSIONS+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|required icon:exclamation-circle[title=Configuration property is required]
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-mime-type]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-mime-type[`+++quarkus.desktop.packaging.file-types."type".mime-type+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.file-types."type".mime-type+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The MIME type of the files, which Linux knows the files by. Defaults to `application/x-<package name>-<type>`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__MIME_TYPE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__MIME_TYPE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-description]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-description[`+++quarkus.desktop.packaging.file-types."type".description+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.file-types."type".description+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The description of the type, which the file managers show. Defaults to the name of the application followed by the name of the type.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__DESCRIPTION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__DESCRIPTION+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-icon]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-file-types-type-icon[`+++quarkus.desktop.packaging.file-types."type".icon+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.file-types."type".icon+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The icon of the files, a square PNG file of 256 pixels or more. Defaults to the icon of the application.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__ICON+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_FILE_TYPES__TYPE__ICON+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-url-schemes]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-url-schemes[`+++quarkus.desktop.packaging.url-schemes+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.url-schemes+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The URL schemes of the application (`acme` for the URLs `acme://...`) : the packages register the application for them, so that the browsers and the other applications open these URLs with it, as they open the files of `file-types`.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_URL_SCHEMES+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_URL_SCHEMES+++`
+endif::add-copy-button-to-env-var[]
+--
+|list of string
+|
+
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-executable-resources]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-executable-resources[`+++quarkus.desktop.packaging.windows.executable-resources+++`]##
 ifdef::add-copy-button-to-config-props[]
 config_property_copy_button:+++quarkus.desktop.packaging.windows.executable-resources+++[]
@@ -554,6 +659,48 @@ endif::add-copy-button-to-env-var[]
 --
 |string
 |`+++10.0.17763.0+++`
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-update-url]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-update-url[`+++quarkus.desktop.packaging.windows.msix.update-url+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.update-url+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The URL of the directory where the MSIX package is published (`https://acme.org/downloads`) : the build then writes an App Installer file next to the package (`<name>.appinstaller`), which Windows installs the package from, and with which it updates the application when that directory has a new version. Publish both files in that directory, and give the users the URL of the App Installer file.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_UPDATE_URL+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_UPDATE_URL+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-update-hours]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-msix-update-hours[`+++quarkus.desktop.packaging.windows.msix.update-hours+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.windows.msix.update-hours+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+How often Windows looks for a new version of an application installed from the App Installer file, in hours, when it starts : `0` at every start.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_UPDATE_HOURS+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_WINDOWS_MSIX_UPDATE_HOURS+++`
+endif::add-copy-button-to-env-var[]
+--
+|int
+|`+++24+++`
 
 a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-file]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-windows-sign-certificate-file[`+++quarkus.desktop.packaging.windows.sign.certificate-file+++`]##
 ifdef::add-copy-button-to-config-props[]
@@ -1201,6 +1348,27 @@ Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINU
 endif::add-copy-button-to-env-var[]
 ifndef::add-copy-button-to-env-var[]
 Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_RUNTIME_FILE+++`
+endif::add-copy-button-to-env-var[]
+--
+|string
+|
+
+a|icon:lock[title=Fixed at build time] [[quarkus-desktop-packaging_quarkus-desktop-packaging-linux-appimage-update-information]] [.property-path]##link:#quarkus-desktop-packaging_quarkus-desktop-packaging-linux-appimage-update-information[`+++quarkus.desktop.packaging.linux.appimage.update-information+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.packaging.linux.appimage.update-information+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+The update information of the AppImage, which the AppImage updaters (AppImageUpdate, AppImageLauncher) read to download a new version : `gh-releases-zsync++\|++<owner>++\|++<repository>++\|++latest++\|++<name>-++*++-<arch>.AppImage.zsync` for the releases of GitHub, or `zsync++\|++<URL of the .zsync file>`. The build then writes the `.zsync` file next to the AppImage (with `zsyncmake`), to publish with it.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_UPDATE_INFORMATION+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_PACKAGING_LINUX_APPIMAGE_UPDATE_INFORMATION+++`
 endif::add-copy-button-to-env-var[]
 --
 |string

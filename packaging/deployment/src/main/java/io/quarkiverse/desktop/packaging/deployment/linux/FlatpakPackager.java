@@ -59,6 +59,8 @@ public final class FlatpakPackager implements Packager {
         FileTrees.write(files.resolve("share/applications").resolve(id + ".desktop"),
                 LinuxDesktop.desktopEntry(app, context.config().linux(), name, id));
         LinuxDesktop.icons(context.icons(), files.resolve("share/icons/hicolor"), id, 64, 128, 256, 512);
+        // share/mime/packages/<id>.xml and the icons named after the ID, which flatpak build-export exports
+        LinuxDesktop.writeMimeTypes(app, files.resolve("share"), id, 64, 128, 256, 512);
         FileTrees.write(files.resolve("share/metainfo").resolve(id + ".metainfo.xml"),
                 LinuxDesktop.metainfo(app, id, id + ".desktop"));
         FileTrees.normalizePermissions(build);

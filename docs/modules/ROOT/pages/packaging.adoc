@@ -8,7 +8,7 @@ The `quarkus-desktop-packaging` extension packages a desktop application as the 
 Linux, at the end of the build: from its native executable or, in JVM mode, from its jar with a Java runtime. It does
 not depend on a user interface toolkit: it packages AWT, Swing, SWT and JavaFX applications alike, with or without the
 other extensions of Quarkus Desktop. Its tests package an application without a user interface; with one, only a native
-Swing application in an MSI package has been verified (see <<verification>>).
+Swing application in an MSI package has been verified.
 
 [cols="1,1,2,3"]
 |===
@@ -69,7 +69,7 @@ only builds once its license is accepted (`wix eula accept wix7`, once per user 
 
 |`snap`
 |Linux
-|A snap (not verified yet, see <<verification>>)
+|A snap
 |`snapcraft` (`sudo snap install snapcraft --classic`)
 |===
 
@@ -120,8 +120,8 @@ quarkus.desktop.packaging.formats=msi,exe,dmg,deb,rpm,appimage
 ./mvnw package            # the jar, packaged with a Java runtime
 ----
 
-The packages are in `target/packaging` (`quarkus.desktop.packaging.output-directory`, relative to `target` or
-absolute), the application image in `target/packaging/image`, and the generated files of each format (the WiX source,
+The packages are in `target/packaging` (`build/packaging` with Gradle; `quarkus.desktop.packaging.output-directory`,
+relative to the build directory or absolute), the application image in `target/packaging/image`, and the generated files of each format (the WiX source,
 the Inno Setup script, the spec file...) in `target/packaging/work`. A package is named after the application, its
 version and its architecture, so that the packages of an x64 and an arm64 build can be in the same release
 (`Acme-Editor-1.2.3-x64.msi`, `Acme-Editor-1.2.3-arm64.dmg`, `Acme-Editor-1.2.3-x86_64.AppImage`); the Debian, RPM and
@@ -130,22 +130,6 @@ snap packages follow the conventions of their format (`acme-editor_1.2.3-1_amd64
 version or format stays there until `./mvnw clean`. The formats may also be given on the command line, to package in
 the release build only: `-Dquarkus.desktop.packaging.formats=msi`, in quotes in PowerShell
 (`+"-Dquarkus.desktop.packaging.formats=msi"+`), which splits an unquoted `-D` argument at its first dot.
-
-With Gradle (not verified yet, see <<verification>>), the build directory is `build`: the packages are in
-`build/packaging`. The Quarkus build task of Gradle makes them, but Gradle does not know about them: the files of the
-packages (the icon, the content directory, the license file...) are not among the inputs of the task, nor are the
-packages among its outputs. When only these files change, or when the packages are deleted, the task is up to date, or
-taken from the build cache, and the packages are not built again. Have the build file run the Quarkus build each time
-(`build.gradle.kts`: the package type chooses which of the two tasks runs it):
-
-[source,kotlin]
-----
-listOf("quarkusAppPartsBuild", "quarkusBuild").forEach { name ->
-    tasks.named(name) { outputs.upToDateWhen { false } }
-}
-----
-
-or build the packages with `--rerun-tasks`.
 
 A native executable built in a container (`quarkus.native.container-build=true`) is a Linux executable: on Windows and
 macOS, the extension warns that it packages nothing, as a package is built on its operating system. Build the native
@@ -489,6 +473,67 @@ libraries (`~/.swt`): in a snap, the Desktop SWT extension has SWT extract them 
 `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>` instead, unless `swt.library.path` is set. A native executable built with
 `quarkus.desktop.swt.native-libraries=next-to-executable` loads them from the snap, without extracting them.
 
+[[associations]]
+== File types and URL schemes
+
+The packages register the application for the types of files that it opens and for its URL schemes, so that the file
+managers, the browsers and the other applications open them with it:
+
+[source,properties]
+----
+quarkus.desktop.packaging.file-types.document.extensions=acme,acmex
+quarkus.desktop.packaging.file-types.document.description=Acme document
+quarkus.desktop.packaging.file-types.document.icon=src/main/packaging/document.png
+# acme://...
+quarkus.desktop.packaging.url-schemes=acme
+----
+
+A file type has a name (`document`), its extensions, a MIME type (`application/x-<package name>-<type>` by default),
+a description (the name of the application and the name of the type by default), and an icon (the icon of the
+application by default). Each format registers them its way:
+
+* the MSI package and the setup program: the registry keys of the extensions, of a programmatic identifier per type
+(`<identifier>.<type>`) and of the URL schemes, for the current user or for all users as the package installs, removed
+with the application;
+* the MSIX package: its `windows.fileTypeAssociation` and `windows.protocol` extensions (an extension with a dot, such
+as `tar.gz`, is refused: MSIX takes the last one only);
+* the macOS bundle: `CFBundleDocumentTypes`, `UTExportedTypeDeclarations` (the uniform type identifier
+`<bundle identifier>.<type>`) and `CFBundleURLTypes` of its `Info.plist`, in both modes;
+* the Linux packages: the `MimeType` of the desktop entry (`x-scheme-handler/<scheme>` for the URL schemes), and a
+shared-mime-info file that declares the MIME types of the extensions. The snap has the desktop entry only: its file
+types need MIME types that the system already knows.
+
+On Windows and Linux, the system starts the application with the file or the URL as an argument (a file may be a
+`file://` URL on Linux, which Desktop AWT and Desktop SWT take for the file; Windows may start an MSIX application
+without it). On macOS, it sends the running application an event instead, also when the file starts it.
+Desktop AWT and Desktop SWT receive both, and fire an `OpenRequest` with the files and the URLs on the thread of the user
+interface, after `DesktopStartupEvent` (`SwtStartupEvent`): an argument is a file to open when it names an existing
+file of a registered extension, and a URL to open when its scheme is a registered one; the other arguments are the
+application's own. With `quarkus.desktop.awt.single-instance=true` (`quarkus.desktop.swt.single-instance=true`), a
+second launch gives its files and URLs to the instance that already runs, which fires the `OpenRequest`, and exits, on
+every operating system and in production only (not in dev mode or tests): see
+xref:cdi.adoc[] and xref:swt.adoc[].
+
+[[updates]]
+== Automatic updates
+
+Two formats update the application themselves, from where the packages are published:
+
+* the MSIX package: with `windows.msix.update-url`, the URL of the directory of the packages, the build writes an App
+Installer file next to the package (`<name>-<architecture>.appinstaller`, without the version: Windows reads it again
+at its URL to find the next version, whose file replaces it). Publish both files in that directory, and give the users
+the URL of the App Installer file: Windows installs the package from it, and looks for a new version at the start of
+the application, every `windows.msix.update-hours` hours (24 by default);
+* the AppImage: with `linux.appimage.update-information` (`gh-releases-zsync|acme|editor|latest|Acme-Editor-*-x86_64.AppImage.zsync`
+for the releases of GitHub, or `zsync|https://acme.org/downloads/Acme-Editor-x86_64.AppImage.zsync`), the AppImage
+carries the information, and the build writes its `.zsync` file next to it (with `zsyncmake` of the `zsync` package),
+to publish with it: AppImageUpdate and AppImageLauncher update the AppImage from it.
+
+The Flatpak bundle and the snap are updated by their repositories and stores, and the Debian and RPM packages by the
+repositories of their package managers (apt, dnf), where the extension does not publish them. The MSI package, the
+setup program, the disk image and the installer package have no updates of their own: an application that wants them
+checks a feed of its versions, and downloads and runs the package of the new one.
+
 [[extensions]]
 == For extension authors
 
@@ -513,7 +558,7 @@ which Desktop AWT and Desktop SWT give the application by default.
 
 A job per operating system builds the packages of each of them, as the `packaging` job of the
 https://github.com/quarkiverse/quarkus-desktop/blob/main/.github/workflows/build.yml[build workflow] of this project
-does (it then installs, starts and removes the packages, see <<verification>>):
+does (it then installs, starts and removes the packages):
 
 [source,yaml]
 ----
@@ -555,43 +600,12 @@ its first dot. The Linux packages get the dependencies of the distribution of th
 * No cross-building: each package is built on its operating system, and for the architecture of the native executable
 or, in JVM mode, of the JVM of the build.
 A native executable built in a container is a Linux executable, packaged on Linux only.
-* No file associations, URL schemes or automatic updates yet.
+* A second launch of the application gives its files to the running instance with `single-instance` of Desktop AWT
+and Desktop SWT only.
+* Automatic updates through the App Installer file of the MSIX package, the update information of the AppImage, and
+the stores and repositories only (see <<updates>>).
 * The packages of the application stores (the Microsoft Store, the Mac App Store, Flathub, the Snap Store) need their
 own submission steps, which the extension does not do.
-
-[[verification]]
-== Verification
-
-The `packaging` job of the build workflow (see <<continuous-integration>>) builds the packages of the integration tests,
-whose application has no user interface, in JVM mode (Temurin JDK 25) and as a native executable (GraalVM for JDK 25),
-on the `windows-latest`, `macos-latest` (Apple silicon) and `ubuntu-latest` runners of GitHub. `PackagingIT` checks the
-packages and starts the application image, which prints nothing: a module missing from the Java runtime, or a start or
-stop handler that fails, fails it. Then the job installs each package (it mounts the disk image), starts the
-application and removes the package:
-
-* Windows: the MSI package (WiX 5.0.2), the setup program (Inno Setup 6) and the MSIX package, signed with a
-self-signed certificate. The signatures of the packages and of the installed launcher are checked, and so are the
-shortcut and the entry of the installed programs of the first two; the application of the MSIX package is started with
-the identity of the package. In JVM mode, the MSI package and the setup program of a next version are installed over
-the first ones.
-* macOS: the disk image, and the installer package, which installs the application in `/Applications`. The bundle of
-the native executable has the ad hoc signature of the default. In JVM mode, a self-signed identity signs the bundle as
-a Developer ID certificate does (with the hardened runtime, a secure time stamp and the entitlements of the JVM), and
-the disk image too.
-* Linux: the Debian package (on Ubuntu; in JVM mode, the package of a next version is installed over it), the RPM
-package (in a Fedora container), the AppImage (made by appimagetool 1.9.1), the Flatpak bundle and, in JVM mode, the
-snap (built by Snapcraft in an LXD container, and installed with `--dangerous`, since it is not signed by the store).
-
-Not verified yet:
-
-* the snap of a native executable;
-* signing with Developer ID certificates (the installer package is not signed), and the notarization;
-* the upgrade of the MSIX package, of the RPM package, of the macOS packages, of the AppImage and of the Flatpak bundle;
-* applications with a user interface, beyond a native Swing application in an MSI package on Windows, and JavaFX
-applications;
-* the other architectures: Windows and Linux on arm64, macOS on Intel;
-* Gradle builds;
-* the options that the integration tests and the job do not set.
 
 [[configuration-reference]]
 == Configuration reference

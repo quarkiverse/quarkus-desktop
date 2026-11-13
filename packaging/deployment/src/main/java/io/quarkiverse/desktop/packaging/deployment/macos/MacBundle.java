@@ -28,8 +28,10 @@ import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -159,8 +161,127 @@ public final class MacBundle {
             plist.append("    <key>").append(Xml.escape(bool.getKey())).append("</key>\n");
             plist.append("    <").append(bool.getValue()).append("/>\n");
         }
+        for (Map.Entry<String, String> entry : associationEntries(app, config, "    ").entrySet()) {
+            plist.append("    <key>").append(entry.getKey()).append("</key>\n");
+            plist.append("    ").append(entry.getValue()).append('\n');
+        }
         plist.append("</dict>\n</plist>\n");
         return plist.toString();
+    }
+
+    /**
+     * The uniform type identifier of a file type : the bundle identifier and the name of the type
+     * ({@code org.acme.AcmeEditor.document}), with the characters that such identifiers allow.
+     */
+    public static String typeIdentifier(AppInfo app, Associations.FileType type) {
+        return identifier(app) + "." + type.name();
+    }
+
+    /**
+     * The file name of the icon of the files of a type, in {@code Contents/Resources} : after its identifier.
+     */
+    static String typeIconFile(AppInfo app, Associations.FileType type) {
+        return typeIdentifier(app, type) + ".icns";
+    }
+
+    /**
+     * Writes the icons of the file types that have one in the resources of the bundle ({@link #typeIconFile}).
+     *
+     * @param resources the {@code Contents/Resources} directory of the bundle
+     */
+    public static void writeTypeIcons(AppInfo app, Path resources) throws IOException {
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            if (type.icon().isPresent()) {
+                FileTrees.write(resources.resolve(typeIconFile(app, type)), IconSet.of(type.icon().get()).icns());
+            }
+        }
+    }
+
+    /**
+     * The entries of the information property list that register the application for its file types and URL schemes :
+     * the types of documents that it opens and owns ({@code CFBundleDocumentTypes}), their declarations
+     * ({@code UTExportedTypeDeclarations}), with their extensions and MIME types, and the URL schemes
+     * ({@code CFBundleURLTypes}). None without associations, nor for a key that {@code info-plist} has : the
+     * configuration replaces them.
+     *
+     * @param indent the indentation of the keys of the dictionary, which the nested elements repeat
+     * @return the keys and their values, an array written after the indentation of a key, on several lines
+     */
+    static Map<String, String> associationEntries(AppInfo app, DesktopPackagingConfig.Macos config, String indent) {
+        Associations associations = app.associations();
+        Map<String, String> entries = new LinkedHashMap<>();
+        if (!associations.fileTypes().isEmpty()) {
+            StringBuilder documents = new StringBuilder("<array>\n");
+            StringBuilder declarations = new StringBuilder("<array>\n");
+            for (Associations.FileType type : associations.fileTypes()) {
+                String identifier = typeIdentifier(app, type);
+                Optional<String> icon = type.icon().map(file -> typeIconFile(app, type));
+                line(documents, indent, 2, "<dict>");
+                entry(documents, indent, 3, "CFBundleTypeName", string(type.description()));
+                entry(documents, indent, 3, "CFBundleTypeRole", string("Editor"));
+                entry(documents, indent, 3, "LSHandlerRank", string("Owner"));
+                entry(documents, indent, 3, "LSItemContentTypes", "<array>");
+                line(documents, indent, 4, string(identifier));
+                line(documents, indent, 3, "</array>");
+                icon.ifPresent(file -> entry(documents, indent, 3, "CFBundleTypeIconFile", string(file)));
+                line(documents, indent, 2, "</dict>");
+
+                line(declarations, indent, 2, "<dict>");
+                entry(declarations, indent, 3, "UTTypeIdentifier", string(identifier));
+                entry(declarations, indent, 3, "UTTypeDescription", string(type.description()));
+                entry(declarations, indent, 3, "UTTypeConformsTo", "<array>");
+                line(declarations, indent, 4, string("public.data"));
+                line(declarations, indent, 3, "</array>");
+                icon.ifPresent(file -> entry(declarations, indent, 3, "UTTypeIconFile", string(file)));
+                entry(declarations, indent, 3, "UTTypeTagSpecification", "<dict>");
+                entry(declarations, indent, 4, "public.filename-extension", "<array>");
+                for (String extension : type.extensions()) {
+                    line(declarations, indent, 5, string(extension));
+                }
+                line(declarations, indent, 4, "</array>");
+                entry(declarations, indent, 4, "public.mime-type", string(type.mimeType()));
+                line(declarations, indent, 3, "</dict>");
+                line(declarations, indent, 2, "</dict>");
+            }
+            entries.put("CFBundleDocumentTypes", documents.append(indent).append("</array>").toString());
+            entries.put("UTExportedTypeDeclarations", declarations.append(indent).append("</array>").toString());
+        }
+        if (!associations.urlSchemes().isEmpty()) {
+            StringBuilder urls = new StringBuilder("<array>\n");
+            line(urls, indent, 2, "<dict>");
+            entry(urls, indent, 3, "CFBundleURLName", string(identifier(app)));
+            entry(urls, indent, 3, "CFBundleURLSchemes", "<array>");
+            for (String scheme : associations.urlSchemes()) {
+                line(urls, indent, 4, string(scheme));
+            }
+            line(urls, indent, 3, "</array>");
+            line(urls, indent, 2, "</dict>");
+            entries.put("CFBundleURLTypes", urls.append(indent).append("</array>").toString());
+        }
+        entries.keySet().removeAll(config.infoPlist().keySet());
+        return entries;
+    }
+
+    /**
+     * Appends a line of a property list, at a depth of indentation.
+     */
+    private static void line(StringBuilder plist, String indent, int depth, String text) {
+        plist.append(indent.repeat(depth)).append(text).append('\n');
+    }
+
+    /**
+     * Appends a key of a property list and its value, or the first line of its value, at a depth of indentation.
+     */
+    private static void entry(StringBuilder plist, String indent, int depth, String key, String value) {
+        line(plist, indent, depth, "<key>" + Xml.escape(key) + "</key>");
+        line(plist, indent, depth, value);
+    }
+
+    /**
+     * A string of a property list.
+     */
+    private static String string(String text) {
+        return "<string>" + Xml.escape(text) + "</string>";
     }
 
     private static String plistHeader() {
@@ -175,13 +296,14 @@ public final class MacBundle {
      * The information property list that {@code jpackage} wrote in the bundle of a JVM application, with the entries
      * of the configuration that {@link #infoPlist} writes in the bundle of a native executable : the minimum version
      * of macOS ({@code LSMinimumSystemVersion}), then the entries of {@code info-plist}, strings except {@code true}
-     * and {@code false}, which are Booleans. An entry replaces the value of its key, or is added at the end of the
-     * dictionary ; the property list is as it is without such entries.
+     * and {@code false}, which are Booleans, and the entries of the file types and URL schemes
+     * ({@link #associationEntries}). An entry replaces the value of its key, or is added at the end of the dictionary ;
+     * the property list is as it is without such entries.
      *
      * @throws PackagingException when the value of the key of an entry is an array or a dictionary, or when the
      *         property list has no dictionary
      */
-    public static String jvmInfoPlist(String plist, DesktopPackagingConfig.Macos config) {
+    public static String jvmInfoPlist(String plist, AppInfo app, DesktopPackagingConfig.Macos config) {
         Map<String, String> values = new LinkedHashMap<>();
         config.minimumSystemVersion().ifPresent(
                 version -> values.put("LSMinimumSystemVersion", "<string>" + Xml.escape(version) + "</string>"));
@@ -190,12 +312,22 @@ public final class MacBundle {
             values.put(entry.getKey(), value.equals("true") || value.equals("false") ? "<" + value + "/>"
                     : "<string>" + Xml.escape(value) + "</string>");
         }
-        if (values.isEmpty()) {
-            return plist;
-        }
         Matcher indentation = KEY_INDENTATION.matcher(plist);
         String indent = indentation.find() ? indentation.group(1) : "    ";
+        Map<String, String> associations = associationEntries(app, config, indent);
+        if (values.isEmpty() && associations.isEmpty()) {
+            return plist;
+        }
         StringBuilder result = new StringBuilder(plist);
+        // the arrays of the associations, which jpackage writes only for its own file associations
+        for (String key : associations.keySet()) {
+            if (result.indexOf("<key>" + key + "</key>") >= 0) {
+                throw new PackagingException("The Info.plist that jpackage wrote has " + key + " already : remove the"
+                        + " file associations of jpackage, or the file types and URL schemes of"
+                        + " quarkus.desktop.packaging.file-types and quarkus.desktop.packaging.url-schemes");
+            }
+        }
+        values.putAll(associations);
         for (Map.Entry<String, String> entry : values.entrySet()) {
             String key = "<key>" + Xml.escape(entry.getKey()) + "</key>";
             int index = result.indexOf(key);

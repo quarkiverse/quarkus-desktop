@@ -14,6 +14,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
@@ -24,7 +25,7 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
 
 /**
  * A Windows setup program ({@code .exe}), built with Inno Setup 6.3 or later ({@code ISCC}) from a generated script :
- * a wizard that installs the application image and its shortcuts, and an uninstaller.
+ * a wizard that installs the application image, its shortcuts, its file types and URL schemes, and an uninstaller.
  */
 public final class InnoSetupPackager implements Packager {
 
@@ -52,13 +53,14 @@ public final class InnoSetupPackager implements Packager {
         Path icon = FileTrees.write(work.resolve("application.ico"), context.icons().ico());
         List<Path> files = FileTrees.files(image.root());
         WindowsSdk.checkPathLengths(image.root(), files, "Inno Setup");
+        Map<String, Path> typeIcons = WindowsSdk.writeFileTypeIcons(context.app(), work, files);
         String fileName = WindowsSdk.packageFileName(context.app(), context.arch(), PackageFormat.EXE);
         Path exe = context.output(fileName);
         // the compiler names the setup program after its base name
         String baseName = fileName.substring(0, fileName.length() - ".exe".length());
         WindowsSdk.warnEmptyDirectories(image, exe);
         String script = script(context.app(), context.config().windows(), context.arch(), image.root(),
-                image.launcher().replace('/', '\\'), icon, context.outputDirectory(), baseName, files,
+                image.launcher().replace('/', '\\'), icon, typeIcons, context.outputDirectory(), baseName, files,
                 image.nativeExecutable());
         // with a byte order mark : the compiler reads the script as UTF-8 then
         Path iss = work.resolve("application.iss");
@@ -198,6 +200,8 @@ public final class InnoSetupPackager implements Packager {
      *
      * @param root the directory of the application image
      * @param launcher the path of the executable in the application image, with {@code \} separators
+     * @param typeIcons the icons of the file types that have one, by name of type
+     *        ({@link WindowsSdk#writeFileTypeIcons}), which the setup program installs in the installation directory
      * @param outputDirectory the directory of the setup program
      * @param baseName the file name of the setup program, without extension
      * @param files the files of the application image, relative to its directory
@@ -205,7 +209,8 @@ public final class InnoSetupPackager implements Packager {
      *        Java runtime of {@code jpackage}
      */
     static String script(AppInfo app, DesktopPackagingConfig.Windows config, Arch arch, Path root, String launcher,
-            Path icon, Path outputDirectory, String baseName, List<Path> files, boolean nativeExecutable) {
+            Path icon, Map<String, Path> typeIcons, Path outputDirectory, String baseName, List<Path> files,
+            boolean nativeExecutable) {
         String name = constant(app.name());
         String architecture = arch == Arch.ARM64 ? "arm64" : "x64compatible";
         String upgradeCode = MsiPackager.upgradeCode(app, config);
@@ -242,6 +247,10 @@ public final class InnoSetupPackager implements Packager {
         script.append("Compression=lzma2\n");
         script.append("SolidCompression=yes\n");
         script.append("WizardStyle=modern\n");
+        if (!app.associations().isEmpty()) {
+            // Explorer reads the associations again at the end of the installation and of the removal
+            script.append("ChangesAssociations=yes\n");
+        }
         if (WindowsSdk.signs(config.sign())) {
             // the sign tool of the command line of the compiler : it signs the uninstaller too
             script.append("SignTool=").append(SIGN_TOOL).append('\n');
@@ -275,6 +284,10 @@ public final class InnoSetupPackager implements Packager {
                     .append(parent == null ? "" : "\\" + quoted(constant(parent.toString().replace('/', '\\'))))
                     .append("\"; Flags: ignoreversion\n");
         }
+        for (Path typeIcon : typeIcons.values()) {
+            script.append("Source: \"").append(quoted(typeIcon.toString())).append("\"; DestDir: \"{app}\"; Flags:")
+                    .append(" ignoreversion\n");
+        }
         script.append('\n');
         script.append("[Icons]\n");
         String target = "{app}\\" + quoted(constant(launcher));
@@ -292,6 +305,9 @@ public final class InnoSetupPackager implements Packager {
                     .append("\"; WorkingDir: \"{app}\"; Tasks: desktopicon").append(appUserModelId).append('\n');
         }
         script.append('\n');
+        if (!app.associations().isEmpty()) {
+            registry(script, app, launcher, typeIcons);
+        }
         script.append("[Run]\n");
         script.append("Filename: \"").append(target).append("\"; Description: \"{cm:LaunchProgram,")
                 .append(quoted(argument(name))).append("}\"; Flags: nowait postinstall skipifsilent\n");
@@ -327,6 +343,60 @@ public final class InnoSetupPackager implements Packager {
             script.append("end;\n");
         }
         return script.toString();
+    }
+
+    /**
+     * The {@code [Registry]} section of the file types and URL schemes, in the classes of the user or of the machine,
+     * as the privileges of the setup program ({@code HKA}) : the extensions name the programmatic identifier of their
+     * type, whose command opens the file with the launcher, and each URL scheme has the command of the launcher too.
+     * The uninstaller removes the keys of the application, and the values that it gave to the extensions (and their
+     * keys, when they have nothing else).
+     *
+     * @param launcher the path of the executable in the application image, with {@code \} separators
+     * @param typeIcons the icons of the file types that have one, by name of type : the other types have the icon of
+     *        the launcher
+     */
+    private static void registry(StringBuilder script, AppInfo app, String launcher, Map<String, Path> typeIcons) {
+        String command = "\"{app}\\" + constant(launcher) + "\" \"%1\"";
+        String launcherIcon = "{app}\\" + constant(launcher) + ",0";
+        script.append("[Registry]\n");
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            String progId = constant(type.identifier(app));
+            for (String extension : type.extensions()) {
+                String key = "Software\\Classes\\." + constant(extension);
+                registryValue(script, key, "", progId, "uninsdeletevalue uninsdeletekeyifempty");
+                registryValue(script, key, "Content Type", constant(type.mimeType()), "uninsdeletevalue uninsdeletekeyifempty");
+                registryValue(script, key + "\\OpenWithProgids", progId, "", "uninsdeletevalue uninsdeletekeyifempty");
+            }
+            String key = "Software\\Classes\\" + progId;
+            registryValue(script, key, "", constant(type.description()), "uninsdeletekey");
+            registryValue(script, key + "\\DefaultIcon", "", typeIcons.containsKey(type.name())
+                    ? "{app}\\" + constant(WindowsSdk.fileTypeIconName(app, type)) + ",0"
+                    : launcherIcon, null);
+            registryValue(script, key + "\\shell\\open\\command", "", command, null);
+        }
+        for (String scheme : app.associations().urlSchemes()) {
+            String key = "Software\\Classes\\" + constant(scheme);
+            registryValue(script, key, "", "URL:" + constant(app.name()), "uninsdeletekey");
+            registryValue(script, key, "URL Protocol", "", null);
+            registryValue(script, key + "\\DefaultIcon", "", launcherIcon, null);
+            registryValue(script, key + "\\shell\\open\\command", "", command, null);
+        }
+        script.append('\n');
+    }
+
+    /**
+     * A string value of the {@code [Registry]} section.
+     *
+     * @param key the key, a text of the script
+     * @param name the name of the value, a text of the script : empty for the default value of the key
+     * @param data the value, a text of the script
+     * @param flags the flags of the entry, or {@code null}
+     */
+    private static void registryValue(StringBuilder script, String key, String name, String data, String flags) {
+        script.append("Root: HKA; Subkey: \"").append(quoted(key)).append("\"; ValueType: string; ValueName: \"")
+                .append(quoted(name)).append("\"; ValueData: \"").append(quoted(data)).append('"')
+                .append(flags == null ? "" : "; Flags: " + flags).append('\n');
     }
 
     /**

@@ -21,6 +21,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.packaging.deployment.windows.WindowsResources;
 import io.quarkiverse.desktop.packaging.spi.ApplicationIdBuildItem;
 import io.quarkiverse.desktop.packaging.spi.NativeExecutableFileBuildItem;
+import io.quarkiverse.desktop.packaging.spi.OpenedTypesBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedJvmOptionBuildItem;
 import io.quarkus.bootstrap.model.ApplicationModel;
@@ -109,6 +110,42 @@ class DesktopPackagingProcessor {
         if (config.enabled()) {
             AppInfo.configuredName(config).ifPresent(value -> name.produce(new PackagedApplicationNameBuildItem(value)));
         }
+    }
+
+    /**
+     * The file types and URL schemes that the packages register the application for, and its identifier, for the
+     * extensions of the user interface toolkits : they recognize the files and the URLs that the application is
+     * started with. Produced when the extension is enabled, with or without packages, and not checked here : an invalid
+     * configuration fails the packages, not dev mode.
+     */
+    @BuildStep
+    void openedTypes(DesktopPackagingConfig config, ApplicationInfoBuildItem applicationInfo,
+            CurateOutcomeBuildItem curateOutcome, BuildProducer<OpenedTypesBuildItem> openedTypes) {
+        if (!config.enabled()) {
+            return;
+        }
+        openedTypes.produce(openedTypes(config, applicationInfo.getName(),
+                curateOutcome.getApplicationModel().getAppArtifact().getGroupId()));
+    }
+
+    /**
+     * The file types and URL schemes of the configuration, in lower case and without their dot or their colon, and
+     * the identifier of the application (the configured one, or the one derived from the group ID and the name).
+     */
+    static OpenedTypesBuildItem openedTypes(DesktopPackagingConfig config, String applicationName, String groupId) {
+        Set<String> extensions = new LinkedHashSet<>();
+        config.fileTypes().values().forEach(type -> type.extensions().stream().map(String::strip)
+                .map(extension -> (extension.startsWith(".") ? extension.substring(1) : extension).toLowerCase(Locale.ROOT))
+                .filter(extension -> !extension.isEmpty()).forEach(extensions::add));
+        Set<String> schemes = new LinkedHashSet<>();
+        config.urlSchemes().orElse(List.of()).stream().map(scheme -> scheme.strip().toLowerCase(Locale.ROOT))
+                .map(scheme -> scheme.replaceFirst(":(//)?$", "")).filter(scheme -> !scheme.isEmpty())
+                .forEach(schemes::add);
+        String name = AppInfo.configuredName(config)
+                .orElse(applicationName == null || applicationName.equals(AppInfo.UNSET) ? "application" : applicationName);
+        String identifier = config.identifier().map(String::strip).filter(value -> !value.isEmpty())
+                .orElseGet(() -> AppInfo.identifier(groupId == null ? "" : groupId, name));
+        return new OpenedTypesBuildItem(extensions, schemes, identifier);
     }
 
     // ---------------------------------------------------------------------------------------------- Windows executable

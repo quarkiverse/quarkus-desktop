@@ -118,6 +118,7 @@ final class NativeApplicationImage {
         if (context.os() == TargetOs.MACOS) {
             String icon = app.fileName() + ".icns";
             FileTrees.write(root.resolve("Contents/Resources").resolve(icon), context.icons().icns());
+            MacBundle.writeTypeIcons(app, root.resolve("Contents/Resources"));
             FileTrees.write(root.resolve("Contents/Info.plist"),
                     MacBundle.infoPlist(app, context.config().macos(), app.name(), icon));
             FileTrees.write(root.resolve("Contents/PkgInfo"), "APPL????");

@@ -26,6 +26,7 @@ import org.junit.jupiter.api.io.TempDir;
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
@@ -402,10 +403,11 @@ class LinuxPackagesTest {
         Path appDir = Path.of("work", "Acme-Editor.AppDir");
         Path appImage = Path.of("Acme-Editor-1.2.3-x86_64.AppImage");
         assertEquals(List.of("appimagetool", "--no-appstream", appDir.toString(), appImage.toString()),
-                AppImagePackager.command(Path.of("appimagetool"), Optional.empty(), appDir, appImage));
+                AppImagePackager.command(Path.of("appimagetool"), Optional.empty(), Optional.empty(), appDir, appImage));
         // a runtime of the build rather than the latest one, downloaded from GitHub
         Path runtime = Path.of("runtime-x86_64");
-        List<String> command = AppImagePackager.command(Path.of("appimagetool"), Optional.of(runtime), appDir, appImage);
+        List<String> command = AppImagePackager.command(Path.of("appimagetool"), Optional.of(runtime), Optional.empty(), appDir,
+                appImage);
         assertEquals(List.of("appimagetool", "--no-appstream", "--runtime-file", runtime.toString(), appDir.toString(),
                 appImage.toString()), command);
     }
@@ -585,5 +587,151 @@ class LinuxPackagesTest {
         // a space after the comma of the configuration
         assertFalse(SnapPackager.managed(TestConfig.of(Map.of("linux.snap.build-args",
                 "--verbosity=debug, --destructive-mode")).linux().snap().buildArgs()));
+    }
+
+    /**
+     * An application that opens the files of a type, {@code document}, with an icon or not, and the URLs of a scheme.
+     *
+     * @param icon the icon of the type
+     * @param schemes the URL schemes
+     */
+    static AppInfo withAssociations(Optional<Path> icon, List<String> schemes) {
+        Associations.FileType document = new Associations.FileType("document", List.of("acme", "acmex"),
+                "application/x-acme-editor-document", "Acme Editor <document>", icon);
+        return TestConfig.app(TestConfig.defaults()).withAssociations(new Associations(List.of(document), schemes));
+    }
+
+    /**
+     * The desktop entry has the MIME types of the file types and of the URL schemes, and its command takes the files
+     * ({@code %F}) or the URLs ({@code %U}, which also passes the files, as {@code file://} URIs).
+     */
+    @Test
+    void theDesktopEntryOfAnApplicationThatOpensFiles() {
+        DesktopPackagingConfig config = TestConfig.defaults();
+        assertEquals("""
+                [Desktop Entry]
+                Type=Application
+                Name=Acme Editor
+                Exec=/opt/acme-editor/bin/acme-editor %F
+                Icon=acme-editor
+                Terminal=false
+                Categories=Utility;
+                MimeType=application/x-acme-editor-document;
+                """, LinuxDesktop.desktopEntry(withAssociations(Optional.empty(), List.of()), config.linux(),
+                "/opt/acme-editor/bin/acme-editor", "acme-editor"));
+        AppInfo both = withAssociations(Optional.empty(), List.of("acme", "acme-editor"))
+                .withApplicationId(Optional.of("Acme Editor"));
+        String entry = LinuxDesktop.desktopEntry(both, config.linux(), "acme-editor", "acme-editor");
+        assertTrue(entry.contains("\nExec=acme-editor %U\n"), entry);
+        assertTrue(entry.endsWith("\nCategories=Utility;\nMimeType=application/x-acme-editor-document;"
+                + "x-scheme-handler/acme;x-scheme-handler/acme-editor;\nStartupWMClass=Acme Editor\n"), entry);
+        AppInfo schemes = TestConfig.app(config).withAssociations(new Associations(List.of(), List.of("acme")));
+        String schemeEntry = LinuxDesktop.desktopEntry(schemes, config.linux(), "acme-editor", "acme-editor");
+        assertTrue(schemeEntry.contains("\nExec=acme-editor %U\n"), schemeEntry);
+        assertTrue(schemeEntry.contains("\nMimeType=x-scheme-handler/acme;\n"), schemeEntry);
+        // two types of the same MIME type
+        Associations.FileType text = new Associations.FileType("text", List.of("txt"), "text/plain", "Text",
+                Optional.empty());
+        Associations.FileType log = new Associations.FileType("log", List.of("log"), "text/plain", "Log", Optional.empty());
+        assertEquals(List.of("text/plain"), LinuxDesktop.mimeTypes(new Associations(List.of(log, text), List.of())));
+        assertEquals("", LinuxDesktop.fieldCode(Associations.NONE));
+    }
+
+    /**
+     * The shared MIME-info file of the file types : the patterns of their names, their descriptions, and the names of
+     * their icons, which start with the package name or the Flatpak application ID.
+     */
+    @Test
+    void theSharedMimeInfoFile() {
+        assertEquals("""
+                <?xml version="1.0" encoding="UTF-8"?>
+                <mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+                  <mime-type type="application/x-acme-editor-document">
+                    <comment>Acme Editor &lt;document&gt;</comment>
+                    <glob pattern="*.acme"/>
+                    <glob pattern="*.acmex"/>
+                  </mime-type>
+                </mime-info>
+                """, LinuxDesktop.mimeInfo(withAssociations(Optional.empty(), List.of()), "acme-editor"));
+        AppInfo withIcon = withAssociations(Optional.of(Path.of("document.png")), List.of("acme"));
+        String mimeInfo = LinuxDesktop.mimeInfo(withIcon, "org.acme.AcmeEditor");
+        assertTrue(mimeInfo.contains("</comment>\n    <icon name=\"org.acme.AcmeEditor-document\"/>\n    <glob "),
+                mimeInfo);
+        assertEquals(List.of("mime/packages/org.acme.AcmeEditor.xml",
+                "icons/hicolor/64x64/mimetypes/org.acme.AcmeEditor-document.png",
+                "icons/hicolor/128x128/mimetypes/org.acme.AcmeEditor-document.png"),
+                LinuxDesktop.mimeFiles(withIcon, "org.acme.AcmeEditor", 64, 128));
+        // nothing for URL schemes only
+        AppInfo schemes = TestConfig.app(TestConfig.defaults())
+                .withAssociations(new Associations(List.of(), List.of("acme")));
+        assertEquals("", LinuxDesktop.mimeInfo(schemes, "acme-editor"));
+        assertEquals(List.of(), LinuxDesktop.mimeFiles(schemes, "acme-editor", 64));
+    }
+
+    /**
+     * The files of the MIME types in the tree of a package, and in the spec file of the RPM package : none without file
+     * types.
+     */
+    @Test
+    void theMimeTypesOfThePackages(@TempDir Path directory) throws IOException {
+        Path icon = IconSet.generic().writePng(directory.resolve("document.png"), 64);
+        AppInfo app = withAssociations(Optional.of(icon), List.of());
+        Path share = directory.resolve("root/usr/share");
+        List<String> files = LinuxDesktop.writeMimeTypes(app, share, "acme-editor", IconSet.LINUX_SIZES);
+        assertEquals(LinuxDesktop.mimeFiles(app, "acme-editor", IconSet.LINUX_SIZES), files);
+        assertEquals(1 + IconSet.LINUX_SIZES.length, files.size());
+        assertEquals(LinuxDesktop.mimeInfo(app, "acme-editor"),
+                Files.readString(share.resolve("mime/packages/acme-editor.xml")));
+        assertTrue(Files.size(share.resolve("icons/hicolor/512x512/mimetypes/acme-editor-document.png")) > 0);
+        assertEquals(List.of(), LinuxDesktop.writeMimeTypes(TestConfig.app(TestConfig.defaults()),
+                directory.resolve("none"), "acme-editor", IconSet.LINUX_SIZES));
+        assertFalse(Files.exists(directory.resolve("none")));
+
+        DesktopPackagingConfig config = TestConfig.defaults();
+        String spec = RpmPackager.spec(app, config.linux(), Path.of("/work/root"), "/opt/acme-editor", List.of(),
+                Set.of());
+        assertTrue(spec.contains("/usr/share/icons/hicolor/512x512/apps/acme-editor.png\n"
+                + "/usr/share/mime/packages/acme-editor.xml\n"
+                + "/usr/share/icons/hicolor/16x16/mimetypes/acme-editor-document.png\n"), spec);
+        assertTrue(spec.endsWith("/usr/share/icons/hicolor/512x512/mimetypes/acme-editor-document.png\n"), spec);
+        String withoutTypes = RpmPackager.spec(TestConfig.app(config), config.linux(), Path.of("/work/root"),
+                "/opt/acme-editor", List.of(), Set.of());
+        assertTrue(withoutTypes.endsWith("/usr/share/icons/hicolor/512x512/apps/acme-editor.png\n"), withoutTypes);
+        assertFalse(withoutTypes.contains("mime"), withoutTypes);
+    }
+
+    /**
+     * The update information of the AppImage, which {@code appimagetool} embeds : in one of the formats of the
+     * updaters.
+     */
+    @Test
+    void theUpdateInformationOfTheAppImage() {
+        assertEquals(Optional.empty(), AppImagePackager.updateInformation(Optional.empty()));
+        assertEquals(Optional.empty(), AppImagePackager.updateInformation(Optional.of(" ")));
+        for (String information : List.of("zsync|https://acme.org/Acme-Editor-latest-x86_64.AppImage.zsync",
+                "gh-releases-zsync|acme|editor|latest|Acme-Editor-*-x86_64.AppImage.zsync",
+                "pling-v1-zsync|1234567|Acme-Editor-*-x86_64.AppImage")) {
+            assertEquals(Optional.of(information), AppImagePackager.updateInformation(Optional.of(" " + information)));
+        }
+        for (String information : List.of("https://acme.org/editor.zsync", "zsync|", "zsync|a|b",
+                "gh-releases-zsync|acme|editor|latest", "gh-releases-zsync|acme||latest|editor.zsync",
+                "pling-v1-zsync|1234567", "zsync|https://acme.org/" + "a".repeat(1024))) {
+            PackagingException e = assertThrows(PackagingException.class,
+                    () -> AppImagePackager.updateInformation(Optional.of(information)), information);
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.linux.appimage.update-information="),
+                    e.getMessage());
+        }
+        Path appDir = Path.of("work", "Acme-Editor.AppDir");
+        Path appImage = Path.of("Acme-Editor-1.2.3-x86_64.AppImage");
+        String information = "gh-releases-zsync|acme|editor|latest|Acme-Editor-*-x86_64.AppImage.zsync";
+        assertEquals(List.of("appimagetool", "--no-appstream", "--updateinformation", information, appDir.toString(),
+                appImage.toString()),
+                AppImagePackager.command(Path.of("appimagetool"), Optional.empty(),
+                        Optional.of(information), appDir, appImage));
+        // the zsyncmake that was found is the one of appimagetool
+        Path zsyncmake = Path.of("tools", "zsync", "zsyncmake");
+        assertEquals(Path.of("tools", "zsync") + java.io.File.pathSeparator + "/usr/bin",
+                AppImagePackager.path(zsyncmake, "/usr/bin"));
+        assertEquals(Path.of("tools", "zsync").toString(), AppImagePackager.path(zsyncmake, null));
     }
 }

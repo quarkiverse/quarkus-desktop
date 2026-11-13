@@ -1,9 +1,13 @@
 package io.quarkiverse.desktop.packaging.deployment.linux;
 
+import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -25,12 +29,21 @@ import io.quarkiverse.desktop.packaging.deployment.Tools;
 public final class AppImagePackager implements Packager {
 
     /**
-     * Checks {@code appimagetool} and the runtime file of the configuration.
+     * The size of the section of the update information in the runtime of an AppImage ({@code .upd_info}), in bytes.
+     */
+    private static final int UPDATE_INFORMATION_SIZE = 1024;
+
+    /**
+     * Checks {@code appimagetool}, the runtime file of the configuration, and the update information with
+     * {@code zsyncmake}, which writes the {@code .zsync} file of the AppImage.
      */
     @Override
     public void check(PackagingContext context) {
         appimagetool(context);
         runtimeFile(context);
+        if (updateInformation(context.config().linux().appimage().updateInformation()).isPresent()) {
+            zsyncmake(context);
+        }
     }
 
     @Override
@@ -38,6 +51,8 @@ public final class AppImagePackager implements Packager {
         String arch = context.arch().gnu();
         Path appimagetool = appimagetool(context);
         Optional<Path> runtimeFile = runtimeFile(context);
+        Optional<String> updateInformation = updateInformation(context.config().linux().appimage().updateInformation());
+        Optional<Path> zsyncmake = updateInformation.map(information -> zsyncmake(context));
         AppInfo app = context.app();
         String name = app.packageName();
         Path work = context.workDirectory("appimage");
@@ -55,13 +70,82 @@ public final class AppImagePackager implements Packager {
         context.icons().writePng(appDir.resolve(name + ".png"), 256);
         Files.createSymbolicLink(appDir.resolve(".DirIcon"), Path.of(name + ".png"));
         LinuxDesktop.icons(context.icons(), appDir.resolve("usr/share/icons/hicolor"), name, 256);
+        // the MIME types of the file types, which the tools that integrate AppImages (AppImageLauncher) install
+        LinuxDesktop.writeMimeTypes(app, appDir.resolve("usr/share"), name, 256);
         FileTrees.normalizePermissions(appDir);
 
         Path appImage = context.output(app.fileName() + "-" + app.version() + "-" + arch + ".AppImage");
         Path tmp = Files.createDirectories(work.resolve("tmp"));
-        Tools.exec(work, environment(arch, app.version(), tmp), command(appimagetool, runtimeFile, appDir, appImage));
+        Map<String, String> environment = new HashMap<>(environment(arch, app.version(), tmp));
+        // appimagetool runs the zsyncmake of the PATH : the one that was found first
+        zsyncmake.ifPresent(tool -> environment.put("PATH", path(tool, System.getenv("PATH"))));
+        Tools.exec(work, environment, command(appimagetool, runtimeFile, updateInformation, appDir, appImage));
         FileTrees.executable(appImage);
+        if (updateInformation.isPresent()) {
+            // zsyncmake writes the .zsync file in the working directory of appimagetool
+            String zsync = appImage.getFileName() + ".zsync";
+            if (!Files.isRegularFile(work.resolve(zsync))) {
+                throw new PackagingException("appimagetool did not write " + zsync + ", the file that the AppImage"
+                        + " updaters download (quarkus.desktop.packaging.linux.appimage.update-information) : check that"
+                        + " zsyncmake runs (zsync package)");
+            }
+            Files.move(work.resolve(zsync), appImage.resolveSibling(zsync), StandardCopyOption.REPLACE_EXISTING);
+        }
         return appImage;
+    }
+
+    /**
+     * The {@code zsyncmake} of the machine, which {@code appimagetool} runs to write the {@code .zsync} file of an
+     * AppImage with update information.
+     */
+    private static Path zsyncmake(PackagingContext context) {
+        return context.tools().require("zsyncmake", "install zsync (apt install zsync, dnf install zsync)");
+    }
+
+    /**
+     * A {@code PATH} whose first directory is the one of a tool : the tools that run it by its name find that one.
+     *
+     * @param path the {@code PATH} of the build, or {@code null}
+     */
+    static String path(Path tool, String path) {
+        String directory = tool.getParent().toString();
+        return path == null || path.isEmpty() ? directory : directory + File.pathSeparator + path;
+    }
+
+    /**
+     * The update information of the configuration ({@code quarkus.desktop.packaging.linux.appimage.update-information}),
+     * checked : {@code zsync|<URL>}, {@code gh-releases-zsync|<owner>|<repository>|<release>|<file name>} or
+     * {@code pling-v1-zsync|<product>|<file name>}, without empty fields, in the 1024 bytes of its section.
+     *
+     * @return the information, empty when it is not set or blank
+     * @throws PackagingException for information in another format
+     */
+    static Optional<String> updateInformation(Optional<String> configured) {
+        Optional<String> information = configured.map(String::strip).filter(value -> !value.isEmpty());
+        if (information.isEmpty()) {
+            return information;
+        }
+        String value = information.get();
+        String[] fields = value.split("\\|", -1);
+        int expected = switch (fields[0]) {
+            case "zsync" -> 2;
+            case "gh-releases-zsync" -> 5;
+            case "pling-v1-zsync" -> 3;
+            default -> -1;
+        };
+        boolean valid = fields.length == expected
+                && value.getBytes(StandardCharsets.UTF_8).length < UPDATE_INFORMATION_SIZE;
+        for (String field : fields) {
+            valid &= !field.isBlank();
+        }
+        if (!valid) {
+            throw new PackagingException("quarkus.desktop.packaging.linux.appimage.update-information=" + value + " : the"
+                    + " update information is zsync|<URL of the .zsync file>,"
+                    + " gh-releases-zsync|<owner>|<repository>|<release, such as latest>|<file name of the .zsync file,"
+                    + " with * for the version> or pling-v1-zsync|<product>|<file name>, in less than "
+                    + UPDATE_INFORMATION_SIZE + " bytes");
+        }
+        return information;
     }
 
     /**
@@ -109,10 +193,14 @@ public final class AppImagePackager implements Packager {
      * The command of {@code appimagetool}.
      *
      * @param runtimeFile the runtime of the AppImage, or empty for {@code appimagetool} to download the latest one
+     * @param updateInformation the update information to embed, if any : {@code appimagetool} then runs
+     *        {@code zsyncmake}, which writes the {@code .zsync} file
      */
-    static List<String> command(Path appimagetool, Optional<Path> runtimeFile, Path appDir, Path appImage) {
+    static List<String> command(Path appimagetool, Optional<Path> runtimeFile, Optional<String> updateInformation,
+            Path appDir, Path appImage) {
         List<String> command = new ArrayList<>(List.of(appimagetool.toString(), "--no-appstream"));
         runtimeFile.ifPresent(runtime -> command.addAll(List.of("--runtime-file", runtime.toString())));
+        updateInformation.ifPresent(information -> command.addAll(List.of("--updateinformation", information)));
         command.add(appDir.toString());
         command.add(appImage.toString());
         return command;
