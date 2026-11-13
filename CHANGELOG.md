@@ -11,9 +11,7 @@ All notable changes to this project will be documented in this file.
   PKG on macOS, deb, RPM, AppImage, Flatpak and Snap on Linux (`quarkus.desktop.packaging.formats`). It packages the
   native executable or, in JVM mode, the jar with a Java runtime (`jpackage`), derives the icons of every format from
   one PNG file, gives the Windows native executable its icon and version information, and signs the Windows and macOS
-  packages (with notarization on macOS). Not verified yet, among others: applications with a user interface (beyond a
-  native Swing application in an MSI package), the snap of a native executable, signing with a Developer ID
-  certificate and the notarization, Windows and Linux on arm64, and macOS on Intel.
+  packages (with notarization on macOS).
   The `quarkus-desktop-packaging-spi` artifact lets other extensions add the files of the native executable
   (`NativeExecutableFileBuildItem`, optional for a library that the executable loads only in some cases: the Debian and
   RPM packages do not depend on the libraries that it is linked with) and the options of the JVM
@@ -31,8 +29,8 @@ All notable changes to this project will be documented in this file.
   (`OpenedTypesBuildItem` of the SPI gives the toolkits the extensions, the schemes and the identifier).
 - Automatic updates of the MSIX package (an App Installer file, `quarkus.desktop.packaging.windows.msix.update-url`) and
   of the AppImage (its update information and `.zsync` file, `quarkus.desktop.packaging.linux.appimage.update-information`).
-- Desktop SWT verified on Windows arm64 in JVM mode, with arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0 (GraalVM has no
-  native image builder for Windows on arm64: an x64 executable, built with an x64 GraalVM, runs there under emulation).
+- Desktop SWT on Windows arm64 in JVM mode (GraalVM has no native image builder for Windows on arm64: an x64
+  executable, built with an x64 GraalVM, runs there under emulation).
 
 ### Changed
 
@@ -51,7 +49,7 @@ All notable changes to this project will be documented in this file.
   `org.eclipse.swt.browser.EdgeDataDir` is set) change with it. Set these properties to keep the former name.
 - Desktop SWT: in a strictly confined snap, which cannot write `~/.swt`, SWT extracts its native libraries into
   `$SNAP_USER_COMMON/.swt/lib/<os>/<arch>` (`swt.library.path`, unless it is set), with or without the Desktop
-  Packaging extension (not verified in a snap yet).
+  Packaging extension.
 
 ### Removed
 
@@ -60,10 +58,6 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
-- The SWT integration tests could stall for minutes when Windows ran a timer of the event loop before its delay
-  (`SwtChecks.pumpFor` then slept without any timer left): it now arms the timer again until the delay elapsed. Seen on
-  Windows 11 arm64, where `SwtItIT` took 260 s with SWT 3.135.0 and 413 s with an x64 JDK, and 11 s and 17 s with the
-  fix.
 - The Desktop SWT documentation said that the main of Quarkus FX replaces the one of the extension: Quarkus rejected the
   two overridable producers (`ChainBuildException`). Quarkus FX, from the version that supports SWT, leaves the main to
   the extension and embeds JavaFX with `FXCanvas` (see Using JavaFX with SWT).

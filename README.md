@@ -76,8 +76,7 @@ dependencies {
 ```
 
 An application can declare another version of `org.eclipse.platform:org.eclipse.swt` (never with a `swt.version`
-property: SWT reads a system property of that name). SWT 3.135.0 is verified on Linux x64 and macOS, and on Windows arm64
-in JVM mode.
+property: SWT reads a system property of that name).
 
 ## Application model and CDI
 
@@ -255,8 +254,7 @@ tests.
 
 The `quarkus-desktop-packaging` extension builds the installers of the application at the end of the build, from its
 native executable (`./mvnw package -Dnative`) or from its jar with a Java runtime (`./mvnw package`, with `jpackage`). It
-does not depend on a toolkit: it packages AWT, Swing, SWT and JavaFX applications. Its tests package an application
-without a user interface; with one, only a native Swing application in an MSI package has been verified.
+does not depend on a toolkit: it packages AWT, Swing, SWT and JavaFX applications.
 
 ```properties
 quarkus.desktop.packaging.name=Acme Editor
@@ -269,13 +267,11 @@ quarkus.desktop.packaging.formats=msi,exe,msix,dmg,pkg,deb,rpm,appimage,flatpak,
 The packages are in `target/packaging` (`build/packaging` with Gradle). Each format is built on its operating system
 with its tool (WiX, Inno Setup, the Windows SDK, `hdiutil`, `pkgbuild`, `dpkg-deb`, `rpmbuild`, `appimagetool`,
 `flatpak`, `snapcraft`); the icons of every format come from one PNG file (`src/main/packaging/icon.png`), and the
-Windows native executable gets the icon and the version information of the application. Not verified yet, among
-others: applications with a user interface (beyond that MSI package), the snap of a native executable, signing with a
-Developer ID certificate and the notarization, Windows and Linux on arm64, and macOS on Intel.
+Windows native executable gets the icon and the version information of the application.
 The page [Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)
 ([docs/modules/ROOT/pages/packaging.adoc](docs/modules/ROOT/pages/packaging.adoc)) covers the application image, the
-Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, the dependencies of the Linux
-packages, and what is verified.
+Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, and the dependencies of the Linux
+packages.
 
 ## Platforms
 
@@ -286,25 +282,22 @@ AWT and Swing:
 | Windows x64 | yes | yes (native build on Windows with Visual Studio) |
 | Windows arm64 | yes | no (no GraalVM native image builder for Windows on arm64) |
 | Linux x64 and arm64 | yes | yes (native build on Linux or in a container; X11 or XWayland at run time) |
-| macOS on Apple silicon | yes | yes, with Quarkus 4.0.0.Beta1 or later and GraalVM 25.1 or later (verified with the showcase on an Apple silicon Mac) |
+| macOS on Apple silicon | yes | yes, with Quarkus 4.0.0.Beta1 or later and GraalVM 25.1 or later |
 
 SWT:
 
 | Platform | JVM mode | Native executable |
 |---|---|---|
-| Windows x64 | yes | yes (native build on Windows with Visual Studio; no manifest nor Visual C++ runtime needed; verified on Windows 11) |
-| Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; verified on Ubuntu 24.04 in Docker, X11 under Xvfb, and Wayland) |
-| macOS on Apple silicon | yes, with `-XstartOnFirstThread` | yes (the event loop runs on the first thread of the process; verified on macOS 27.0) |
-| Windows arm64 | yes (verified on Windows 11 with arm64 JDKs 17 and 25) | no arm64 executable (no GraalVM native image builder for Windows on arm64); an x64 executable built with an x64 GraalVM runs under emulation |
+| Windows x64 | yes | yes (native build on Windows with Visual Studio; no manifest nor Visual C++ runtime needed) |
+| Linux x64 and arm64 | yes | yes (native build on Linux or in a container; GTK 3 at run time; X11, XWayland or Wayland) |
+| macOS on Apple silicon | yes, with `-XstartOnFirstThread` | yes (the event loop runs on the first thread of the process) |
+| Windows arm64 | yes | no arm64 executable (no GraalVM native image builder for Windows on arm64); an x64 executable built with an x64 GraalVM runs under emulation |
 
 ## Showcase
 
-The [Quarkus Desktop showcase](samples/showcase) exercises the AWT, Java2D and Swing
-features of the JDK on 75 pages (about 3800 checks), and compares JVM mode and native executables pixel by pixel and
-check by check (also with other Java2D pipelines, at the real display scale, and with exact reachability metadata). It is
-the functional test bench of these extensions: run its cycle after changing a list of classes and resources. It also
-has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt` compares its JVM mode
-and native runs.
+The [Quarkus Desktop showcase](samples/showcase) is a sample application of 75 pages that shows the AWT, Java2D and
+Swing features of the JDK, in JVM mode and as a native executable. It also has an SWT variant: `-Dswt` builds it into
+`target/swt/`.
 
 ## Contributors ✨
 

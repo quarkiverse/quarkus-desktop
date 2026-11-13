@@ -235,9 +235,7 @@ command line of the executable, or with `System.setProperty` before AWT starts):
 
 The pipeline in use is the class of the default graphics configuration
 (`GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice().getDefaultConfiguration()`:
-`D3DGraphicsConfig`, `Win32GraphicsConfig`, `WGLGraphicsConfig`, `XRGraphicsConfig`...). The showcase compares JVM
-mode and native executables with another pipeline (`--pipeline=gdi|opengl` on Windows, `--pipeline=x11|opengl` on
-Linux, `-- -Dsun.java2d.metal=false` on macOS).
+`D3DGraphicsConfig`, `Win32GraphicsConfig`, `WGLGraphicsConfig`, `XRGraphicsConfig`...).
 
 [[fonts]]
 === Fonts and languages
@@ -355,13 +353,10 @@ files that Quarkus looks up at run time:
 }
 ----
 
-The showcase (see xref:index.adoc#verification[Verification]) runs all its pages with exact metadata and no missing
-registration on Windows, Linux and macOS, in both of its variants (on Windows also with the GDI and OpenGL pipelines and
-at the scale of the display), with its own application registrations in its `reachability-metadata.json`. The
-integration tests of the extensions, which keep the default configuration (without the JavaBeans registration of the
-Swing classes), pass with exact metadata on Windows and Linux, with the application registrations of their
-`reachability-metadata.json`: the configuration files that Quarkus looks up, the persistence delegate of an enumeration
-value that `XMLEncoder` writes, and the URL stream handler providers that a URL created from a text looks up.
+With exact metadata, the application registers what it uses beyond the extensions in its
+`reachability-metadata.json`, for instance the configuration files that Quarkus looks up, the persistence delegate of
+an enumeration value that `XMLEncoder` writes, and the URL stream handler providers that a URL created from a text looks
+up.
 GraalVM 25.0.0 note: with `-XX:MissingRegistrationReportingMode=Warn`, opening the URL of
 a resource that is not registered (for instance an image of an HTML page that does not exist) fails with a
 `ClassCastException` after the warning, instead of a `FileNotFoundException`: register such resources.
@@ -393,16 +388,6 @@ input methods, accessibility providers) found in `META-INF/services` files are r
 `java -agentlib:native-image-agent=config-output-dir=src/main/resources/META-INF/native-image/<group>/<artifact> -jar target/quarkus-app/quarkus-run.jar`,
 and a native executable built with exact metadata and run with `-XX:MissingRegistrationReportingMode=Warn` lists them
 (see <<exact-reachability-metadata>>).
-
-== Verification
-
-The integration tests of the extension build a native executable that shows a window with components and checks fonts,
-ImageIO plugins, print services and printing to a PostScript stream, data flavors, text attributes, Java Sound, the
-JavaBeans API, the desktop integration and the Java Access Bridge (Windows), on Windows, Linux and macOS (with the
-libraries and frameworks of the macOS executable, its main thread and the Metal pipeline). They also pass when they are
-built with exact reachability metadata (`-Dquarkus.native.additional-build-args=--exact-reachability-metadata`, verified
-on Windows and Linux). The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] compares JVM mode and native
-executables page by page (see xref:index.adoc#verification[Verification]).
 
 == Configuration
 

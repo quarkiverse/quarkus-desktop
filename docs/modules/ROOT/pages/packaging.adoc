@@ -7,8 +7,7 @@ include::./includes/attributes.adoc[]
 The `quarkus-desktop-packaging` extension packages a desktop application as the installers of Windows, macOS and
 Linux, at the end of the build: from its native executable or, in JVM mode, from its jar with a Java runtime. It does
 not depend on a user interface toolkit: it packages AWT, Swing, SWT and JavaFX applications alike, with or without the
-other extensions of Quarkus Desktop. Its tests package an application without a user interface; with one, only a native
-Swing application in an MSI package has been verified.
+other extensions of Quarkus Desktop.
 
 [cols="1,1,2,3"]
 |===
@@ -23,8 +22,7 @@ install
 |`msi`
 |Windows
 |A Windows Installer package
-|https://wixtoolset.org/[WiX Toolset] 4 or later (`dotnet tool install --global wix --version 5.0.2`, the verified
-version). WiX 6 and later are under the https://docs.firegiant.com/wix/osmf/[Open Source Maintenance Fee], and WiX 7
+|https://wixtoolset.org/[WiX Toolset] 4 or later (`dotnet tool install --global wix --version 5.0.2`). WiX 6 and later are under the https://docs.firegiant.com/wix/osmf/[Open Source Maintenance Fee], and WiX 7
 only builds once its license is accepted (`wix eula accept wix7`, once per user and machine)
 
 |`exe`
@@ -558,7 +556,7 @@ which Desktop AWT and Desktop SWT give the application by default.
 
 A job per operating system builds the packages of each of them, as the `packaging` job of the
 https://github.com/quarkiverse/quarkus-desktop/blob/main/.github/workflows/build.yml[build workflow] of this project
-does (it then installs, starts and removes the packages):
+does:
 
 [source,yaml]
 ----

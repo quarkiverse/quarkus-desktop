@@ -94,27 +94,21 @@ AWT and Swing applications:
 |Yes
 |Yes: a native build on Windows, with Visual Studio (the {cpp} build tools). The executable is DPI aware, has the
 visual styles of Windows, can be a GUI application without console, and comes with the JDK libraries and the Visual
-{cpp} runtime it needs (see xref:awt.adoc#windows[Windows]). Verified with the showcase (see <<verification>>): every
-page renders the same pixels and gives the same checks as in JVM mode, with the Direct3D, GDI and OpenGL pipelines at
-100 % scale, and at 150 % with GDI (with Direct3D at a fractional scale, a few edge pixels of the Metal gradients vary
-from one run to the next, in JVM mode too: see the
-https://github.com/quarkiverse/quarkus-desktop/blob/main/samples/showcase/README.md#compare-jvm-and-native-rendering[showcase README]).
+{cpp} runtime it needs (see xref:awt.adoc#windows[Windows]).
 
 |Windows arm64
 |Yes
-|No: GraalVM has no native image builder for Windows on arm64. JVM mode is verified with the showcase (two JVM runs
-compared).
+|No: GraalVM has no native image builder for Windows on arm64.
 
 |Linux x64 and arm64
 |Yes
 |Yes: a native build on Linux or in a container. The executable uses the X11 libraries of the system (XWayland on
 Wayland), GTK 3 for the GTK look and feel and the native dialogs, CUPS and ALSA (see xref:awt.adoc#linux[Linux]).
-Verified on both architectures with the showcase (native builds and runs).
 
 |macOS (Apple silicon)
 |Yes
 |Yes, with Quarkus 4.0.0.Beta1 or later, whose `quarkus-awt` supports macOS, and GraalVM 25.1 or later (see
-xref:awt.adoc#macos[macOS]). Verified with the showcase on an Apple silicon Mac.
+xref:awt.adoc#macos[macOS]).
 |===
 
 Native executables need GraalVM for JDK 25 and Quarkus {quarkus-version} or later (on macOS: GraalVM 25.1 or later, and
@@ -128,32 +122,21 @@ SWT applications (see xref:swt.adoc#platforms[Platforms] of Desktop SWT):
 
 |Windows x64
 |Yes
-|Yes: a native build on Windows, with Visual Studio (see xref:swt.adoc#windows[Windows]). Verified locally with the
-integration tests of the extension on Windows 11, also with exact reachability metadata: the native executable renders
-the same pixels as JVM mode, as in the cycles of the SWT variant of the showcase.
+|Yes: a native build on Windows, with Visual Studio (see xref:swt.adoc#windows[Windows]).
 
 |Linux x64 and arm64
 |Yes
-|Yes: a native build on Linux or in a container, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]). Verified the
-same way, with exact reachability metadata, on Ubuntu 24.04 in Docker (X11 under Xvfb, and Wayland, a headless
-Weston), together with the cycles of the SWT variant of the showcase on x64. On arm64, a native executable built in a
-container from macOS ran too.
+|Yes: a native build on Linux or in a container, with GTK 3 at run time (see xref:swt.adoc#linux[Linux]).
 
 |macOS (Apple silicon)
 |With `-XstartOnFirstThread`
-|Yes: the event loop runs on the first thread of the process (see xref:swt.adoc#macos[macOS]). Verified the same way,
-with exact reachability metadata, on macOS 27.0, together with the cycles of the SWT variant of the showcase.
+|Yes: the event loop runs on the first thread of the process (see xref:swt.adoc#macos[macOS]).
 
 |Windows arm64
 |Yes
 |No arm64 executable: GraalVM has no native image builder for Windows on arm64. An x64 executable, built with an x64
-GraalVM under the x64 emulation of Windows, runs there under emulation (see xref:swt.adoc#windows[Windows]). JVM mode
-is verified with the integration tests of the extension (arm64 JDKs 17 and 25, SWT 3.132.0 and 3.135.0) and the SWT
-variant of the showcase (two JVM runs compared).
+GraalVM under the x64 emulation of Windows, runs there under emulation (see xref:swt.adoc#windows[Windows]).
 |===
-
-The SWT native executables are verified with GraalVM for JDK 25, with SWT 3.132.0 (and 3.135.0 on Linux x64 and macOS),
-see xref:swt.adoc#verification[Verification] of Desktop SWT.
 
 == Guides
 
@@ -165,27 +148,6 @@ startup and the exit of the user interface, the user interface thread (`UiThread
 * xref:cdi.adoc[Application model and CDI] (AWT and Swing): windows as CDI beans, the startup and the exit of the user
 interface, the event dispatch thread (`EdtExecutor`, `Edt`, `@RunOnEdt`), the application menu, Finder and Dock events
 of macOS, dev mode and tests.
-
-[[verification]]
-== Verification
-
-The https://github.com/quarkiverse/quarkus-desktop/tree/main/samples/showcase[Quarkus Desktop showcase] is an application of 75 pages (about
-3800 checks) that exercise the AWT, Java2D, text, image, Swing, look and feel, data transfer, desktop, printing,
-accessibility, JavaBeans and sound features of the JDK. Its tools run it in JVM mode and as a native executable, render
-every page to an image and compare the two runs pixel by pixel and check by check, also with exact reachability metadata
-(see xref:awt.adoc#exact-reachability-metadata[Exact reachability metadata]). On Windows (with the Direct3D, GDI and
-OpenGL pipelines, and with exact reachability metadata), Linux and macOS, every page gives the same result in both runs,
-except the page that shows where a native executable legitimately differs (its known limitations, see
-xref:awt.adoc#limitations[Limitations]). It also has a Docker image for the Linux runs, and the steps to verify
-macOS on a Mac.
-
-The showcase also has an SWT variant: `-Dswt` builds it into `target/swt/`, and `java tools/Cycle.java <label> --swt`
-compares its JVM mode and native runs (they match on Windows 11 x64, on Linux x64 in Docker and on macOS 27.0, also with
-exact reachability metadata; on Windows 11 arm64, `--jvm-only` compares two JVM runs, which match, with 4 checks failing
-in both runs on a display at 200 %, see the showcase README). The integration tests of the Desktop SWT extension
-compare the rendering of JVM mode and native executables too, when they run locally: the native jobs of the continuous
-integration skip the JVM mode tests, and so this comparison (see xref:swt.adoc#verification[Verification] of Desktop
-SWT).
 
 [[configuration]]
 == Configuration
