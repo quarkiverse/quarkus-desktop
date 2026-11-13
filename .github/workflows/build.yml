@@ -167,8 +167,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Apple silicon and Intel
-        os: [ macos-latest, macos-15-intel ]
+        # Apple silicon only : Mandrel has no build for macOS on Intel
+        os: [ macos-latest ]
         exact: [ false, true ]
     runs-on: ${{ matrix.os }}
     env:
@@ -202,7 +202,7 @@ jobs:
     # with an identity rather than ad hoc. Linux has the snap too, and in JVM mode the AppImage of the next version
     # updates the first one (AppImageUpdate), and Windows installs the MSIX package from its App Installer file, then
     # the one of the next version. On arm64 (Windows : JVM mode only, GraalVM has no Windows arm64 native image) and on
-    # macOS Intel too
+    # macOS Intel too (JVM mode only, Mandrel has no build for it)
     name: Packaging${{ matrix.native && ' (native)' || '' }} on ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -217,10 +217,9 @@ jobs:
             native: true
           - os: windows-11-arm
             native: false
+          # JVM mode only : Mandrel has no build for macOS on Intel
           - os: macos-15-intel
             native: false
-          - os: macos-15-intel
-            native: true
     runs-on: ${{ matrix.os }}
     env:
       NATIVE_ARGS: ${{ matrix.native && '-Dnative' || '' }}
@@ -786,12 +785,13 @@ jobs:
           key: packaging-ui-${{ runner.os }}-${{ matrix.toolkit }}-${{ matrix.native }}-maven-${{ hashFiles('**/pom.xml') }}
 
       # Not the libraries of the application : the Debian package depends on them. A virtual X display, the screenshot
-      # (ImageMagick) and gio, which opens files and URLs as the file managers do
+      # (ImageMagick), gio, which opens files and URLs as the file managers do, and desktop-file-utils, whose trigger
+      # adds the types of the installed desktop entries to the desktop database (mimeinfo.cache), as on a desktop
       - name: Install the tools of Linux
         if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev dpkg-dev xvfb imagemagick libglib2.0-bin
+          sudo apt-get install -y --no-install-recommends build-essential zlib1g-dev dpkg-dev xvfb imagemagick libglib2.0-bin desktop-file-utils
 
       - name: Install the tools of Windows
         if: startsWith(matrix.os, 'windows')
