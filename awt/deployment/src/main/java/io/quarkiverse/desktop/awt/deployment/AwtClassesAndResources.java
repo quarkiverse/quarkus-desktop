@@ -146,6 +146,8 @@ public final class AwtClassesAndResources {
             // printing
             "javax.print.PrintServiceLookup",
             "javax.print.StreamPrintServiceFactory",
+            // the URLs of the IPP print services of CUPS (ipp://, macOS and Linux), whose protocol java.net.URL looks up
+            "java.net.spi.URLStreamHandlerProvider",
             // Java Sound
             "javax.sound.midi.spi.MidiDeviceProvider",
             "javax.sound.midi.spi.MidiFileReader",
