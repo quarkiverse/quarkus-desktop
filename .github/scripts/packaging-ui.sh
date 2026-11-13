@@ -52,8 +52,9 @@ wait_for "open LAUNCH [first.pui] []"
 sleep 2
 screenshot
 
-# A second launch gives its file and URL to the running instance, and exits with 0
-timeout 120 "$executable" "$documents/second.pui" "packaging-ui-it://second"
+# A second launch gives its file and URL to the running instance, and exits with 0 (macOS has no timeout command :
+# the job has its own)
+"$executable" "$documents/second.pui" "packaging-ui-it://second"
 wait_for "open ANOTHER_LAUNCH [second.pui] [packaging-ui-it://second]"
 
 open_with_system "$documents/third.pui"
