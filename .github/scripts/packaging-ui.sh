@@ -59,8 +59,14 @@ wait_for "open ANOTHER_LAUNCH [second.pui] [packaging-ui-it://second]"
 
 open_with_system "$documents/third.pui"
 wait_for "open $system_source [third.pui] []"
-open_with_system "packaging-ui-it://third"
-wait_for "open $system_source [] [packaging-ui-it://third"
+if [[ "$(uname)" == Darwin && "$TOOLKIT" == swt ]]; then
+  # SWT never fires SWT.OpenUrl on macOS : it registers its delegate method as application:openUrls:, while AppKit
+  # calls application:openURLs: (a bug of SWT 3.132.0 and 3.135.0, see the macOS section of the Desktop SWT guide)
+  echo "No URL opened by the system : SWT does not receive them on macOS"
+else
+  open_with_system "packaging-ui-it://third"
+  wait_for "open $system_source [] [packaging-ui-it://third"
+fi
 
 touch "$HOME/packaging-ui-it/quit"
 for _ in $(seq 1 60); do
