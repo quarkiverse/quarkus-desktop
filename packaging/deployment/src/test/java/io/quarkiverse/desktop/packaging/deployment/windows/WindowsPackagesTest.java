@@ -63,6 +63,7 @@ class WindowsPackagesTest {
 
     static String wxs(DesktopPackagingConfig config) {
         return MsiPackager.wxs(TestConfig.app(config), config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"),
+                Map.of(),
                 FILES);
     }
 
@@ -229,7 +230,7 @@ class WindowsPackagesTest {
         List<Path> files = new ArrayList<>(FILES);
         files.add(Path.of("pay$(x).txt"));
         String xml = MsiPackager.wxs(TestConfig.app(config), config.windows(), ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), files);
+                Path.of("application.ico"), Map.of(), files);
         assertTrue(xml.contains("Manufacturer=\"A$$$$B\""), xml);
         assertTrue(xml.contains("<SummaryInformation Description=\"Costs $$(5), $$$$ and !!(loc.Foo) or Hello!(beta)\""),
                 xml);
@@ -301,7 +302,7 @@ class WindowsPackagesTest {
 
     static String script(DesktopPackagingConfig config) {
         return InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true);
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, true);
     }
 
     @Test
@@ -310,7 +311,7 @@ class WindowsPackagesTest {
                 "windows.desktop-shortcut", "true"));
         AppInfo app = TestConfig.app(config);
         String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor-1.2.3-SNAPSHOT",
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor-1.2.3-SNAPSHOT",
                 List.of(Path.of("Acme Editor.exe"), Path.of("lib", "a.dll"), Path.of("{x}", "b.txt")), true);
         // not through the Inno Setup Preprocessor : the directive is the first line
         assertTrue(script.startsWith("#preproc builtin\n"), script);
@@ -351,7 +352,7 @@ class WindowsPackagesTest {
 
         DesktopPackagingConfig perUser = TestConfig.of(Map.of("windows.per-user", "true", "windows.start-menu", "false"));
         String userScript = InnoSetupPackager.script(TestConfig.app(perUser), perUser.windows(), Arch.ARM64, ROOT,
-                "Acme Editor.exe", Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, false);
+                "Acme Editor.exe", Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, false);
         assertTrue(userScript.contains("PrivilegesRequired=lowest\n"), userScript);
         assertTrue(userScript.contains("ArchitecturesAllowed=arm64\n"), userScript);
         assertFalse(userScript.contains("{autoprograms}"), userScript);
@@ -377,7 +378,7 @@ class WindowsPackagesTest {
         DesktopPackagingConfig config = TestConfig.of(Map.of("windows.desktop-shortcut", "true"));
         AppInfo app = TestConfig.app(config).withApplicationId(Optional.of("Acme Editor"));
         Document document = parse(MsiPackager.wxs(app, config.windows(), ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), FILES));
+                Path.of("application.ico"), Map.of(), FILES));
         NodeList properties = document.getElementsByTagName("ShortcutProperty");
         assertEquals(2, properties.getLength());
         for (int i = 0; i < properties.getLength(); i++) {
@@ -387,7 +388,7 @@ class WindowsPackagesTest {
             assertEquals("Acme Editor", property.getAttribute("Value"));
         }
         String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true);
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, true);
         assertTrue(script.contains("Name: \"{autoprograms}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\";"
                 + " WorkingDir: \"{app}\"; AppUserModelID: \"Acme Editor\"\n"), script);
         assertTrue(script.contains("Name: \"{autodesktop}\\Acme Editor\"; Filename: \"{app}\\Acme Editor.exe\";"
@@ -395,30 +396,32 @@ class WindowsPackagesTest {
 
         // the WiX source escapes XML and the variables of WiX, the script its quotes and its constants
         AppInfo special = TestConfig.app(config).withApplicationId(Optional.of("A&\"B\" {x} $(y)"));
-        String xml = MsiPackager.wxs(special, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"),
+        String xml = MsiPackager.wxs(special, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), Map.of(),
                 FILES);
         assertTrue(xml.contains("<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"A&amp;&quot;B&quot; {x} $$(y)\""
                 + " />"), xml);
         // the value is of the Formatted type of Windows Installer, where brackets enclose the name of a property
         assertEquals("Editor [\\[]Beta[\\]]", MsiPackager.formatted("Editor [Beta]"));
         AppInfo brackets = TestConfig.app(config).withApplicationId(Optional.of("Editor [Beta]"));
-        assertTrue(MsiPackager.wxs(brackets, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), FILES)
+        assertTrue(MsiPackager
+                .wxs(brackets, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), Map.of(), FILES)
                 .contains("<ShortcutProperty Key=\"System.AppUserModel.ID\" Value=\"Editor [\\[]Beta[\\]]\" />"));
         assertTrue(InnoSetupPackager.script(special, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true)
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, true)
                 .contains("; AppUserModelID: \"A&\"\"B\"\" {{x} $(y)\"\n"));
 
         // Windows refuses an AppUserModelID of 128 characters or more : the process has none, nor have the shortcuts
         AppInfo longest = TestConfig.app(config).withApplicationId(Optional.of("x".repeat(127)));
-        assertTrue(MsiPackager.wxs(longest, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), FILES)
-                .contains("Value=\"" + "x".repeat(127) + "\""));
+        assertTrue(
+                MsiPackager.wxs(longest, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"), Map.of(), FILES)
+                        .contains("Value=\"" + "x".repeat(127) + "\""));
         AppInfo tooLong = TestConfig.app(config).withApplicationId(Optional.of("x".repeat(128)));
         assertEquals(wxs(config), MsiPackager.wxs(tooLong, config.windows(), ROOT, "Acme Editor.exe",
-                Path.of("application.ico"), FILES));
+                Path.of("application.ico"), Map.of(), FILES));
         assertEquals(InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT,
-                "Acme Editor.exe", Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true),
+                "Acme Editor.exe", Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, true),
                 InnoSetupPackager.script(tooLong, config.windows(), Arch.X64, ROOT, "Acme Editor.exe",
-                        Path.of("application.ico"), Path.of("out"), "Acme-Editor", FILES, true));
+                        Path.of("application.ico"), Map.of(), Path.of("out"), "Acme-Editor", FILES, true));
         // without a name, as an AWT or Swing application : the shortcuts of before
         assertFalse(wxs(config).contains("ShortcutProperty"), wxs(config));
         assertTrue(wxs(config).contains(" Icon=\"ApplicationIcon.ico\" />\n"), wxs(config));
@@ -434,7 +437,7 @@ class WindowsPackagesTest {
         AppInfo app = new AppInfo("Acme's {Editor}", "acme", "org.acme.Editor", "1.0", "Acme", "Edits", Optional.empty(),
                 Optional.empty(), Optional.empty());
         String script = InnoSetupPackager.script(app, TestConfig.defaults().windows(), Arch.X64, ROOT, "Editor.exe",
-                Path.of("application.ico"), Path.of("out"), "Editor-1.0", FILES, true);
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Editor-1.0", FILES, true);
         assertTrue(script.contains("    SuppressibleMsgBox('Acme''s {Editor} is installed by its MSI package : remove it"
                 + " first.', mbCriticalError, MB_OK, IDOK);\n"), script);
         assertTrue(script.contains("AppName=Acme's {{Editor}\n"), script);
@@ -464,7 +467,7 @@ class WindowsPackagesTest {
         AppInfo app = new AppInfo("100% {Fun}, A&B|C", "fun", "org.acme.Fun", "1.0", "Acme", "Fun", Optional.empty(),
                 Optional.empty(), Optional.empty());
         String script = InnoSetupPackager.script(app, config.windows(), Arch.X64, ROOT, "Fun.exe",
-                Path.of("application.ico"), Path.of("out"), "Fun-1.0", FILES, true);
+                Path.of("application.ico"), Map.of(), Path.of("out"), "Fun-1.0", FILES, true);
         assertTrue(script.contains("Description: \"{cm:LaunchProgram,100%25 {{Fun%7d%2c A&&B%7cC}\"; Flags:"), script);
         // elsewhere the name is not the argument of a constant
         assertTrue(script.contains("AppName=100% {{Fun}, A&B|C\n"), script);
@@ -1065,5 +1068,372 @@ class WindowsPackagesTest {
     private static AppInfo app(String version) {
         return new AppInfo("Acme Editor", "acme-editor", "org.acme.AcmeEditor", version, "Acme", "Edits documents",
                 Optional.empty(), Optional.empty(), Optional.empty());
+    }
+
+    /**
+     * The description of a file type, with the characters that the formats escape.
+     */
+    static final String DESCRIPTION = "#1 Acme & \"Sons\" 100% {x} } [y] $(z)";
+
+    static final String UAP = "http://schemas.microsoft.com/appx/manifest/uap/windows10";
+
+    /**
+     * Two file types, the first with an icon, and two URL schemes.
+     */
+    static Map<String, String> associations(Path icon) {
+        Map<String, String> properties = new HashMap<>();
+        properties.put("file-types.document.extensions", "acme, .ACMEX");
+        properties.put("file-types.document.description", DESCRIPTION);
+        properties.put("file-types.document.icon", icon.toString());
+        properties.put("file-types.image.extensions", "acmi");
+        properties.put("file-types.image.mime-type", "image/x-acme");
+        properties.put("url-schemes", "acme,acme-editor+x");
+        return properties;
+    }
+
+    /**
+     * The values of the {@code RegistryValue} elements of an element, by key and name ({@code key|name}).
+     */
+    static Map<String, String> registryValues(Element parent, String root) {
+        Map<String, String> values = new HashMap<>();
+        NodeList elements = parent.getElementsByTagName("RegistryValue");
+        for (int i = 0; i < elements.getLength(); i++) {
+            Element value = (Element) elements.item(i);
+            assertEquals(root, value.getAttribute("Root"));
+            values.put(value.getAttribute("Key") + "|" + value.getAttribute("Name"), value.getAttribute("Value"));
+        }
+        return values;
+    }
+
+    static Element component(Document document, String id) {
+        NodeList components = document.getElementsByTagName("Component");
+        for (int i = 0; i < components.getLength(); i++) {
+            if (((Element) components.item(i)).getAttribute("Id").equals(id)) {
+                return (Element) components.item(i);
+            }
+        }
+        throw new AssertionError("No component " + id);
+    }
+
+    /**
+     * A programmatic identifier per file type, whose first extension has the verb that opens the files with the
+     * launcher, and the keys of the URL schemes, in a component of the installation directory : in the classes of the
+     * machine, or of the user for a per-user package.
+     */
+    @Test
+    void theWixSourceRegistersTheFileTypesAndUrlSchemes(@TempDir Path project) throws Exception {
+        Path png = IconSet.generic().writePng(project.resolve("document.png"), 64);
+        DesktopPackagingConfig config = TestConfig.of(associations(png));
+        AppInfo app = TestConfig.app(config);
+        Path typeIcon = Path.of("work", "org.acme.AcmeEditor.document.ico");
+        String xml = MsiPackager.wxs(app, config.windows(), ROOT, "Acme Editor.exe", Path.of("application.ico"),
+                Map.of("document", typeIcon), FILES);
+        Document document = parse(xml);
+        Element component = component(document, "Associations");
+        assertEquals("INSTALLFOLDER", component.getAttribute("Directory"));
+        assertEquals(app.guid("component:associations:HKLM"), component.getAttribute("Guid"));
+        assertTrue(xml.contains("      <ComponentRef Id=\"Associations\" />\n"), xml);
+
+        NodeList progIds = component.getElementsByTagName("ProgId");
+        assertEquals(2, progIds.getLength());
+        Element documentType = (Element) progIds.item(0);
+        assertEquals("org.acme.AcmeEditor.document", documentType.getAttribute("Id"));
+        // a formatted text of Windows Installer, whose variables of WiX are escaped
+        assertEquals("##1 Acme & \"Sons\" 100% [\\{]x[\\}] [\\}] [\\[]y[\\]] $$(z)", documentType.getAttribute("Description"));
+        assertEquals("FileTypeIcon1", documentType.getAttribute("Icon"));
+        assertEquals("0", documentType.getAttribute("IconIndex"));
+        Element iconFile = (Element) component.getElementsByTagName("File").item(0);
+        assertEquals("FileTypeIcon1", iconFile.getAttribute("Id"));
+        assertEquals("org.acme.AcmeEditor.document.ico", iconFile.getAttribute("Name"));
+        assertEquals(typeIcon.toString(), iconFile.getAttribute("Source"));
+        assertEquals("no", iconFile.getAttribute("KeyPath"));
+        NodeList extensions = documentType.getElementsByTagName("Extension");
+        assertEquals(2, extensions.getLength());
+        assertEquals("acme", ((Element) extensions.item(0)).getAttribute("Id"));
+        assertEquals("acmex", ((Element) extensions.item(1)).getAttribute("Id"));
+        for (int i = 0; i < extensions.getLength(); i++) {
+            assertEquals("application/x-acme-editor-document", ((Element) extensions.item(i)).getAttribute("ContentType"));
+        }
+        // the verb is a key of the programmatic identifier, which WiX writes once
+        NodeList verbs = documentType.getElementsByTagName("Verb");
+        assertEquals(1, verbs.getLength());
+        Element verb = (Element) verbs.item(0);
+        assertSame(extensions.item(0), verb.getParentNode());
+        assertEquals("open", verb.getAttribute("Id"));
+        assertEquals("LauncherFile", verb.getAttribute("TargetFile"));
+        assertEquals("\"%1\"", verb.getAttribute("Argument"));
+        Element imageType = (Element) progIds.item(1);
+        assertEquals("org.acme.AcmeEditor.image", imageType.getAttribute("Id"));
+        assertEquals("Acme Editor image", imageType.getAttribute("Description"));
+        assertEquals("LauncherFile", imageType.getAttribute("Icon"));
+        assertEquals("image/x-acme", ((Element) imageType.getElementsByTagName("Extension").item(0))
+                .getAttribute("ContentType"));
+
+        Map<String, String> values = registryValues(component, "HKLM");
+        for (String scheme : List.of("acme", "acme-editor+x")) {
+            String key = "Software\\Classes\\" + scheme;
+            assertEquals("URL:Acme Editor", values.get(key + "|"));
+            assertEquals("", values.get(key + "|URL Protocol"));
+            assertEquals("[#LauncherFile],0", values.get(key + "\\DefaultIcon|"));
+            assertEquals("\"[#LauncherFile]\" \"%1\"", values.get(key + "\\shell\\open\\command|"));
+        }
+        assertEquals(9, values.size(), values.toString());
+        Element keyPath = (Element) component.getElementsByTagName("RegistryValue").item(8);
+        assertEquals("yes", keyPath.getAttribute("KeyPath"));
+        assertEquals("Associations", keyPath.getAttribute("Name"));
+
+        // for the current user
+        Map<String, String> perUserProperties = associations(png);
+        perUserProperties.put("windows.per-user", "true");
+        perUserProperties.put("name", "A {B} [C] & \"D\"");
+        DesktopPackagingConfig perUser = TestConfig.of(perUserProperties);
+        AppInfo userApp = TestConfig.app(perUser);
+        Document userDocument = parse(MsiPackager.wxs(userApp, perUser.windows(), ROOT, "Acme Editor.exe",
+                Path.of("application.ico"), Map.of(), FILES));
+        Element userComponent = component(userDocument, "Associations");
+        assertEquals(userApp.guid("component:associations:HKCU"), userComponent.getAttribute("Guid"));
+        assertEquals("URL:A [\\{]B[\\}] [\\[]C[\\]] & \"D\"",
+                registryValues(userComponent, "HKCU").get("Software\\Classes\\acme|"));
+        assertEquals(0, userComponent.getElementsByTagName("File").getLength());
+        assertEquals("LauncherFile", ((Element) userComponent.getElementsByTagName("ProgId").item(0)).getAttribute("Icon"));
+
+        // without file types nor URL schemes
+        assertFalse(wxs(TestConfig.defaults()).contains("Associations"));
+        assertFalse(wxs(TestConfig.defaults()).contains("ProgId"));
+    }
+
+    @Test
+    void theStringValuesOfTheRegistryTable() {
+        assertEquals("Acme [\\[]1[\\]] [\\{]x[\\}] #", MsiPackager.registryString("Acme [1] {x} #"));
+        assertEquals("##1", MsiPackager.registryString("#1"));
+        assertEquals("", MsiPackager.registryString(""));
+    }
+
+    /**
+     * The extensions name the programmatic identifier of their type, whose command opens the files with the launcher,
+     * in the classes that follow the privileges of the setup program ; the URL schemes have the command too.
+     */
+    @Test
+    void theInnoSetupScriptRegistersTheFileTypesAndUrlSchemes(@TempDir Path project) throws Exception {
+        Path png = IconSet.generic().writePng(project.resolve("document.png"), 64);
+        Map<String, String> properties = associations(png);
+        properties.put("name", "Acme {Editor}");
+        DesktopPackagingConfig config = TestConfig.of(properties);
+        Path typeIcon = Path.of("work", "org.acme.AcmeEditor.document.ico");
+        String script = InnoSetupPackager.script(TestConfig.app(config), config.windows(), Arch.X64, ROOT,
+                "Acme Editor.exe", Path.of("application.ico"), Map.of("document", typeIcon), Path.of("out"), "Acme-Editor",
+                FILES, true);
+        String prefix = "Root: HKA; Subkey: \"Software\\Classes\\";
+        String extension = "; Flags: uninsdeletevalue uninsdeletekeyifempty\n";
+        for (String suffix : List.of("acme", "acmex")) {
+            assertTrue(script.contains(prefix + "." + suffix + "\"; ValueType: string; ValueName: \"\"; ValueData:"
+                    + " \"org.acme.AcmeEditor.document\"" + extension), script);
+            assertTrue(script.contains(prefix + "." + suffix + "\"; ValueType: string; ValueName: \"Content Type\";"
+                    + " ValueData: \"application/x-acme-editor-document\"" + extension), script);
+            assertTrue(script.contains(prefix + "." + suffix + "\\OpenWithProgids\"; ValueType: string; ValueName:"
+                    + " \"org.acme.AcmeEditor.document\"; ValueData: \"\"" + extension), script);
+        }
+        String command = "\"; ValueType: string; ValueName: \"\"; ValueData: \"\"\"{app}\\Acme Editor.exe\"\""
+                + " \"\"%1\"\"\"\n";
+        // the constants and the quotes of the description are escaped
+        assertTrue(script.contains(prefix + "org.acme.AcmeEditor.document\"; ValueType: string; ValueName: \"\";"
+                + " ValueData: \"#1 Acme & \"\"Sons\"\" 100% {{x} } [y] $(z)\"; Flags: uninsdeletekey\n"), script);
+        assertTrue(script.contains(prefix + "org.acme.AcmeEditor.document\\DefaultIcon\"; ValueType: string; ValueName:"
+                + " \"\"; ValueData: \"{app}\\org.acme.AcmeEditor.document.ico,0\"\n"), script);
+        assertTrue(script.contains(prefix + "org.acme.AcmeEditor.document\\shell\\open\\command" + command), script);
+        assertTrue(script.contains(prefix + "org.acme.AcmeEditor.image\\DefaultIcon\"; ValueType: string; ValueName:"
+                + " \"\"; ValueData: \"{app}\\Acme Editor.exe,0\"\n"), script);
+        assertTrue(script.contains(prefix + "org.acme.AcmeEditor.image\\shell\\open\\command" + command), script);
+        for (String scheme : List.of("acme", "acme-editor+x")) {
+            assertTrue(script.contains(prefix + scheme + "\"; ValueType: string; ValueName: \"\"; ValueData:"
+                    + " \"URL:Acme {{Editor}\"; Flags: uninsdeletekey\n"), script);
+            assertTrue(script.contains(prefix + scheme + "\"; ValueType: string; ValueName: \"URL Protocol\"; ValueData:"
+                    + " \"\"\n"), script);
+            assertTrue(script.contains(prefix + scheme + "\\DefaultIcon\"; ValueType: string; ValueName: \"\"; ValueData:"
+                    + " \"{app}\\Acme Editor.exe,0\"\n"), script);
+            assertTrue(script.contains(prefix + scheme + "\\shell\\open\\command" + command), script);
+        }
+        // the icon of the type is installed with the application
+        assertTrue(script.contains("Source: \"" + typeIcon + "\"; DestDir: \"{app}\"; Flags: ignoreversion\n"), script);
+        assertTrue(script.contains("ChangesAssociations=yes\n"), script);
+        assertTrue(script.indexOf("ChangesAssociations") < script.indexOf("[Languages]"), script);
+        assertTrue(script.indexOf("[Icons]") < script.indexOf("[Registry]")
+                && script.indexOf("[Registry]") < script.indexOf("[Run]"), script);
+
+        // without file types nor URL schemes
+        assertFalse(script(TestConfig.defaults()).contains("[Registry]"));
+        assertFalse(script(TestConfig.defaults()).contains("ChangesAssociations"));
+    }
+
+    /**
+     * A file type association per file type and a protocol per URL scheme, in the extensions of the application.
+     */
+    @Test
+    void theMsixManifestRegistersTheFileTypesAndUrlSchemes(@TempDir Path project) throws Exception {
+        Path png = IconSet.generic().writePng(project.resolve("document.png"), 64);
+        DesktopPackagingConfig config = TestConfig.of(associations(png));
+        Document document = parse(MsixPackager.manifest(TestConfig.app(config), config.windows().msix(), Arch.X64,
+                "Acme Editor.exe"));
+        Element extensions = (Element) document.getElementsByTagName("Extensions").item(0);
+        assertEquals("Application", extensions.getParentNode().getNodeName());
+        NodeList categories = extensions.getElementsByTagNameNS(UAP, "Extension");
+        assertEquals(4, categories.getLength());
+        assertEquals("windows.fileTypeAssociation", ((Element) categories.item(0)).getAttribute("Category"));
+        assertEquals("windows.protocol", ((Element) categories.item(3)).getAttribute("Category"));
+        NodeList types = extensions.getElementsByTagNameNS(UAP, "FileTypeAssociation");
+        assertEquals(2, types.getLength());
+        Element documentType = (Element) types.item(0);
+        assertEquals("document", documentType.getAttribute("Name"));
+        assertEquals(DESCRIPTION, documentType.getElementsByTagNameNS(UAP, "DisplayName").item(0).getTextContent());
+        NodeList fileTypes = documentType.getElementsByTagNameNS(UAP, "FileType");
+        assertEquals(".acme", fileTypes.item(0).getTextContent());
+        assertEquals(".acmex", fileTypes.item(1).getTextContent());
+        assertEquals("application/x-acme-editor-document", ((Element) fileTypes.item(1)).getAttribute("ContentType"));
+        Element imageType = (Element) types.item(1);
+        assertEquals("image", imageType.getAttribute("Name"));
+        assertEquals("image/x-acme", ((Element) imageType.getElementsByTagNameNS(UAP, "FileType").item(0))
+                .getAttribute("ContentType"));
+        NodeList protocols = extensions.getElementsByTagNameNS(UAP, "Protocol");
+        assertEquals(2, protocols.getLength());
+        assertEquals("acme", ((Element) protocols.item(0)).getAttribute("Name"));
+        assertEquals("acme-editor+x", ((Element) protocols.item(1)).getAttribute("Name"));
+        assertEquals("Acme Editor", ((Element) protocols.item(1)).getElementsByTagNameNS(UAP, "DisplayName").item(0)
+                .getTextContent());
+
+        // what the schema of the manifest refuses
+        // the property of the message, and the configuration
+        Map<String, Map<String, String>> refusals = Map.of(
+                "file-types." + "x".repeat(101) + " :", Map.of("file-types." + "x".repeat(101) + ".extensions", "acme"),
+                "file-types.archive.extensions : tar.gz", Map.of("file-types.archive.extensions", "tar.gz"),
+                "file-types.archive.extensions : " + "a".repeat(64), Map.of("file-types.archive.extensions",
+                        "a".repeat(64)),
+                "url-schemes : a ", Map.of("url-schemes", "a"),
+                "url-schemes : " + "a".repeat(40), Map.of("url-schemes", "a".repeat(40)));
+        for (Map.Entry<String, Map<String, String>> refusal : refusals.entrySet()) {
+            DesktopPackagingConfig refused = TestConfig.of(refusal.getValue());
+            AppInfo refusedApp = TestConfig.app(refused);
+            PackagingException e = assertThrows(PackagingException.class, () -> MsixPackager.manifest(refusedApp,
+                    refused.windows().msix(), Arch.X64, "Acme Editor.exe"));
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging." + refusal.getKey()), e.getMessage());
+            assertThrows(PackagingException.class, () -> MsixPackager.checkAssociations(refusedApp));
+        }
+        assertFalse(MsixPackager.manifest(TestConfig.app(), TestConfig.defaults().windows().msix(), Arch.X64,
+                "Acme Editor.exe").contains("Extensions"));
+    }
+
+    /**
+     * Without file types nor URL schemes, the generated files are the ones of before : the associations only add
+     * their elements, lines and sections.
+     */
+    @Test
+    void theAssociationsOnlyAddToTheGeneratedFiles(@TempDir Path project) throws Exception {
+        Path png = IconSet.generic().writePng(project.resolve("document.png"), 64);
+        for (String perUser : List.of("false", "true")) {
+            Map<String, String> properties = associations(png);
+            properties.put("windows.per-user", perUser);
+            properties.put("windows.desktop-shortcut", "true");
+            DesktopPackagingConfig with = TestConfig.of(properties);
+            DesktopPackagingConfig without = TestConfig.of(Map.of("windows.per-user", perUser,
+                    "windows.desktop-shortcut", "true"));
+            Path typeIcon = Path.of("work", "org.acme.AcmeEditor.document.ico");
+
+            String wxs = MsiPackager.wxs(TestConfig.app(with), with.windows(), ROOT, "Acme Editor.exe",
+                    Path.of("application.ico"), Map.of("document", typeIcon), FILES);
+            int start = wxs.indexOf("    <Component Id=\"Associations\"");
+            int end = wxs.indexOf("    </Component>\n", start) + "    </Component>\n".length();
+            assertEquals(wxs(without), (wxs.substring(0, start) + wxs.substring(end))
+                    .replace("      <ComponentRef Id=\"Associations\" />\n", ""));
+
+            String script = InnoSetupPackager.script(TestConfig.app(with), with.windows(), Arch.X64, ROOT,
+                    "Acme Editor.exe", Path.of("application.ico"), Map.of("document", typeIcon), Path.of("out"),
+                    "Acme-Editor", FILES, true);
+            String registry = script.substring(script.indexOf("[Registry]\n"), script.indexOf("[Run]\n"));
+            assertEquals(script(without), script.replace(registry, "").replace("ChangesAssociations=yes\n", "")
+                    .replace("Source: \"" + typeIcon + "\"; DestDir: \"{app}\"; Flags: ignoreversion\n", ""));
+
+            String manifest = MsixPackager.manifest(TestConfig.app(with), with.windows().msix(), Arch.X64,
+                    "Acme Editor.exe");
+            String extensions = manifest.substring(manifest.indexOf("      <Extensions>\n"),
+                    manifest.indexOf("      </Extensions>\n") + "      </Extensions>\n".length());
+            assertEquals(MsixPackager.manifest(TestConfig.app(without), without.windows().msix(), Arch.X64,
+                    "Acme Editor.exe"), manifest.replace(extensions, ""));
+        }
+    }
+
+    /**
+     * The icons of the file types that have one, which the setup programs install into the installation directory.
+     */
+    @Test
+    void theIconsOfTheFileTypes(@TempDir Path project) throws IOException {
+        Path png = IconSet.generic().writePng(project.resolve("document.png"), 64);
+        AppInfo app = TestConfig.app(TestConfig.of(associations(png)));
+        Path work = Files.createDirectories(project.resolve("work"));
+        Map<String, Path> icons = WindowsSdk.writeFileTypeIcons(app, work, FILES);
+        assertEquals(Map.of("document", work.resolve("org.acme.AcmeEditor.document.ico")), icons);
+        byte[] ico = Files.readAllBytes(icons.get("document"));
+        // ICONDIR : reserved, type 1 (icon)
+        assertEquals(List.of(0, 0, 1, 0), List.of((int) ico[0], (int) ico[1], (int) ico[2], (int) ico[3]));
+        assertEquals(Map.of(), WindowsSdk.writeFileTypeIcons(TestConfig.app(), work, FILES));
+        // in a sub directory of the image, the name of an icon is not in the way
+        WindowsSdk.writeFileTypeIcons(app, work, List.of(Path.of("app", "org.acme.AcmeEditor.document.ico")));
+        PackagingException e = assertThrows(PackagingException.class, () -> WindowsSdk.writeFileTypeIcons(app, work,
+                List.of(Path.of("ORG.acme.AcmeEditor.document.ico"))));
+        assertTrue(e.getMessage().contains("org.acme.AcmeEditor.document.ico"), e.getMessage());
+    }
+
+    /**
+     * The App Installer file of the MSIX package : the URLs of the file and of the package, in the directory of the
+     * update URL, with their names percent encoded.
+     */
+    @Test
+    void theAppInstallerFileOfTheMsixPackage() throws Exception {
+        DesktopPackagingConfig config = TestConfig.of(Map.of("vendor", "Acme & Sons", "windows.msix.update-url",
+                " https://acme.org/down%20loads/ ", "windows.msix.update-hours", "0"));
+        AppInfo app = TestConfig.app(config);
+        String url = MsixPackager.updateUrl(config.windows().msix()).orElseThrow();
+        assertEquals("https://acme.org/down%20loads", url);
+        Document document = parse(MsixPackager.appInstaller(app, config.windows().msix(), Arch.ARM64, url,
+                "Acme Éditeur 1.2.3-arm64.msix"));
+        Element root = document.getDocumentElement();
+        assertEquals("http://schemas.microsoft.com/appx/appinstaller/2018", root.getNamespaceURI());
+        assertEquals("AppInstaller", root.getLocalName());
+        assertEquals("1.2.3.0", root.getAttribute("Version"));
+        assertEquals("https://acme.org/down%20loads/Acme%20%C3%89diteur%201.2.3-arm64.appinstaller",
+                root.getAttribute("Uri"));
+        Element main = (Element) document.getElementsByTagName("MainPackage").item(0);
+        assertEquals("org.acme.AcmeEditor", main.getAttribute("Name"));
+        assertEquals("CN=Acme & Sons", main.getAttribute("Publisher"));
+        assertEquals("1.2.3.0", main.getAttribute("Version"));
+        assertEquals("arm64", main.getAttribute("ProcessorArchitecture"));
+        assertEquals("https://acme.org/down%20loads/Acme%20%C3%89diteur%201.2.3-arm64.msix", main.getAttribute("Uri"));
+        assertEquals("0", ((Element) document.getElementsByTagName("OnLaunch").item(0))
+                .getAttribute("HoursBetweenUpdateChecks"));
+        assertEquals("UpdateSettings", document.getElementsByTagName("OnLaunch").item(0).getParentNode().getNodeName());
+
+        // once a day by default
+        DesktopPackagingConfig defaults = TestConfig.of(Map.of("windows.msix.update-url", "HTTP://acme.org"));
+        assertEquals(24, MsixPackager.updateHours(defaults.windows().msix()));
+        assertTrue(MsixPackager.appInstaller(TestConfig.app(defaults), defaults.windows().msix(), Arch.X64,
+                MsixPackager.updateUrl(defaults.windows().msix()).orElseThrow(), "a.msix")
+                .contains(" Uri=\"HTTP://acme.org/a.appinstaller\">"));
+        assertEquals(Optional.empty(), MsixPackager.updateUrl(TestConfig.defaults().windows().msix()));
+        assertEquals(Optional.empty(), MsixPackager.updateUrl(TestConfig.of(Map.of("windows.msix.update-url", " "))
+                .windows().msix()));
+
+        for (String invalid : List.of("ftp://acme.org/downloads", "https://acme.org/downloads?channel=beta",
+                "https://acme.org/downloads#latest", "https://acme.org/down loads", "acme.org/downloads",
+                "https:downloads", "file:///C:/downloads")) {
+            PackagingException e = assertThrows(PackagingException.class, () -> MsixPackager.updateUrl(
+                    TestConfig.of(Map.of("windows.msix.update-url", invalid)).windows().msix()), invalid);
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.msix.update-url=" + invalid + " :"),
+                    e.getMessage());
+        }
+        for (String hours : List.of("-1", "256")) {
+            PackagingException e = assertThrows(PackagingException.class, () -> MsixPackager.updateHours(
+                    TestConfig.of(Map.of("windows.msix.update-hours", hours)).windows().msix()));
+            assertTrue(e.getMessage().startsWith("quarkus.desktop.packaging.windows.msix.update-hours=" + hours + " :"),
+                    e.getMessage());
+        }
+        assertEquals("a%20b%25%2F~-._%26", MsixPackager.uriPath("a b%/~-._&"));
     }
 }

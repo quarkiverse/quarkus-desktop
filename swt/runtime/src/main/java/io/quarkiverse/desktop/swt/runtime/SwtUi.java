@@ -3,7 +3,11 @@ package io.quarkiverse.desktop.swt.runtime;
 import java.io.IOException;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.JarURLConnection;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.net.URL;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -23,6 +27,8 @@ import org.eclipse.swt.widgets.Display;
 import org.eclipse.swt.widgets.Shell;
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.swt.OpenRequest;
+import io.quarkiverse.desktop.swt.OpenRequest.Source;
 import io.quarkiverse.desktop.swt.QuitRequest;
 import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.SwtStartupEvent;
@@ -30,10 +36,12 @@ import io.quarkus.runtime.ApplicationLifecycleManager;
 import io.quarkus.runtime.ImageMode;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.Quarkus;
+import io.quarkus.runtime.annotations.CommandLineArguments;
 
 /**
  * The user interface of the application : creates the {@code Display}, fires {@link SwtStartupEvent} and runs the event
- * loop on the thread calling {@link #run()}, with the exit on last shell closed policy and the quit requests.
+ * loop on the thread calling {@link #run()}, with the exit on last shell closed policy, the quit requests and the
+ * {@link OpenRequest}s.
  * <p>
  * The static methods serve {@code UiThread}, {@code UiThreadExecutor} and {@code @RunOnUiThread} : they reach the user
  * interface of the current application, set by {@link #configure} when it starts.
@@ -111,6 +119,13 @@ public class SwtUi implements SwtLifecycle {
 
     @Inject
     Event<QuitRequest> quitRequests;
+
+    @Inject
+    Event<OpenRequest> openRequests;
+
+    @Inject
+    @CommandLineArguments
+    String[] arguments;
 
     private enum State {
         /**
@@ -190,6 +205,19 @@ public class SwtUi implements SwtLifecycle {
 
     private Optional<String> applicationVersion = Optional.empty();
 
+    /**
+     * The program arguments to open, {@code null} when the application does not observe {@link OpenRequest}.
+     */
+    private volatile OpenArguments openArguments;
+
+    /**
+     * Whether {@code SwtStartupEvent} was fired : the {@link OpenRequest}s of the system that came before are queued
+     * until then (user interface thread only).
+     */
+    private boolean opened;
+
+    private final List<OpenRequest> systemRequests = new ArrayList<>();
+
     // ---------------------------------------------------------------------------------------------- configuration
 
     /**
@@ -219,6 +247,23 @@ public class SwtUi implements SwtLifecycle {
             // user interface before it starts. The window left is the time the watcher takes to wake up.
             watchExit();
         }
+    }
+
+    /**
+     * The application observes {@link OpenRequest} : the user interface fires those of the program arguments, of the
+     * system ({@code SWT.OpenDocument}, {@code SWT.OpenUrl}) and of the next launches.
+     *
+     * @param arguments the program arguments to open
+     */
+    void observeOpenRequests(OpenArguments arguments) {
+        openArguments = arguments;
+    }
+
+    /**
+     * The program arguments of the application.
+     */
+    List<String> arguments() {
+        return arguments != null ? List.of(arguments) : List.of();
     }
 
     /**
@@ -333,11 +378,19 @@ public class SwtUi implements SwtLifecycle {
             created.setErrorHandler(e -> UI_THREAD_LOGGER.errorf(e, "Uncaught error in the user interface thread %s",
                     Thread.currentThread().getName()));
             created.addListener(SWT.Close, this::quitRequested);
+            if (openArguments != null) {
+                // before SwtStartupEvent : the files opened with the application on macOS are the first events
+                created.addListener(SWT.OpenDocument, this::openDocument);
+                created.addListener(SWT.OpenUrl, this::openUrl);
+            }
             if (exitOnLastShellClosed) {
                 exitPolicy = LastShellExitPolicy.install(created, Quarkus::asyncExit);
             }
             if (!stopRequested) {
                 fire(created);
+                if (!stopRequested && !created.isDisposed()) {
+                    fireOpenRequests();
+                }
             }
             start(created);
             loop(created);
@@ -676,6 +729,85 @@ public class SwtUi implements SwtLifecycle {
             } else {
                 LOGGER.error("A SwtStartupEvent observer failed", e);
             }
+        }
+    }
+
+    /**
+     * Once {@code SwtStartupEvent} is fired : fires the {@link OpenRequest} of the program arguments, then those of the
+     * system that came meanwhile. The requests of the next launches, queued tasks, run next.
+     */
+    private void fireOpenRequests() {
+        opened = true;
+        OpenArguments parser = openArguments;
+        if (parser != null) {
+            OpenRequest launch = parser.request(arguments(), Source.LAUNCH);
+            if (!launch.isEmpty()) {
+                fireOpenRequest(launch);
+            }
+        }
+        List<OpenRequest> requests = new ArrayList<>(systemRequests);
+        systemRequests.clear();
+        requests.forEach(this::fireOpenRequest);
+    }
+
+    /**
+     * The {@code SWT.OpenDocument} event of the {@code Display} : a file opened with the application (macOS).
+     */
+    private void openDocument(org.eclipse.swt.widgets.Event event) {
+        if (event.text == null || event.text.isEmpty()) {
+            return;
+        }
+        try {
+            systemRequest(new OpenRequest(List.of(Path.of(event.text).toAbsolutePath()), List.of(), Source.SYSTEM));
+        } catch (InvalidPathException e) {
+            LOGGER.debugf("Ignored the file %s opened with the application : %s", event.text, e.getMessage());
+        }
+    }
+
+    /**
+     * The {@code SWT.OpenUrl} event of the {@code Display} : a URL opened with the application (never on macOS, an SWT
+     * bug).
+     */
+    private void openUrl(org.eclipse.swt.widgets.Event event) {
+        if (event.text == null || event.text.isEmpty()) {
+            return;
+        }
+        try {
+            systemRequest(new OpenRequest(List.of(), List.of(new URI(event.text)), Source.SYSTEM));
+        } catch (URISyntaxException e) {
+            LOGGER.debugf("Ignored the URL %s opened with the application : %s", event.text, e.getMessage());
+        }
+    }
+
+    private void systemRequest(OpenRequest request) {
+        if (opened) {
+            fireOpenRequest(request);
+        } else {
+            systemRequests.add(request);
+        }
+    }
+
+    /**
+     * Fires an {@link OpenRequest} of another launch on the user interface thread (from any thread) : queued until
+     * {@code SwtStartupEvent} is fired, ignored once the user interface stopped.
+     */
+    void open(OpenRequest request) {
+        try {
+            enqueue(() -> fireOpenRequest(request));
+        } catch (RejectedExecutionException e) {
+            LOGGER.debugf("%s is ignored : %s", request, e.getMessage());
+        }
+    }
+
+    private void fireOpenRequest(OpenRequest request) {
+        if (stopRequested) {
+            return;
+        }
+        try {
+            LOGGER.debugf("Fires %s", request);
+            openRequests.fire(request);
+        } catch (RuntimeException | Error e) {
+            LOGGER.error("An OpenRequest observer failed", e);
         }
     }
 

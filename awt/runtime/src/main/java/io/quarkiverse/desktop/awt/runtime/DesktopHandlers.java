@@ -11,9 +11,12 @@ import java.awt.desktop.PreferencesEvent;
 import java.awt.desktop.PrintFilesEvent;
 import java.awt.desktop.QuitEvent;
 import java.awt.desktop.QuitResponse;
+import java.io.File;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -22,13 +25,15 @@ import java.util.stream.Collectors;
 
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.awt.OpenRequest;
+import io.quarkiverse.desktop.awt.OpenRequest.Source;
 import io.quarkiverse.desktop.awt.QuitRequest;
 import io.smallrye.common.os.OS;
 
 /**
  * The application handlers of {@code java.awt.Desktop} (the application menu, the Finder and the Dock of macOS) as CDI
- * events : the About and Preferences menu items, the files and URIs opened with the application, the Dock icon clicked,
- * and the quit requests ({@link QuitRequest}).
+ * events : the About and Preferences menu items, the files and URIs opened with the application (also as
+ * {@link OpenRequest}), the Dock icon clicked, and the quit requests ({@link QuitRequest}).
  * <p>
  * Only the handlers of the observed events are installed (an About handler replaces the default About window), and the
  * quit handler on macOS, which stops the application through Quarkus instead of {@code System.exit} on the event
@@ -80,6 +85,8 @@ public final class DesktopHandlers {
 
     private final AppReopenedListener reopened;
 
+    private final Set<String> observed = new HashSet<>();
+
     /**
      * @param events fires a CDI event, synchronously
      * @param stopped whether the application stopped
@@ -95,10 +102,21 @@ public final class DesktopHandlers {
     }
 
     /**
-     * The class names of the events fired : the {@code java.awt.desktop} events and {@link QuitRequest}.
+     * The class names of the events fired : the {@code java.awt.desktop} events, {@link QuitRequest} and
+     * {@link OpenRequest}.
      */
     public static Set<String> eventTypes() {
-        return Arrays.stream(Handler.values()).map(handler -> handler.event.getName()).collect(Collectors.toSet());
+        Set<String> types = Arrays.stream(Handler.values()).map(handler -> handler.event.getName())
+                .collect(Collectors.toCollection(HashSet::new));
+        types.add(OpenRequest.class.getName());
+        return types;
+    }
+
+    /**
+     * Whether the handler fires {@link OpenRequest} too : the files and URIs opened with the application.
+     */
+    private static boolean opens(Handler handler) {
+        return handler == Handler.OPEN_FILES || handler == Handler.OPEN_URI;
     }
 
     /**
@@ -118,11 +136,13 @@ public final class DesktopHandlers {
             }
             return handlers;
         }
+        boolean openRequest = observedEvents.contains(OpenRequest.class.getName());
         for (Handler handler : Handler.values()) {
-            if (handler == Handler.QUIT && os == OS.MAC || observedEvents.contains(handler.event.getName())) {
+            boolean observedEvent = observedEvents.contains(handler.event.getName());
+            if (handler == Handler.QUIT && os == OS.MAC || observedEvent || openRequest && opens(handler)) {
                 if (supported.test(handler.action())) {
                     handlers.add(handler);
-                } else {
+                } else if (observedEvent) {
                     LOGGER.debugf("The platform does not support %s : %s is never fired", handler.actionName,
                             handler.event.getSimpleName());
                 }
@@ -155,14 +175,15 @@ public final class DesktopHandlers {
         if (handlers.isEmpty()) {
             return;
         }
+        observed.addAll(observedEvents);
         Desktop desktop = Desktop.getDesktop();
         for (Handler handler : handlers) {
             try {
                 switch (handler) {
                     case ABOUT -> desktop.setAboutHandler(this::fire);
                     case PREFERENCES -> desktop.setPreferencesHandler(this::fire);
-                    case OPEN_FILES -> desktop.setOpenFileHandler(this::fire);
-                    case OPEN_URI -> desktop.setOpenURIHandler(this::fire);
+                    case OPEN_FILES -> desktop.setOpenFileHandler(this::openFiles);
+                    case OPEN_URI -> desktop.setOpenURIHandler(this::openUri);
                     case PRINT_FILES -> desktop.setPrintFileHandler(this::fire);
                     case APP_REOPENED -> desktop.addAppEventListener(reopened);
                     case QUIT -> desktop.setQuitHandler(this::quit);
@@ -204,6 +225,30 @@ public final class DesktopHandlers {
     private void fire(Object event) {
         if (!stopped.getAsBoolean()) {
             events.accept(event);
+        }
+    }
+
+    /**
+     * Fires the files opened with the application : the {@code OpenFilesEvent} and the {@link OpenRequest} observed.
+     */
+    void openFiles(OpenFilesEvent event) {
+        if (observed.contains(OpenFilesEvent.class.getName())) {
+            fire(event);
+        }
+        if (observed.contains(OpenRequest.class.getName())) {
+            fire(new OpenRequest(event.getFiles().stream().map(File::toPath).toList(), List.of(), Source.SYSTEM));
+        }
+    }
+
+    /**
+     * Fires the URI opened with the application : the {@code OpenURIEvent} and the {@link OpenRequest} observed.
+     */
+    void openUri(OpenURIEvent event) {
+        if (observed.contains(OpenURIEvent.class.getName())) {
+            fire(event);
+        }
+        if (observed.contains(OpenRequest.class.getName())) {
+            fire(new OpenRequest(List.of(), List.of(event.getURI()), Source.SYSTEM));
         }
     }
 

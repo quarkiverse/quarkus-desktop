@@ -202,6 +202,61 @@ class ApplicationImageTest {
         String plist = Files.readString(image.root().resolve("Contents/Info.plist"));
         assertTrue(plist.contains("<string>org.acme.AcmeEditor</string>"), plist);
         assertTrue(plist.contains("<string>Acme-Editor.icns</string>"), plist);
+        assertFalse(plist.contains("CFBundleDocumentTypes"), plist);
+    }
+
+    /**
+     * The bundle of an application that opens files and URLs : the icons of its file types in its resources, and their
+     * entries in its information property list.
+     */
+    @Test
+    void theFileTypesOfAMacNativeBundle(@TempDir Path project) throws IOException {
+        Path target = nativeBuild(project);
+        IconSet.generic().writePng(project.resolve("document.png"), 64);
+        PackagingContext context = context(project, TargetOs.MACOS, Map.of("macos.sign.enabled", "false",
+                "file-types.document.extensions", "acme", "file-types.document.icon", "document.png",
+                "file-types.notes.extensions", "notes", "url-schemes", "acme"));
+        ApplicationImage image = NativeApplicationImage.build(context, target.resolve("acme-runner"), List.of(),
+                List.of());
+        assertEquals(List.of(Path.of("Contents", "Resources", "Acme-Editor.icns"),
+                Path.of("Contents", "Resources", "org.acme.AcmeEditor.document.icns")),
+                FileTrees.files(image.root()).stream().filter(file -> file.toString().endsWith(".icns")).toList());
+        String plist = Files.readString(image.root().resolve("Contents/Info.plist"));
+        assertTrue(plist.contains("<key>CFBundleTypeIconFile</key>\n            <string>org.acme.AcmeEditor.document.icns"
+                + "</string>\n"), plist);
+        assertTrue(plist.contains("<string>org.acme.AcmeEditor.notes</string>"), plist);
+        assertTrue(plist.contains("<key>CFBundleURLSchemes</key>\n            <array>\n"
+                + "                <string>acme</string>\n"), plist);
+    }
+
+    /**
+     * The bundle that {@code jpackage} wrote gets the file types and URL schemes, and the icons of the file types :
+     * nothing changes without them.
+     */
+    @Test
+    void theFileTypesOfAJvmBundle(@TempDir Path project) throws IOException {
+        IconSet.generic().writePng(project.resolve("document.png"), 64);
+        String jpackagePlist = String.join("\n", "<?xml version=\"1.0\" ?>", "<plist version=\"1.0\">", " <dict>",
+                "  <key>CFBundleName</key>", "  <string>Acme Editor</string>", " </dict>", "</plist>", "");
+        Path bundle = project.resolve("Acme Editor.app");
+        FileTrees.write(bundle.resolve("Contents/Info.plist"), jpackagePlist);
+        FileTrees.write(bundle.resolve("Contents/Resources/Acme Editor.icns"), new byte[] { 1 });
+
+        JvmApplicationImage.bundleEntries(context(project, TargetOs.MACOS, Map.of()), bundle);
+        assertEquals(jpackagePlist, Files.readString(bundle.resolve("Contents/Info.plist")));
+        assertEquals(List.of(Path.of("Contents", "Info.plist"), Path.of("Contents", "Resources", "Acme Editor.icns")),
+                FileTrees.files(bundle));
+
+        JvmApplicationImage.bundleEntries(context(project, TargetOs.MACOS, Map.of("file-types.document.extensions",
+                "acme", "file-types.document.icon", "document.png", "url-schemes", "acme")), bundle);
+        String plist = Files.readString(bundle.resolve("Contents/Info.plist"));
+        assertTrue(plist.contains("  <key>CFBundleDocumentTypes</key>\n  <array>\n    <dict>\n"
+                + "      <key>CFBundleTypeName</key>\n      <string>Acme Editor document</string>\n"), plist);
+        assertTrue(plist.contains("        <key>public.mime-type</key>\n"
+                + "        <string>application/x-acme-editor-document</string>\n"), plist);
+        assertTrue(plist.contains("<key>CFBundleURLTypes</key>"), plist);
+        assertTrue(plist.endsWith("    </dict>\n  </array>\n </dict>\n</plist>\n"), plist);
+        assertTrue(Files.size(bundle.resolve("Contents/Resources/org.acme.AcmeEditor.document.icns")) > 8);
     }
 
     @Test

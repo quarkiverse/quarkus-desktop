@@ -13,6 +13,7 @@ import java.util.regex.Pattern;
 
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
@@ -24,14 +25,19 @@ import io.quarkiverse.desktop.packaging.deployment.Xml;
 
 /**
  * A Windows Installer package ({@code .msi}), built with the WiX Toolset 4 or later ({@code wix build}) from a
- * generated source : the files of the application image, the shortcuts, and a major upgrade (the package of a new
- * version replaces the installed one).
+ * generated source : the files of the application image, the shortcuts, the file types and URL schemes, and a major
+ * upgrade (the package of a new version replaces the installed one).
  */
 public final class MsiPackager implements Packager {
 
     static final String LAUNCHER_FILE = "LauncherFile";
 
     private static final String ICON = "ApplicationIcon.ico";
+
+    /**
+     * The component of the file types and URL schemes.
+     */
+    private static final String ASSOCIATIONS = "Associations";
 
     /**
      * The name of a variable of WiX, and its scope : identifiers, which start with a letter or an underscore, and go on
@@ -71,7 +77,9 @@ public final class MsiPackager implements Packager {
         Path icon = FileTrees.write(work.resolve("application.ico"), context.icons().ico());
         List<Path> files = FileTrees.files(image.root());
         WindowsSdk.checkPathLengths(image.root(), files, "The WiX Toolset");
-        String source = wxs(context.app(), context.config().windows(), image.root(), image.launcher(), icon, files);
+        Map<String, Path> typeIcons = WindowsSdk.writeFileTypeIcons(context.app(), work, files);
+        String source = wxs(context.app(), context.config().windows(), image.root(), image.launcher(), icon, typeIcons,
+                files);
         Path wxs = FileTrees.write(work.resolve("application.wxs"), source);
         Path msi = context.output(WindowsSdk.packageFileName(context.app(), context.arch(), PackageFormat.MSI));
         WindowsSdk.warnEmptyDirectories(image, msi);
@@ -225,10 +233,12 @@ public final class MsiPackager implements Packager {
      * @param root the directory of the application image
      * @param launcher the path of the executable in the application image, with {@code /} separators
      * @param icon the icon of the application in the installed programs
+     * @param typeIcons the icons of the file types that have one, by name of type
+     *        ({@link WindowsSdk#writeFileTypeIcons})
      * @param files the files of the application image, relative to its directory
      */
     static String wxs(AppInfo app, DesktopPackagingConfig.Windows config, Path root, String launcher, Path icon,
-            List<Path> files) {
+            Map<String, Path> typeIcons, List<Path> files) {
         boolean perUser = config.perUser();
         String upgradeCode = upgradeCode(app, config);
         String registryKey = "Software\\" + app.vendor() + "\\" + app.name();
@@ -308,6 +318,10 @@ public final class MsiPackager implements Packager {
             shortcut(xml, "      ", "DesktopShortcut", app, registryKey, false, List.of());
             xml.append("    </StandardDirectory>\n");
             ids.components.add("DesktopShortcut");
+        }
+        if (!app.associations().isEmpty()) {
+            associations(xml, app, perUser, registryKey, typeIcons);
+            ids.components.add(ASSOCIATIONS);
         }
 
         xml.append("    <Feature Id=\"Application\" Title=\"").append(text(app.name())).append("\" Level=\"1\">\n");
@@ -450,7 +464,92 @@ public final class MsiPackager implements Packager {
     }
 
     private static void registryKeyPath(StringBuilder xml, String indent, String key, String name) {
-        xml.append(indent).append("<RegistryValue Root=\"HKCU\" Key=\"").append(text(key)).append("\" Name=\"")
-                .append(name).append("\" Type=\"integer\" Value=\"1\" KeyPath=\"yes\" />\n");
+        registryKeyPath(xml, indent, "HKCU", key, name);
+    }
+
+    private static void registryKeyPath(StringBuilder xml, String indent, String root, String key, String name) {
+        xml.append(indent).append("<RegistryValue Root=\"").append(root).append("\" Key=\"").append(text(key))
+                .append("\" Name=\"").append(name).append("\" Type=\"integer\" Value=\"1\" KeyPath=\"yes\" />\n");
+    }
+
+    /**
+     * The component of the file types and URL schemes of the application, in the installation directory : a
+     * programmatic identifier per file type, whose extensions open with the launcher, and the keys of the URL schemes,
+     * in the classes of the user for a per-user package, of the machine otherwise. Its key path is a registry value of
+     * the application there, and its GUID is derived from the identifier of the application.
+     *
+     * @param typeIcons the icons of the file types that have one, by name of type, which the component installs : the
+     *        other types have the icon of the launcher
+     */
+    private static void associations(StringBuilder xml, AppInfo app, boolean perUser, String registryKey,
+            Map<String, Path> typeIcons) {
+        String root = perUser ? "HKCU" : "HKLM";
+        xml.append("    <Component Id=\"").append(ASSOCIATIONS).append("\" Directory=\"INSTALLFOLDER\" Guid=\"")
+                .append(app.guid("component:associations:" + root)).append("\">\n");
+        int icons = 0;
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            String iconFile = LAUNCHER_FILE;
+            Path icon = typeIcons.get(type.name());
+            if (icon != null) {
+                iconFile = "FileTypeIcon" + (++icons);
+                xml.append("      <File Id=\"").append(iconFile).append("\" Name=\"")
+                        .append(text(WindowsSdk.fileTypeIconName(app, type))).append("\" Source=\"")
+                        .append(text(icon.toString())).append("\" KeyPath=\"no\" />\n");
+            }
+            // WiX writes the description as a registry value of Windows Installer
+            xml.append("      <ProgId Id=\"").append(text(type.identifier(app))).append("\" Description=\"")
+                    .append(text(registryString(type.description()))).append("\" Icon=\"").append(iconFile)
+                    .append("\" IconIndex=\"0\">\n");
+            // the verb is a key of the programmatic identifier : in its first extension only, as WiX writes it once
+            for (int i = 0; i < type.extensions().size(); i++) {
+                xml.append("        <Extension Id=\"").append(text(type.extensions().get(i))).append("\" ContentType=\"")
+                        .append(text(type.mimeType())).append(i == 0 ? "\">\n" : "\" />\n");
+                if (i == 0) {
+                    xml.append("          <Verb Id=\"open\" TargetFile=\"").append(LAUNCHER_FILE)
+                            .append("\" Argument=\"&quot;%1&quot;\" />\n");
+                    xml.append("        </Extension>\n");
+                }
+            }
+            xml.append("      </ProgId>\n");
+        }
+        for (String scheme : app.associations().urlSchemes()) {
+            String key = "Software\\Classes\\" + scheme;
+            registryValue(xml, root, key, null, registryString("URL:" + app.name()));
+            registryValue(xml, root, key, "URL Protocol", "");
+            registryValue(xml, root, key + "\\DefaultIcon", null, "[#" + LAUNCHER_FILE + "],0");
+            registryValue(xml, root, key + "\\shell\\open\\command", null, "\"[#" + LAUNCHER_FILE + "]\" \"%1\"");
+        }
+        registryKeyPath(xml, "      ", root, registryKey + "\\Components", ASSOCIATIONS);
+        xml.append("    </Component>\n");
+    }
+
+    /**
+     * A text as a string value of the {@code Registry} table of Windows Installer, a formatted text : the brackets
+     * and the braces are escaped ({@code [\[]}, {@code [\{]}), as a brace without its pair is an invalid value (ICE03),
+     * and a leading number sign is doubled (a value that starts with one is a number).
+     */
+    static String registryString(String text) {
+        StringBuilder value = new StringBuilder(text.startsWith("#") ? "#" : "");
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ("[]{}".indexOf(c) >= 0) {
+                value.append("[\\").append(c).append(']');
+            } else {
+                value.append(c);
+            }
+        }
+        return value.toString();
+    }
+
+    /**
+     * A string value of the registry, in the component of the associations.
+     *
+     * @param name the name of the value, {@code null} for the default value of the key
+     * @param value the value, a formatted text of Windows Installer
+     */
+    private static void registryValue(StringBuilder xml, String root, String key, String name, String value) {
+        xml.append("      <RegistryValue Root=\"").append(root).append("\" Key=\"").append(text(key)).append("\"")
+                .append(name == null ? "" : " Name=\"" + text(name) + "\"").append(" Type=\"string\" Value=\"")
+                .append(text(value)).append("\" />\n");
     }
 }

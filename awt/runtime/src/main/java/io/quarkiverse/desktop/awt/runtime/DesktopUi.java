@@ -2,6 +2,7 @@ package io.quarkiverse.desktop.awt.runtime;
 
 import java.awt.Component;
 import java.awt.EventQueue;
+import java.util.ArrayList;
 import java.util.List;
 
 import jakarta.enterprise.event.Event;
@@ -12,15 +13,18 @@ import org.jboss.logging.Logger;
 
 import io.quarkiverse.desktop.awt.DesktopLifecycle;
 import io.quarkiverse.desktop.awt.DesktopStartupEvent;
+import io.quarkiverse.desktop.awt.OpenRequest;
+import io.quarkiverse.desktop.awt.OpenRequest.Source;
 import io.quarkus.arc.Arc;
 import io.quarkus.arc.InjectableBean;
 import io.quarkus.arc.InjectableContext;
 import io.quarkus.runtime.LaunchMode;
 import io.quarkus.runtime.Quarkus;
+import io.quarkus.runtime.annotations.CommandLineArguments;
 
 /**
  * The user interface of the application : fires {@link DesktopStartupEvent} on the event dispatch thread, with the exit
- * on last window closed policy and the handlers of {@code java.awt.Desktop}.
+ * on last window closed policy and the handlers of {@code java.awt.Desktop}, then the {@link OpenRequest}s.
  */
 @Singleton
 public class DesktopUi implements DesktopLifecycle {
@@ -32,6 +36,10 @@ public class DesktopUi implements DesktopLifecycle {
 
     @Inject
     Event<Object> events;
+
+    @Inject
+    @CommandLineArguments
+    String[] arguments;
 
     private enum State {
         /**
@@ -79,18 +87,39 @@ public class DesktopUi implements DesktopLifecycle {
     private volatile boolean stopped;
 
     /**
+     * The program arguments to open, {@code null} when the application does not observe {@link OpenRequest}.
+     */
+    private OpenArguments openArguments;
+
+    /**
+     * Whether {@code DesktopStartupEvent} was fired : the {@link OpenRequest}s are queued until then.
+     */
+    private boolean opened;
+
+    private final List<OpenRequest> openRequests = new ArrayList<>();
+
+    /**
+     * Whether this launch forwarded its request to the running instance of the application, and stops.
+     */
+    private volatile boolean forwarded;
+
+    /**
      * Enables {@link #start()} : the application starts with a user interface. Fires the event when the application
      * called {@link #start()} before (from a {@code StartupEvent} observer).
      *
      * @param desktopHandlers whether to install the handlers of {@code java.awt.Desktop}
      * @param desktopEvents the class names of the {@code java.awt.Desktop} events that the application observes
+     * @param openArguments the program arguments to open, {@code null} when the application does not observe
+     *        {@link OpenRequest}
      */
-    void enable(LaunchMode launchMode, boolean exitOnLastWindowClosed, boolean desktopHandlers, List<String> desktopEvents) {
+    void enable(LaunchMode launchMode, boolean exitOnLastWindowClosed, boolean desktopHandlers, List<String> desktopEvents,
+            OpenArguments openArguments) {
         boolean start;
         synchronized (lock) {
             this.launchMode = launchMode;
             this.exitOnLastWindowClosed = exitOnLastWindowClosed;
             this.desktopEvents = List.copyOf(desktopEvents);
+            this.openArguments = openArguments;
             this.handlers = desktopHandlers
                     ? new DesktopHandlers(event -> events.fire(event), () -> stopped, () -> Quarkus.asyncExit(0),
                             launchMode == LaunchMode.NORMAL)
@@ -200,10 +229,86 @@ public class DesktopUi implements DesktopLifecycle {
             if (launchMode == LaunchMode.NORMAL) {
                 LOGGER.error("A DesktopStartupEvent observer failed : the application stops", e);
                 Quarkus.asyncExit(1);
+                return;
             } else {
                 LOGGER.error("A DesktopStartupEvent observer failed", e);
             }
         }
+        fireOpenRequests();
+    }
+
+    /**
+     * Once {@code DesktopStartupEvent} is fired : fires the {@link OpenRequest} of the program arguments, then those
+     * queued meanwhile (the next launches of the application).
+     */
+    private void fireOpenRequests() {
+        OpenArguments parser;
+        synchronized (lock) {
+            parser = openArguments;
+        }
+        OpenRequest launch = parser != null ? parser.request(arguments(), Source.LAUNCH) : null;
+        List<OpenRequest> requests = new ArrayList<>();
+        if (launch != null && !launch.isEmpty()) {
+            requests.add(launch);
+        }
+        synchronized (lock) {
+            opened = true;
+            requests.addAll(openRequests);
+            openRequests.clear();
+        }
+        requests.forEach(this::fireOpenRequest);
+    }
+
+    /**
+     * Fires an {@link OpenRequest} on the event dispatch thread (from any thread) : queued until
+     * {@code DesktopStartupEvent} is fired, ignored once the application stops.
+     */
+    void open(OpenRequest request) {
+        synchronized (lock) {
+            if (stopped) {
+                return;
+            }
+            if (!opened) {
+                openRequests.add(request);
+                return;
+            }
+        }
+        EventQueue.invokeLater(() -> fireOpenRequest(request));
+    }
+
+    private void fireOpenRequest(OpenRequest request) {
+        if (stopped) {
+            return;
+        }
+        try {
+            LOGGER.debugf("Fires %s", request);
+            events.fire(request);
+        } catch (Throwable e) {
+            LOGGER.error("An OpenRequest observer failed", e);
+        }
+    }
+
+    /**
+     * The program arguments of the application.
+     */
+    List<String> arguments() {
+        return arguments != null ? List.of(arguments) : List.of();
+    }
+
+    /**
+     * This launch forwarded its request to the running instance of the application, and stops : the user interface
+     * does not start.
+     */
+    void forwarded() {
+        forwarded = true;
+        disable();
+    }
+
+    /**
+     * Whether this launch forwarded its request to the running instance of the application.
+     */
+    boolean isForwarded() {
+        return forwarded;
     }
 
     /**

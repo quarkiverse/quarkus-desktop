@@ -80,7 +80,9 @@ public final class SnapPackager implements Packager {
     /**
      * Writes the project of Snapcraft : the part of the snap (the application image, in {@code payload/lib/<name>}),
      * {@code snap/snapcraft.yaml}, and the desktop entry and the icon of the snap in {@code snap/gui}, which Snapcraft
-     * copies to {@code meta/gui} with their permissions. {@code snap pack} refuses the files of {@code meta} that are
+     * copies to {@code meta/gui} with their permissions : the desktop entry has the MIME types of the file types and URL
+     * schemes, which {@code snapd} keeps (a snap installs no shared MIME-info file : its file types need MIME types that
+     * the system knows). {@code snap pack} refuses the files of {@code meta} that are
      * not readable by everyone : the files of the project get the permissions of the files of a package, whatever the
      * umask of the build.
      *

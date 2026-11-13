@@ -3,15 +3,19 @@ package io.quarkiverse.desktop.swt.runtime;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.swt.OpenRequest;
+import io.quarkiverse.desktop.swt.OpenRequest.Source;
 import io.quarkus.arc.runtime.BeanContainer;
 import io.quarkus.core.StartContext;
 import io.quarkus.runtime.ApplicationLifecycleManager;
 import io.quarkus.runtime.LaunchMode;
+import io.quarkus.runtime.Quarkus;
 
 /**
  * Run time support of the user interface, and of the native libraries of SWT in native executables and snaps : what the
@@ -56,10 +60,16 @@ public final class DesktopSwtSupport {
      *        ({@code quarkus.desktop.packaging.name}) with the Desktop Packaging extension, else
      *        {@code quarkus.application.name}
      * @param applicationVersion {@code quarkus.application.version}
+     * @param identifier the identifier of the application for {@code quarkus.desktop.swt.single-instance} : the
+     *        identifier of its packages, else {@code quarkus.application.name}, {@code null} when it has none
+     * @param openRequests whether the application observes {@code OpenRequest}
+     * @param extensions the extensions of the files that the application opens (Desktop Packaging extension)
+     * @param schemes the URL schemes that the application opens (Desktop Packaging extension)
      */
     public static void configureUserInterface(StartContext context, BeanContainer beans, DesktopSwtRuntimeConfig config,
             LaunchMode launchMode, boolean lifecycleObserversDisabled, String applicationName,
-            String applicationVersion) {
+            String applicationVersion, String identifier, boolean openRequests, List<String> extensions,
+            List<String> schemes) {
         useSnapLibraryPath(System.getenv());
         SwtUi ui = beans.beanInstance(SwtUi.class);
         boolean enabled = config.startupEvent().enabled().orElse(launchMode != LaunchMode.TEST);
@@ -70,6 +80,14 @@ public final class DesktopSwtSupport {
                     : "The user interface is disabled (quarkus.desktop.swt.startup-event.enabled)");
             return;
         }
+        if (singleInstance(context, ui, config, launchMode, identifier, openRequests, extensions, schemes)) {
+            ui.disable(launchMode, "The application runs already : this launch gave its files and URIs to it, and stops");
+            Quarkus.asyncExit(0);
+            return;
+        }
+        if (openRequests) {
+            ui.observeOpenRequests(new OpenArguments(extensions, schemes));
+        }
         // a main runs the application (Quarkus.run, @QuarkusMainTest), not a @QuarkusTest
         boolean mainRuns = ApplicationLifecycleManager.getCurrentApplication() != null;
         ui.configure(launchMode, mainRuns, config.exitOnLastShellClosed() && launchMode != LaunchMode.TEST,
@@ -77,6 +95,48 @@ public final class DesktopSwtSupport {
                 Optional.ofNullable(applicationVersion));
         // when the start fails before the user interface service : the queued tasks are rejected
         context.onStop(ui::stop);
+    }
+
+    /**
+     * One instance of the application per user ({@code quarkus.desktop.swt.single-instance}) : this launch becomes the
+     * running instance, which gives the requests of the next launches to the user interface ({@code OpenRequest} of
+     * source {@code ANOTHER_LAUNCH}) until the application stops, or forwards its files and URIs to the running
+     * instance. Only in production : dev mode restarts the application in the same JVM, and would take the launches of
+     * the installed application, and the tests start many applications.
+     *
+     * @return whether this launch forwarded its request to the running instance : it stops
+     */
+    private static boolean singleInstance(StartContext context, SwtUi ui, DesktopSwtRuntimeConfig config,
+            LaunchMode launchMode, String identifier, boolean openRequests, List<String> extensions,
+            List<String> schemes) {
+        if (!config.singleInstance()) {
+            return false;
+        }
+        if (launchMode != LaunchMode.NORMAL) {
+            LOGGER.debugf("quarkus.desktop.swt.single-instance is ignored in %s mode", launchMode.getDefaultProfile());
+            return false;
+        }
+        if (identifier == null || identifier.isBlank()) {
+            LOGGER.warn("quarkus.desktop.swt.single-instance needs the name of the application (quarkus.application.name"
+                    + " or the identifier of its packages) : another instance may run");
+            return false;
+        }
+        OpenRequest request = openRequests
+                ? new OpenArguments(extensions, schemes).request(ui.arguments(), Source.ANOTHER_LAUNCH)
+                : new OpenRequest(List.of(), List.of(), Source.ANOTHER_LAUNCH);
+        SingleInstance.Result result = SingleInstance.start(
+                SingleInstance.directory(System.getenv(), System.getProperty("os.name", ""),
+                        System.getProperty("java.io.tmpdir", ".")),
+                SingleInstance.name(identifier, System.getProperty("user.name", "")), request, ui::open,
+                SingleInstance.TIMEOUT);
+        if (result.forwarded()) {
+            LOGGER.debugf("The application runs already : %s is forwarded to it, and this launch stops", request);
+            return true;
+        }
+        if (result.instance() != null) {
+            context.onStop(result.instance()::close);
+        }
+        return false;
     }
 
     /**

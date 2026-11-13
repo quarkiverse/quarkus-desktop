@@ -31,6 +31,18 @@ public interface DesktopSwtRuntimeConfig {
     boolean exitOnLastShellClosed();
 
     /**
+     * Whether the application runs once per user : a second launch, while the application runs, gives its files and
+     * URIs to the running instance (an {@code io.quarkiverse.desktop.swt.OpenRequest} of source
+     * {@code ANOTHER_LAUNCH}, maybe without files nor URIs, fired on its user interface thread) and exits with the code
+     * 0 before its user interface starts (its {@code StartupEvent} observers still run). The running instance decides
+     * what to do : open them, bring its shell to front. Only in production : not in dev mode, whose restarts would take
+     * the launches of the installed application, nor in tests. When the running instance cannot be reached within a few
+     * seconds, the second launch starts as usual.
+     */
+    @WithDefault("false")
+    boolean singleInstance();
+
+    /**
      * The name of the application, given to SWT ({@code Display.setAppName}) before the {@code Display} is created : the
      * name of the application menu and of the Dock on macOS, the program name and the {@code WM_CLASS} of the windows on
      * Linux (matched with the {@code .desktop} file of the application), the application identifier of the taskbar on

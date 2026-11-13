@@ -116,6 +116,27 @@ endif::add-copy-button-to-env-var[]
 |boolean
 |`+++true+++`
 
+a| [[quarkus-desktop-swt_quarkus-desktop-swt-single-instance]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-single-instance[`+++quarkus.desktop.swt.single-instance+++`]##
+ifdef::add-copy-button-to-config-props[]
+config_property_copy_button:+++quarkus.desktop.swt.single-instance+++[]
+endif::add-copy-button-to-config-props[]
+
+
+[.description]
+--
+Whether the application runs once per user : a second launch, while the application runs, gives its files and URIs to the running instance (an `io.quarkiverse.desktop.swt.OpenRequest` of source `ANOTHER_LAUNCH`, maybe without files nor URIs, fired on its user interface thread) and exits with the code 0 before its user interface starts (its `StartupEvent` observers still run). The running instance decides what to do : open them, bring its shell to front. Only in production : not in dev mode, whose restarts would take the launches of the installed application, nor in tests. When the running instance cannot be reached within a few seconds, the second launch starts as usual.
+
+
+ifdef::add-copy-button-to-env-var[]
+Environment variable: env_var_with_copy_button:+++QUARKUS_DESKTOP_SWT_SINGLE_INSTANCE+++[]
+endif::add-copy-button-to-env-var[]
+ifndef::add-copy-button-to-env-var[]
+Environment variable: `+++QUARKUS_DESKTOP_SWT_SINGLE_INSTANCE+++`
+endif::add-copy-button-to-env-var[]
+--
+|boolean
+|`+++false+++`
+
 a| [[quarkus-desktop-swt_quarkus-desktop-swt-application-name]] [.property-path]##link:#quarkus-desktop-swt_quarkus-desktop-swt-application-name[`+++quarkus.desktop.swt.application-name+++`]##
 ifdef::add-copy-button-to-config-props[]
 config_property_copy_button:+++quarkus.desktop.swt.application-name+++[]

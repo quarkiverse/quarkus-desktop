@@ -1,6 +1,9 @@
 package io.quarkiverse.desktop.packaging.deployment.windows;
 
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,6 +13,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeSet;
 
@@ -18,6 +22,7 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
@@ -83,7 +88,8 @@ public final class MsixPackager implements Packager {
 
     /**
      * Checks the architecture of the application, {@code makeappx}, the identity, the version, the minimum version of
-     * Windows and the capabilities of the manifest, and the hash of the block map.
+     * Windows and the capabilities of the manifest, the file types and URL schemes, the hash of the block map, and the
+     * settings of the App Installer file.
      */
     @Override
     public void check(PackagingContext context) {
@@ -94,7 +100,10 @@ public final class MsixPackager implements Packager {
         version(context.app());
         minVersion(config);
         capabilities(config);
+        checkAssociations(context.app());
         blockMapHash(context.config().windows().sign());
+        updateUrl(config);
+        updateHours(config);
     }
 
     @Override
@@ -127,7 +136,105 @@ public final class MsixPackager implements Packager {
                     + " (quarkus.desktop.packaging.windows.sign.certificate-file, whose subject is the publisher %s)",
                     msix.getFileName(), publisher(context.app(), context.config().windows().msix()));
         }
+        // the App Installer file of a previous build is deleted too
+        String msixName = msix.getFileName().toString();
+        Path appInstaller = context.output(msixName.substring(0, msixName.length() - ".msix".length())
+                + ".appinstaller");
+        Optional<String> updateUrl = updateUrl(context.config().windows().msix());
+        if (updateUrl.isPresent()) {
+            FileTrees.write(appInstaller, appInstaller(context.app(), context.config().windows().msix(), context.arch(),
+                    updateUrl.get(), msixName));
+            LOGGER.infof("App Installer file of the MSIX package : %s", appInstaller);
+        }
         return msix;
+    }
+
+    /**
+     * The URL of the directory where the MSIX package is published, without slash at its end : empty when it is not
+     * set.
+     *
+     * @throws PackagingException for a URL that is not an http or https URL, or that has a query or a fragment
+     */
+    static Optional<String> updateUrl(DesktopPackagingConfig.Msix config) {
+        Optional<String> configured = config.updateUrl().map(String::strip).filter(url -> !url.isEmpty());
+        if (configured.isEmpty()) {
+            return Optional.empty();
+        }
+        String url = configured.get();
+        URI uri;
+        try {
+            uri = new URI(url);
+        } catch (URISyntaxException e) {
+            uri = null;
+        }
+        if (uri == null || uri.getScheme() == null
+                || !List.of("http", "https").contains(uri.getScheme().toLowerCase(Locale.ROOT))
+                || uri.getRawAuthority() == null || uri.getRawQuery() != null || uri.getRawFragment() != null) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.msix.update-url=" + url + " : the URL of the"
+                    + " directory of the MSIX package is an http or https URL without query nor fragment, whose"
+                    + " special characters are percent encoded, such as https://acme.org/downloads");
+        }
+        return Optional.of(url.replaceFirst("/+$", ""));
+    }
+
+    /**
+     * How often Windows looks for a new version of the package, in hours.
+     *
+     * @throws PackagingException for a number of hours that the App Installer file cannot have : 0 to 255
+     */
+    static int updateHours(DesktopPackagingConfig.Msix config) {
+        int hours = config.updateHours();
+        if (hours < 0 || hours > 255) {
+            throw new PackagingException("quarkus.desktop.packaging.windows.msix.update-hours=" + hours + " : Windows"
+                    + " looks for a new version every 0 to 255 hours : set a number of hours within these limits");
+        }
+        return hours;
+    }
+
+    /**
+     * The App Installer file of the package ({@code <name>.appinstaller}), next to it in the directory of the update
+     * URL : Windows installs the package from it, and updates the application when its URL has a new version.
+     *
+     * @param updateUrl the URL of the directory of the package, without slash at its end ({@link #updateUrl})
+     * @param msixFileName the file name of the package
+     */
+    static String appInstaller(AppInfo app, DesktopPackagingConfig.Msix config, Arch arch, String updateUrl,
+            String msixFileName) {
+        String baseName = msixFileName.endsWith(".msix")
+                ? msixFileName.substring(0, msixFileName.length() - ".msix".length())
+                : msixFileName;
+        String version = version(app);
+        StringBuilder xml = new StringBuilder();
+        xml.append("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
+        xml.append("<AppInstaller xmlns=\"http://schemas.microsoft.com/appx/appinstaller/2018\" Version=\"")
+                .append(version).append("\" Uri=\"").append(Xml.escape(updateUrl + "/" + uriPath(baseName + ".appinstaller")))
+                .append("\">\n");
+        xml.append("  <MainPackage Name=\"").append(Xml.escape(identityName(app, config))).append("\" Publisher=\"")
+                .append(Xml.escape(publisher(app, config))).append("\" Version=\"").append(version)
+                .append("\" ProcessorArchitecture=\"").append(arch.windows()).append("\" Uri=\"")
+                .append(Xml.escape(updateUrl + "/" + uriPath(msixFileName))).append("\" />\n");
+        xml.append("  <UpdateSettings>\n");
+        xml.append("    <OnLaunch HoursBetweenUpdateChecks=\"").append(updateHours(config)).append("\" />\n");
+        xml.append("  </UpdateSettings>\n");
+        xml.append("</AppInstaller>\n");
+        return xml.toString();
+    }
+
+    /**
+     * A file name as a segment of the path of a URL : its bytes in UTF-8 are percent encoded, except the unreserved
+     * characters (letters and digits of ASCII, {@code - . _ ~}).
+     */
+    static String uriPath(String fileName) {
+        StringBuilder path = new StringBuilder();
+        for (byte b : fileName.getBytes(StandardCharsets.UTF_8)) {
+            char c = (char) (b & 0xff);
+            if (c < 0x80 && (Character.isLetterOrDigit(c) || "-._~".indexOf(c) >= 0)) {
+                path.append(c);
+            } else {
+                path.append('%').append(String.format("%02X", b & 0xff));
+            }
+        }
+        return path.toString();
     }
 
     /**
@@ -339,6 +446,68 @@ public final class MsixPackager implements Packager {
     }
 
     /**
+     * Checks the file types and URL schemes of the application against the schema of the manifest : names of types of
+     * at most 100 characters, extensions without dot of at most 63 characters, schemes of 2 to 39 characters.
+     *
+     * @throws PackagingException for a name, an extension or a scheme that the manifest cannot have
+     */
+    static void checkAssociations(AppInfo app) {
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            String property = "quarkus.desktop.packaging.file-types." + type.name();
+            if (type.name().length() > 100) {
+                throw new PackagingException(property + " : the name of a file type of an MSIX package has at most 100"
+                        + " characters : choose a shorter name");
+            }
+            for (String extension : type.extensions()) {
+                if (extension.indexOf('.') >= 0 || extension.length() > 63) {
+                    throw new PackagingException(property + ".extensions : " + extension + " is not an extension of an"
+                            + " MSIX package, which has no dot and at most 63 characters : remove it, or build the other"
+                            + " formats only");
+                }
+            }
+        }
+        for (String scheme : app.associations().urlSchemes()) {
+            if (scheme.length() < 2 || scheme.length() > 39) {
+                throw new PackagingException("quarkus.desktop.packaging.url-schemes : " + scheme + " is not a URL scheme"
+                        + " of an MSIX package, which has 2 to 39 characters : choose another scheme");
+            }
+        }
+    }
+
+    /**
+     * The extensions of the application : a file type association per file type, whose files Windows opens with the
+     * application, and a protocol per URL scheme. Windows gives the file or the URL to the executable as an argument.
+     */
+    private static void extensions(StringBuilder xml, AppInfo app) {
+        checkAssociations(app);
+        xml.append("      <Extensions>\n");
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            xml.append("        <uap:Extension Category=\"windows.fileTypeAssociation\">\n");
+            xml.append("          <uap:FileTypeAssociation Name=\"").append(type.name()).append("\">\n");
+            xml.append("            <uap:DisplayName>")
+                    .append(Xml.escape(text(type.description(), DISPLAY_NAME_LENGTH, app.name())))
+                    .append("</uap:DisplayName>\n");
+            xml.append("            <uap:SupportedFileTypes>\n");
+            for (String extension : type.extensions()) {
+                xml.append("              <uap:FileType ContentType=\"").append(Xml.escape(type.mimeType()))
+                        .append("\">.").append(Xml.escape(extension)).append("</uap:FileType>\n");
+            }
+            xml.append("            </uap:SupportedFileTypes>\n");
+            xml.append("          </uap:FileTypeAssociation>\n");
+            xml.append("        </uap:Extension>\n");
+        }
+        for (String scheme : app.associations().urlSchemes()) {
+            xml.append("        <uap:Extension Category=\"windows.protocol\">\n");
+            xml.append("          <uap:Protocol Name=\"").append(scheme).append("\">\n");
+            xml.append("            <uap:DisplayName>").append(Xml.escape(text(app.name(), DISPLAY_NAME_LENGTH,
+                    app.name()))).append("</uap:DisplayName>\n");
+            xml.append("          </uap:Protocol>\n");
+            xml.append("        </uap:Extension>\n");
+        }
+        xml.append("      </Extensions>\n");
+    }
+
+    /**
      * The manifest of the package.
      *
      * @param launcher the path of the executable in the package, with {@code \} separators
@@ -386,6 +555,9 @@ public final class MsixPackager implements Packager {
                 .append("\" BackgroundColor=\"transparent\" Square150x150Logo=\"").append(ASSETS)
                 .append("\\Square150x150Logo.png\" Square44x44Logo=\"").append(ASSETS)
                 .append("\\Square44x44Logo.png\" />\n");
+        if (!app.associations().isEmpty()) {
+            extensions(xml, app);
+        }
         xml.append("    </Application>\n");
         xml.append("  </Applications>\n");
         xml.append("  <Capabilities>\n");

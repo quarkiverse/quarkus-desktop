@@ -18,6 +18,7 @@ import java.awt.desktop.QuitResponse;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -26,6 +27,7 @@ import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkiverse.desktop.awt.OpenRequest;
 import io.quarkiverse.desktop.awt.QuitRequest;
 import io.quarkiverse.desktop.awt.runtime.DesktopHandlers.Handler;
 import io.smallrye.common.os.OS;
@@ -42,7 +44,21 @@ class DesktopHandlersTest {
 
     @Test
     void eventTypes() {
-        assertEquals(Set.copyOf(ALL), DesktopHandlers.eventTypes());
+        Set<String> types = new HashSet<>(ALL);
+        types.add(OpenRequest.class.getName());
+        assertEquals(types, DesktopHandlers.eventTypes());
+    }
+
+    @Test
+    void openRequestInstallsTheOpenHandlers() {
+        List<String> openRequest = List.of(OpenRequest.class.getName());
+        assertEquals(EnumSet.of(Handler.OPEN_FILES, Handler.OPEN_URI, Handler.QUIT),
+                DesktopHandlers.handlers(openRequest, OS.MAC, action -> true));
+        // Windows supports neither
+        assertEquals(EnumSet.noneOf(Handler.class), DesktopHandlers.handlers(openRequest, OS.WINDOWS, action -> false));
+        assertEquals(EnumSet.noneOf(Handler.class), DesktopHandlers.handlers(openRequest, OS.LINUX, action -> {
+            throw new AssertionError("java.awt.Desktop probed on Linux");
+        }));
     }
 
     @Test

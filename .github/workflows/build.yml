@@ -356,6 +356,13 @@ jobs:
 
           sudo apt-get install -y ./packaging-it_*.deb
           desktop-file-validate /usr/share/applications/packaging-it.desktop
+          # the type of the files and the URL scheme, which the triggers of shared-mime-info and desktop-file-utils add
+          # to the databases of the system
+          grep -q 'application/x-packaging-it-document' /usr/share/mime/packages/packaging-it.xml
+          grep -q '^application/x-packaging-it-document=.*packaging-it.desktop' /usr/share/applications/mimeinfo.cache             || { echo "::error::The desktop database has no application for the type of the package"; exit 1; }
+          grep -q '^x-scheme-handler/packaging-it=.*packaging-it.desktop' /usr/share/applications/mimeinfo.cache             || { echo "::error::The desktop database has no application for the URL scheme of the package"; exit 1; }
+          echo document > "$RUNNER_TEMP/deb.pit"
+          [[ "$(xdg-mime query filetype "$RUNNER_TEMP/deb.pit")" == application/x-packaging-it-document ]]             || { echo "::error::The MIME type of the files of the package is not known"; exit 1; }
           packaging-it --marker="$RUNNER_TEMP/deb.txt" deb
           started deb "$RUNNER_TEMP/deb.txt"
           if [[ -z "$NATIVE_ARGS" ]]; then
@@ -445,6 +452,14 @@ jobs:
             signature_has '^Signature=adhoc$'
           fi
           plutil -lint "image/Packaging IT.app/Contents/Info.plist"
+          # the type of the files and the URL scheme of the application
+          plist_is() {
+            value=$(/usr/libexec/PlistBuddy -c "Print :$1" "image/Packaging IT.app/Contents/Info.plist")
+            [[ "$value" == "$2" ]] || { echo "::error::$1 of the Info.plist is $value, not $2"; exit 1; }
+          }
+          plist_is CFBundleDocumentTypes:0:LSItemContentTypes:0 io.quarkiverse.desktop.PackagingIt.document
+          plist_is UTExportedTypeDeclarations:0:UTTypeTagSpecification:public.filename-extension:0 pit
+          plist_is CFBundleURLTypes:0:CFBundleURLSchemes:0 packaging-it
           # The icon that the Info.plist names, which macOS decodes
           icon=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "image/Packaging IT.app/Contents/Info.plist")
           sips -s format png "image/Packaging IT.app/Contents/Resources/${icon%.icns}.icns" --out "$RUNNER_TEMP/icon.png"
@@ -506,8 +521,26 @@ jobs:
             if ($process.ExitCode -ne 0 -or $line -ne "started 999-SNAPSHOT [$format]") { throw "$format : exit code $($process.ExitCode), $line" }
             "$format : $line"
           }
+          # A file of the type of the application (application.properties), opened as the Explorer opens it : the
+          # application gets its path alone, and writes that it started next to it
+          function Open-Document([string]$format) {
+            $document = "$env:RUNNER_TEMP\$format document.pit"
+            Set-Content -Path $document -Value 'document'
+            Remove-Item "$document.started" -ErrorAction SilentlyContinue
+            Start-Process -FilePath $document
+            for ($second = 0; $second -lt 60 -and -not (Test-Path "$document.started"); $second++) { Start-Sleep -Seconds 1 }
+            $line = if (Test-Path "$document.started") { Get-Content "$document.started" } else { "no $document.started" }
+            if ($line -ne "started 999-SNAPSHOT [$document]") { throw "$format : the document did not open the application ($line)" }
+            "$format : opened $document"
+            $command = (Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\packaging-it\shell\open\command').'(default)'
+            if (-not $command) { throw "$format : the URL scheme packaging-it is not registered" }
+            "$format : packaging-it:// opens $command"
+          }
           function Assert-Removed([string]$format) {
             if (Test-Path $launcher) { throw "$format : $launcher is still installed" }
+            foreach ($key in 'Registry::HKEY_CLASSES_ROOT\.pit', 'Registry::HKEY_CLASSES_ROOT\packaging-it') {
+              if (Test-Path $key) { throw "$format : $key remains" }
+            }
             foreach ($path in $directory, $shortcut) {
               if (Test-Path $path) { throw "$format : $path remains" }
             }
@@ -523,6 +556,7 @@ jobs:
           # the MSI package has the numbers of the version of the packages : 1.0.0-SNAPSHOT (application.properties)
           Assert-Installed 'msi' '1.0.0'
           Start-Installed 'msi'
+          Open-Document 'msi'
           if (-not $env:NATIVE_ARGS) {
             # JVM mode : the MSI package of the next version replaces the installed one, which has its upgrade code
             $msi = (Get-ChildItem ..\packaging-next\*.msi).FullName
@@ -541,6 +575,7 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "exe : the setup program exited with $($process.ExitCode)" }
           Assert-Installed 'exe' '1.0.0-SNAPSHOT'
           Start-Installed 'exe'
+          Open-Document 'exe'
           if (-not $env:NATIVE_ARGS) {
             # JVM mode : the setup program of the next version installs over the installed one, in its directory
             $process = Start-Process (Get-ChildItem ..\packaging-next\*.exe).FullName -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
@@ -572,6 +607,14 @@ jobs:
           $line = if (Test-Path $marker) { Get-Content $marker } else { "no $marker" }
           if ($line -ne 'started 999-SNAPSHOT [msix]') { throw "msix : the application did not start ($line)" }
           "msix : $line"
+          # the file type of the package, which Windows associates with the application of the package
+          $document = "$env:RUNNER_TEMP\msix document.pit"
+          Set-Content -Path $document -Value 'document'
+          Start-Process -FilePath $document
+          for ($second = 0; $second -lt 60 -and -not (Test-Path "$document.started"); $second++) { Start-Sleep -Seconds 1 }
+          $line = if (Test-Path "$document.started") { Get-Content "$document.started" } else { "no $document.started" }
+          if ($line -ne "started 999-SNAPSHOT [$document]") { throw "msix : the document did not open the application ($line)" }
+          "msix : opened $document"
           Remove-AppxPackage -Package $package.PackageFullName
 
       - name: Report the failures

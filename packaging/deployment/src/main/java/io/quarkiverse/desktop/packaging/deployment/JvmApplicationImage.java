@@ -723,12 +723,14 @@ final class JvmApplicationImage {
 
     /**
      * Writes the entries of the configuration in the bundle, as the bundle of a native executable has them : the
-     * minimum version of macOS and the entries of {@code quarkus.desktop.packaging.macos.info-plist}.
+     * minimum version of macOS, the entries of {@code quarkus.desktop.packaging.macos.info-plist}, and the file types
+     * and URL schemes, with the icons of the file types.
      */
-    private static void bundleEntries(PackagingContext context, Path bundle) throws IOException {
+    static void bundleEntries(PackagingContext context, Path bundle) throws IOException {
+        MacBundle.writeTypeIcons(context.app(), bundle.resolve("Contents/Resources"));
         Path plist = bundle.resolve("Contents/Info.plist");
         String infoPlist = Files.readString(plist);
-        String withEntries = MacBundle.jvmInfoPlist(infoPlist, context.config().macos());
+        String withEntries = MacBundle.jvmInfoPlist(infoPlist, context.app(), context.config().macos());
         if (withEntries.equals(infoPlist)) {
             return;
         }

@@ -30,6 +30,18 @@ public interface DesktopAwtRuntimeConfig {
     boolean exitOnLastWindowClosed();
 
     /**
+     * Whether the application runs once per user : a second launch, while the application runs, gives its files and
+     * URIs to the running instance (an {@code io.quarkiverse.desktop.awt.OpenRequest} of source
+     * {@code ANOTHER_LAUNCH}, maybe without files nor URIs, fired on its event dispatch thread) and exits with the code
+     * 0 before its user interface starts. The running instance decides what to do : open them, bring its window to
+     * front. Only for an application observing {@code DesktopStartupEvent}, and only in production : not in dev mode,
+     * whose restarts would take the launches of the installed application, nor in tests. When the running instance
+     * cannot be reached within a few seconds, the second launch starts as usual.
+     */
+    @WithDefault("false")
+    boolean singleInstance();
+
+    /**
      * The {@code DesktopStartupEvent} fired on the event dispatch thread to create the user interface.
      */
     interface StartupEvent {

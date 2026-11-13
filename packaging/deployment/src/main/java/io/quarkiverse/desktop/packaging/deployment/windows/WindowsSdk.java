@@ -7,6 +7,7 @@ import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -18,8 +19,10 @@ import org.jboss.logging.Logger;
 import io.quarkiverse.desktop.packaging.deployment.AppInfo;
 import io.quarkiverse.desktop.packaging.deployment.ApplicationImage;
 import io.quarkiverse.desktop.packaging.deployment.Arch;
+import io.quarkiverse.desktop.packaging.deployment.Associations;
 import io.quarkiverse.desktop.packaging.deployment.DesktopPackagingConfig;
 import io.quarkiverse.desktop.packaging.deployment.FileTrees;
+import io.quarkiverse.desktop.packaging.deployment.IconSet;
 import io.quarkiverse.desktop.packaging.deployment.PackageFormat;
 import io.quarkiverse.desktop.packaging.deployment.PackagingContext;
 import io.quarkiverse.desktop.packaging.deployment.PackagingException;
@@ -59,6 +62,39 @@ public final class WindowsSdk {
      */
     static String packageFileName(AppInfo app, Arch arch, PackageFormat format) {
         return app.fileName() + "-" + app.version() + "-" + arch.windows() + "." + format.extension();
+    }
+
+    /**
+     * The file name of the icon of a file type in the installation directory : {@code <identifier of the type>.ico}.
+     */
+    static String fileTypeIconName(AppInfo app, Associations.FileType type) {
+        return type.identifier(app) + ".ico";
+    }
+
+    /**
+     * Writes the icons of the file types that have one ({@link Associations.FileType#icon}) into a directory, as
+     * {@code .ico} files that the setup programs install into the installation directory.
+     *
+     * @param files the files of the application image, relative to its directory
+     * @return the icons, by name of file type
+     * @throws PackagingException when a file of the application image has the name of an icon
+     */
+    static Map<String, Path> writeFileTypeIcons(AppInfo app, Path directory, List<Path> files) throws IOException {
+        Map<String, Path> icons = new LinkedHashMap<>();
+        for (Associations.FileType type : app.associations().fileTypes()) {
+            if (type.icon().isEmpty()) {
+                continue;
+            }
+            String name = fileTypeIconName(app, type);
+            for (Path file : files) {
+                if (file.getNameCount() == 1 && file.toString().equalsIgnoreCase(name)) {
+                    throw new PackagingException("The application image has a file named " + name + ", which is the"
+                            + " icon of the file type " + type.name() + " in the installation directory : rename it");
+                }
+            }
+            icons.put(type.name(), FileTrees.write(directory.resolve(name), IconSet.of(type.icon().get()).ico()));
+        }
+        return icons;
     }
 
     /**

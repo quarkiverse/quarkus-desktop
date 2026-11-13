@@ -28,7 +28,9 @@ import org.jboss.jandex.MethodInfo;
 import org.jboss.jandex.Type;
 import org.jboss.logging.Logger;
 
+import io.quarkiverse.desktop.packaging.spi.OpenedTypesBuildItem;
 import io.quarkiverse.desktop.packaging.spi.PackagedApplicationNameBuildItem;
+import io.quarkiverse.desktop.swt.OpenRequest;
 import io.quarkiverse.desktop.swt.RunOnUiThread;
 import io.quarkiverse.desktop.swt.SwtLifecycle;
 import io.quarkiverse.desktop.swt.SwtStartupEvent;
@@ -42,6 +44,7 @@ import io.quarkus.arc.deployment.AdditionalBeanBuildItem;
 import io.quarkus.arc.deployment.ArcConfig;
 import io.quarkus.arc.deployment.BeanArchiveIndexBuildItem;
 import io.quarkus.arc.deployment.BeanDiscoveryFinishedBuildItem;
+import io.quarkus.arc.deployment.SyntheticBeansRuntimeInitBuildItem;
 import io.quarkus.arc.deployment.UnremovableBeanBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem;
 import io.quarkus.arc.deployment.ValidationPhaseBuildItem.ValidationErrorBuildItem;
@@ -74,6 +77,8 @@ class DesktopSwtCdiProcessor {
     static final DotName SWT_STARTUP_EVENT = DotName.createSimple(SwtStartupEvent.class);
 
     static final DotName RUN_ON_UI_THREAD = DotName.createSimple(RunOnUiThread.class);
+
+    static final DotName OPEN_REQUEST = DotName.createSimple(OpenRequest.class);
 
     /**
      * The SWT classes that cannot be the type of a normal scoped bean : the widgets, and the devices ({@code Display},
@@ -245,24 +250,56 @@ class DesktopSwtCdiProcessor {
      *
      * @param packagedName the name of the application in its packages (Desktop Packaging extension), the default name
      *        of the application rather than {@code quarkus.application.name}
+     * @param openedTypes the file types and URL schemes of the packages (Desktop Packaging extension) : the program
+     *        arguments of the {@code OpenRequest}s, none without it, and the identifier of the single instance
+     *        ({@code quarkus.desktop.swt.single-instance}), else {@code quarkus.application.name}
      */
     @BuildStep
     ServiceStartBuildItem configureUserInterface(ServiceRegistrar serviceRegistrar, LaunchModeBuildItem launchMode,
             ArcConfig arcConfig, ApplicationInfoBuildItem applicationInfo,
-            Optional<PackagedApplicationNameBuildItem> packagedName) {
+            Optional<PackagedApplicationNameBuildItem> packagedName, Optional<OpenedTypesBuildItem> openedTypes,
+            BeanDiscoveryFinishedBuildItem beanDiscovery) {
         LaunchMode mode = launchMode.getLaunchMode();
         boolean lifecycleObserversDisabled = arcConfig.test().disableApplicationLifecycleObservers();
         String applicationName = DesktopSwtProcessor.defaultApplicationName(packagedName, applicationInfo.getName())
                 .orElse(null);
         String applicationVersion = valueOf(applicationInfo.getVersion());
+        String identifier = openedTypes.map(OpenedTypesBuildItem::getIdentifier)
+                .orElse(valueOf(applicationInfo.getName()));
+        boolean openRequests = observesOpenRequest(beanDiscovery.getObservers());
+        List<String> extensions = openedTypes.map(types -> List.copyOf(new TreeSet<>(types.getExtensions())))
+                .orElse(List.of());
+        List<String> schemes = openedTypes.map(types -> List.copyOf(new TreeSet<>(types.getSchemes())))
+                .orElse(List.of());
         serviceRegistrar
                 .forService("io.quarkiverse.desktop.swt.configure-user-interface")
                 .after(ARC_SHUTDOWN)
+                // the beans of the program arguments (@CommandLineArguments)
+                .afterBuildItem(SyntheticBeansRuntimeInitBuildItem.class)
                 .require(BeanContainer.class)
                 .require(DesktopSwtRuntimeConfig.class)
                 .onStart((ctx, beans, config) -> DesktopSwtSupport.configureUserInterface(ctx, beans, config, mode,
-                        lifecycleObserversDisabled, applicationName, applicationVersion));
+                        lifecycleObserversDisabled, applicationName, applicationVersion, identifier, openRequests,
+                        extensions, schemes));
         return new ServiceStartBuildItem(DesktopSwtProcessor.FEATURE);
+    }
+
+    /**
+     * Whether the application observes {@code OpenRequest} (synchronously : it is fired on the user interface thread).
+     */
+    static boolean observesOpenRequest(Collection<ObserverInfo> observers) {
+        boolean observed = false;
+        for (ObserverInfo observer : observers) {
+            if (observer.getObservedType().name().equals(OPEN_REQUEST)) {
+                if (observer.isAsync()) {
+                    LOGGER.warnf("%s observes OpenRequest asynchronously : it is fired synchronously on the user"
+                            + " interface thread, use @Observes", describe(observer));
+                } else {
+                    observed = true;
+                }
+            }
+        }
+        return observed;
     }
 
     /**
