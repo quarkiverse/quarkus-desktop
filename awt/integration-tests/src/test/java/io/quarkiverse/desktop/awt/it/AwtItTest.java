@@ -15,17 +15,22 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 
-import io.quarkus.test.junit.main.Launch;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
+/**
+ * The checks of the application ({@code AwtItMain}). It is launched by the test rather than with {@code @Launch}, which
+ * fails on another exit code before the test runs, without the output of the application : the assertions of the test
+ * give it.
+ */
 @QuarkusMainTest
 public class AwtItTest {
 
     @Test
-    @Launch({ "awt", "target" })
-    public void awt(LaunchResult result) {
-        String output = result.getOutput();
+    public void awt(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("awt", "target");
+        String output = result.getOutput() + "\n" + result.getErrorOutput();
         assertEquals(0, result.exitCode(), output);
         assertTrue(output.contains("SUMMARY ok="), output);
         assertFalse(output.contains(" FAILED "), output);
@@ -66,9 +71,9 @@ public class AwtItTest {
 
     @Test
     @EnabledOnOs(OS.WINDOWS)
-    @Launch("access-bridge")
-    public void accessBridge(LaunchResult result) {
-        String output = result.getOutput();
+    public void accessBridge(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("access-bridge");
+        String output = result.getOutput() + "\n" + result.getErrorOutput();
         assertEquals(0, result.exitCode(), output);
         assertTrue(output.contains("RESULT access-bridge OK") || output.contains("RESULT access-bridge SKIPPED"),
                 output);
