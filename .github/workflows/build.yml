@@ -639,7 +639,9 @@ jobs:
         working-directory: packaging/integration-tests/target/packaging
         run: |
           ls -l
-          sudo snap install --dangerous ./packaging-it_*.snap
+          # the snaps that the snap needs (its base and the GNOME content snap) come from the snap store
+          for attempt in 1 2 3; do sudo snap install --dangerous ./packaging-it_*.snap && break || sleep 30; done
+          snap list packaging-it || { echo "::error::The snap could not be installed (the snaps it needs come from the snap store)"; exit 1; }
           /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
           grep -qF 'started 999-SNAPSHOT [snap]' "$HOME/snap.txt" || { echo "::error::The application of the snap did not start"; exit 1; }
           echo "snap : $(cat "$HOME/snap.txt")"
