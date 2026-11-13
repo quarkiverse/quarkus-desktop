@@ -270,9 +270,9 @@ The packages are in `target/packaging` (`build/packaging` with Gradle). Each for
 with its tool (WiX, Inno Setup, the Windows SDK, `hdiutil`, `pkgbuild`, `dpkg-deb`, `rpmbuild`, `appimagetool`,
 `flatpak`, `snapcraft`); the icons of every format come from one PNG file (`src/main/packaging/icon.png`), and the
 Windows native executable gets the icon and the version information of the application. Not verified yet, among
-others: applications with a user interface (beyond that MSI package), the snap, signing with a Developer ID certificate
-and the notarization, Windows and Linux on arm64 and macOS on Intel, and Gradle builds. The page
-[Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)
+others: applications with a user interface (beyond that MSI package), the snap of a native executable, signing with a
+Developer ID certificate and the notarization, Windows and Linux on arm64 and macOS on Intel, and Gradle builds.
+The page [Desktop Packaging](https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html)
 ([docs/modules/ROOT/pages/packaging.adoc](docs/modules/ROOT/pages/packaging.adoc)) covers the application image, the
 Java runtime of JVM mode, the signatures of Windows and macOS, the notarization, the dependencies of the Linux
 packages, and what is verified.

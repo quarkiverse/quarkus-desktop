@@ -189,11 +189,11 @@ jobs:
         run: java .github/scripts/ReportFailures.java maven.log
 
   packaging:
-    # The packages of the integration tests of the Desktop Packaging extension, in every format of the operating system
-    # but the snap (the packaging-snap job) : built by Maven with the tool of each format (PackagingIT checks the files),
-    # then installed, started and removed by the steps below. In JVM mode (the jar with a Java runtime, built by
-    # jpackage) and for the native executable. In JVM mode, the packages of a next version are installed over the first
-    # ones (msi, exe, deb), and the macOS bundle is signed with an identity rather than ad hoc
+    # The packages of the integration tests of the Desktop Packaging extension, in every format of the operating system :
+    # built by Maven with the tool of each format (PackagingIT checks the files), then installed, started and removed by
+    # the steps below. In JVM mode (the jar with a Java runtime, built by jpackage) and for the native executable. In JVM
+    # mode, the packages of a next version are installed over the first ones (msi, exe, deb), the macOS bundle is signed
+    # with an identity rather than ad hoc, and Linux has the snap too
     name: Packaging${{ matrix.native && ' (native)' || '' }} on ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
@@ -254,6 +254,21 @@ jobs:
           echo "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d  $runtime" | sha256sum -c -
           echo "APPIMAGE_ARGS=-Dquarkus.desktop.packaging.linux.appimage.runtime-file=$runtime" >> "$GITHUB_ENV"
 
+      # JVM mode on Linux : the snap. Snapcraft and LXD come from the snap store, which does not always answer the
+      # runners. Snapcraft builds the snap in an LXD container : the build runs in the lxd group
+      - name: Install Snapcraft and LXD
+        if: ${{ startsWith(matrix.os, 'ubuntu') && !matrix.native }}
+        run: |
+          set -x
+          for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 30; done
+          snap list snapcraft || { echo "::error::Snapcraft could not be installed from the snap store"; exit 1; }
+          for attempt in 1 2 3; do sudo snap install lxd && break || sleep 30; done
+          snap list lxd || { echo "::error::LXD could not be installed from the snap store"; exit 1; }
+          sudo lxd init --auto
+          sudo usermod --append --groups lxd "$USER"
+          sudo iptables -P FORWARD ACCEPT
+          echo "SNAP_FORMAT=,snap" >> "$GITHUB_ENV"
+
       # makeappx and signtool are part of the Windows SDK of the runner. An MSIX package is only installed when it is
       # signed : a self-signed certificate, trusted by the runner, whose subject is the publisher of the package. A root
       # certificate too, so that the signatures that it makes are valid, which the steps below check
@@ -310,9 +325,12 @@ jobs:
           identity=$(openssl x509 -in "$RUNNER_TEMP/packaging-it.crt" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d :)
           echo "SIGN_ARGS=-Dquarkus.desktop.packaging.macos.sign.identity=$identity -Dquarkus.desktop.packaging.macos.sign.keychain=$keychain" >> "$GITHUB_ENV"
 
+      # the lxd group exists on the runner, whose user is only a member of it once LXD is set up (JVM mode)
       - name: Build the packages of Linux
         if: startsWith(matrix.os, 'ubuntu')
-        run: ./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=directory,deb,rpm,appimage,flatpak $APPIMAGE_ARGS 2>&1 | tee maven.log
+        run: |
+          build="./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format $NATIVE_ARGS -Dquarkus.desktop.packaging.formats=directory,deb,rpm,appimage,flatpak$SNAP_FORMAT $APPIMAGE_ARGS"
+          if [[ -n "$SNAP_FORMAT" ]]; then sg lxd -c "$build"; else $build; fi 2>&1 | tee maven.log
 
       - name: Build the packages
         if: ${{ !startsWith(matrix.os, 'ubuntu') }}
@@ -374,6 +392,15 @@ jobs:
           flatpak run io.quarkiverse.desktop.PackagingIt --marker="$HOME/flatpak.txt" flatpak
           started flatpak "$HOME/flatpak.txt"
           flatpak uninstall --user -y --noninteractive io.quarkiverse.desktop.PackagingIt
+
+          if [[ -n "$SNAP_FORMAT" ]]; then
+            # the snaps that the snap needs (its base and the GNOME content snap) come from the snap store
+            for attempt in 1 2 3; do sudo snap install --dangerous ./packaging-it_*.snap && break || sleep 30; done
+            snap list packaging-it || { echo "::error::The snap could not be installed (the snaps it needs come from the snap store)"; exit 1; }
+            /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
+            started snap "$HOME/snap.txt"
+            sudo snap remove packaging-it
+          fi
 
       - name: Install, start and remove the packages of macOS
         if: startsWith(matrix.os, 'macos')
@@ -591,61 +618,6 @@ jobs:
           # the test is skipped when the JDK has no jpackage : that is no check
           ran=$(grep -c 'Tests run: 1, Failures: 0, Errors: 0, Skipped: 0' maven.log || true)
           [ "$ran" -ge 5 ] || { echo "::error::The test of the default Java runtime did not run five times ($ran)"; exit 1; }
-
-      - name: Report the failures
-        if: failure()
-        run: java .github/scripts/ReportFailures.java maven.log
-
-  packaging-snap:
-    # The snap of the integration tests of the Desktop Packaging extension, in a job of its own : its tools come from the
-    # snap store, which does not always answer the runners, and the job has not passed yet (continue-on-error until it
-    # does). Snapcraft builds the snap in an LXD container : the build runs in the lxd group. JVM mode only
-    name: Packaging (snap) on ubuntu-latest
-    timeout-minutes: 60
-    continue-on-error: true
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Set up JDK 25
-        uses: actions/setup-java@v6
-        with:
-          distribution: temurin
-          java-version: 25
-
-      # The cache that the JVM mode leg of the packaging job saves, which has the same dependencies
-      - name: Restore the Maven repository of the packaging modules
-        uses: actions/cache/restore@v6
-        with:
-          path: ~/.m2/repository
-          key: packaging-${{ runner.os }}-false-maven-${{ hashFiles('pom.xml', 'packaging/**/pom.xml') }}
-
-      - name: Install Snapcraft and LXD
-        run: |
-          set -x
-          for attempt in 1 2 3; do sudo snap install snapcraft --classic && break || sleep 30; done
-          snap list snapcraft || { echo "::error::Snapcraft could not be installed from the snap store"; exit 1; }
-          for attempt in 1 2 3; do sudo snap install lxd && break || sleep 30; done
-          snap list lxd || { echo "::error::LXD could not be installed from the snap store"; exit 1; }
-          sudo lxd init --auto
-          sudo usermod --append --groups lxd "$USER"
-          sudo iptables -P FORWARD ACCEPT
-
-      # the lxd group exists on the runner, whose user is only a member of it once LXD is set up
-      - name: Build the snap (in the lxd group)
-        run: sg lxd -c "./mvnw -B -ntp install -pl packaging/integration-tests -am -Dno-format -Dquarkus.desktop.packaging.formats=directory,snap" 2>&1 | tee maven.log
-
-      - name: Install, start and remove the snap
-        working-directory: packaging/integration-tests/target/packaging
-        run: |
-          ls -l
-          # the snaps that the snap needs (its base and the GNOME content snap) come from the snap store
-          for attempt in 1 2 3; do sudo snap install --dangerous ./packaging-it_*.snap && break || sleep 30; done
-          snap list packaging-it || { echo "::error::The snap could not be installed (the snaps it needs come from the snap store)"; exit 1; }
-          /snap/bin/packaging-it --marker="$HOME/snap.txt" snap
-          grep -qF 'started 999-SNAPSHOT [snap]' "$HOME/snap.txt" || { echo "::error::The application of the snap did not start"; exit 1; }
-          echo "snap : $(cat "$HOME/snap.txt")"
-          sudo snap remove packaging-it
 
       - name: Report the failures
         if: failure()

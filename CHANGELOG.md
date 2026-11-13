@@ -12,8 +12,9 @@ All notable changes to this project will be documented in this file.
   native executable or, in JVM mode, the jar with a Java runtime (`jpackage`), derives the icons of every format from
   one PNG file, gives the Windows native executable its icon and version information, and signs the Windows and macOS
   packages (with notarization on macOS). Not verified yet, among others: applications with a user interface (beyond a
-  native Swing application in an MSI package), the snap, signing with a Developer ID certificate and the notarization,
-  Windows and Linux on arm64 and macOS on Intel, and Gradle builds (see Verification on the Desktop Packaging page).
+  native Swing application in an MSI package), the snap of a native executable, signing with a Developer ID
+  certificate and the notarization, Windows and Linux on arm64 and macOS on Intel, and Gradle builds (see Verification
+  on the Desktop Packaging page).
   The `quarkus-desktop-packaging-spi` artifact lets other extensions add the files of the native executable
   (`NativeExecutableFileBuildItem`, optional for a library that the executable loads only in some cases: the Debian and
   RPM packages do not depend on the libraries that it is linked with) and the options of the JVM
