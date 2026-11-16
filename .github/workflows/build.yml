@@ -810,7 +810,7 @@ jobs:
 
       - name: Upload the screenshot
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshot-${{ matrix.os }}-${{ matrix.toolkit }}-${{ matrix.native && 'native' || 'jvm' }}
           path: screenshots/
