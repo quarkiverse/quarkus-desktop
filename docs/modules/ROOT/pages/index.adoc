@@ -4,7 +4,7 @@ include::./includes/attributes.adoc[]
 :diataxis-type: reference
 :categories: miscellaneous
 
-:extension-status: experimental
+:extension-status: stable
 
 Quarkus Desktop brings AWT, Swing and SWT desktop (GUI) applications to Quarkus, in JVM mode and as GraalVM native
 executables.

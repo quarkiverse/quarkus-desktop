@@ -12,6 +12,6 @@ metadata:
   guide: "https://docs.quarkiverse.io/quarkus-desktop/dev/index.html"
   categories:
     - "miscellaneous"
-  status: "experimental"
+  status: "stable"
   config:
     - "quarkus.desktop.swt."
