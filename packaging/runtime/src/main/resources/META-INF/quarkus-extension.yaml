@@ -16,6 +16,6 @@ metadata:
   guide: "https://docs.quarkiverse.io/quarkus-desktop/dev/packaging.html"
   categories:
     - "miscellaneous"
-  status: "experimental"
+  status: "stable"
   config:
     - "quarkus.desktop.packaging."
